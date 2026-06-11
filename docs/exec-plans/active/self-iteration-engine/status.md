@@ -52,11 +52,28 @@
 - 项目特定 flow 配置（质量门、provider 名）→ **项目仓 `.flowx/`**（committed，小文件）。
 - 机器级状态+密钥（run checkpoints、API key）→ **`~/.flowx/`** 或 gitignore 的 `.flowx/`。
 
+## 执行器能力分层 + agent profile 绑定层（2026-06-11，kongjie 拍板「先做能力分层」）
+
+解决「provider 只是 LLM 配置，但执行器本身分 BYO / 锁定两类」的问题。执行器是否接受外部
+provider 由「有没有 applyProvider 翻译器」派生（单一事实来源）。
+
+- **新增 `executor.js`**：
+  - `EXECUTORS` 注册表：recursive/aider/claude 带 applyProvider（BYO）；cursor/gemini/codex 无（锁定）。
+  - applyProvider 翻译器：recursive→`RECURSIVE_*` env、claude→`ANTHROPIC_*` env+model、aider→`OPENAI_*` env+model。
+  - `getExecutor`（acceptsProvider 派生）、`loadAgents`（多层合并）、`resolveAgent`（绑定+校验）。
+  - **关键校验**：给锁定型执行器（cursor 等）配 provider → fail-fast，提示改用自带 model。
+- **provider.js** 抽出通用 `loadMergedConfig` + `basenamesFor`，providers/agents 共用多层加载。
+- 配置：`examples/agents.example.json`（recursive-deepseek / claude-sonnet / cursor-default 三例）。
+- 单测：executor.test.js 12 个；全量 57 全绿。冒烟验证绑定链路 + 锁定校验 OK。
+
+模型总览（对齐 ilink）：ilink 把每个 profile 当自包含执行器；flowx 只为 BYO 执行器多加
+provider 层，对 cursor 这类锁定执行器行为与 ilink 一致（只认自带 type/model）。
+
 ## 已知下一步（不阻塞）
 
 1. review 健壮化：见 `.dev/goals/001-self-review-structured-verdict.md`（留给 self-improve workflow dogfooding）。
-2. 把 `recursive-self-improve` 通用骨架抽进 flowx、recursive 仓只留薄配置（`.flowx/self-improve.yaml`）——Step 2 候选。
-3. revengers 选择性接入（L3 动态编排）——Step 3。
+2. 内置通用 flow（selfImprove preset）+ recursive-self-improve 搬到 recursive 仓——**kongjie 决定先放**。
+3. **L3 动态编排**——下一步重点（接单→分拆→动态生成 flow→跨 executor 调度，复用本步的 resolveAgent 路由）。
 
 ## 现场（未做任何破坏性操作）
 

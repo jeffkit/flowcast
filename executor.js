@@ -1,0 +1,109 @@
+// executor.js — 执行器能力分层 + agent profile 绑定层
+//
+// 「执行器（怎么驱动一个 CLI/agent）」与「provider（用哪个 LLM）」是正交的两件事：
+//   - 有些执行器是 BYO-LLM（recursive/aider/claude）：可以注入 provider（端点/模型/密钥）。
+//   - 有些执行器自管鉴权、路由到自家后端（cursor/gemini/codex 等）：不接受外部 provider，
+//     只能用它自带的 model 选择。
+//
+// 一个执行器是否「接受外部 provider」由它有没有 applyProvider 翻译器决定（能力即翻译器）。
+// applyProvider(bundle) 把通用 provider bundle 翻译成该执行器的调用选项 { env?, model? }。
+//
+// agent profile（agents.{json,yaml,…}）把「执行器 + 可选 provider + 调用配置」打包成具名引用，
+// flow / L3 编排层按名字引用它。resolveAgent 负责校验 + 解析 + 绑定。
+
+import {
+  claude, cursor, gemini, codex, aider, recursive, recursiveProviderEnv,
+} from './agent.js'
+import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
+
+// ── provider 翻译器（通用 bundle → 各执行器的调用选项）──────────────
+
+function recursiveApply(bundle) {
+  // recursive 全走 RECURSIVE_* env（含 model），与 self-improve.sh 一致
+  return { env: recursiveProviderEnv(bundle) }
+}
+
+function claudeApply(bundle) {
+  // claude CLI 读 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY；model 走 --model
+  const env = {}
+  if (bundle.apiBase) env.ANTHROPIC_BASE_URL = bundle.apiBase
+  if (bundle.apiKey) env.ANTHROPIC_API_KEY = bundle.apiKey
+  return { env, model: bundle.model }
+}
+
+function aiderApply(bundle) {
+  // aider 读 OPENAI_API_BASE / OPENAI_API_KEY（openai 兼容）；model 走 --model
+  const env = {}
+  if (bundle.apiBase) env.OPENAI_API_BASE = bundle.apiBase
+  if (bundle.apiKey) env.OPENAI_API_KEY = bundle.apiKey
+  return { env, model: bundle.model }
+}
+
+// ── 执行器注册表 ──────────────────────────────────────────────────
+// acceptsProvider 由 applyProvider 是否存在派生（单一事实来源）。
+
+export const EXECUTORS = {
+  recursive: { run: recursive, applyProvider: recursiveApply },
+  aider:     { run: aider,     applyProvider: aiderApply },
+  claude:    { run: claude,    applyProvider: claudeApply },
+  cursor:    { run: cursor },   // 自管鉴权/路由，不接受外部 provider
+  gemini:    { run: gemini },
+  codex:     { run: codex },
+}
+
+/** 取执行器描述符；未注册抛错。 */
+export function getExecutor(name) {
+  const e = EXECUTORS[name]
+  if (!e) throw new Error(`未知执行器 '${name}'（已注册：${Object.keys(EXECUTORS).join(' / ')}）`)
+  return { name, run: e.run, applyProvider: e.applyProvider, acceptsProvider: typeof e.applyProvider === 'function' }
+}
+
+/** 加载并合并多层 agent profile 配置（~/.flowx + <repo>/.flowx）。 */
+export async function loadAgents({ repo, dirs } = {}) {
+  return loadMergedConfig(basenamesFor('agents'), { repo, dirs, key: 'agents' })
+}
+
+const META_KEYS = new Set(['executor', 'provider'])
+
+/**
+ * 解析具名 agent profile 为可直接喂给执行器的 { executor, run, opts }。
+ * @param {string} name      agent profile 名
+ * @param {Record<string,object>} agents     已加载的 agents map
+ * @param {object} [ctx]
+ * @param {Record<string,object>} [ctx.providers]  已加载的 providers map（provider 解析用）
+ * @param {object} [ctx.env]                       插值用 env（默认 process.env）
+ * @returns {{executor:string, run:Function, opts:object}}
+ */
+export function resolveAgent(name, agents = {}, { providers = {}, env = process.env } = {}) {
+  const profile = agents[name]
+  if (!profile) {
+    const known = Object.keys(agents)
+    const hint = known.length ? `已定义：${known.join(' / ')}` : '当前无任何 agent 配置，请创建 ~/.flowx/agents.json'
+    throw new Error(`未知 agent '${name}'（${hint}）`)
+  }
+  if (!profile.executor) throw new Error(`agent '${name}' 缺少 executor 字段`)
+
+  const ex = getExecutor(profile.executor)
+
+  // 透传业务无关的调用选项（maxSteps / cwd / timeout / allowTools / model / workspace …）
+  const opts = {}
+  for (const [k, v] of Object.entries(profile)) {
+    if (!META_KEYS.has(k)) opts[k] = v
+  }
+
+  if (profile.provider) {
+    if (!ex.acceptsProvider) {
+      throw new Error(
+        `执行器 '${profile.executor}' 不接受外部 provider（自管鉴权/路由）；` +
+        `请从 agent '${name}' 去掉 provider，改用它自带的 model 选择`,
+      )
+    }
+    const bundle = resolveProvider(profile.provider, providers, env)
+    const applied = ex.applyProvider(bundle) ?? {}
+    // profile 显式选项优先于翻译器产出（如 profile 里写了 model，不被 provider 默认 model 覆盖）
+    opts.env = { ...(applied.env ?? {}), ...(opts.env ?? {}) }
+    if (applied.model != null && opts.model == null) opts.model = applied.model
+  }
+
+  return { executor: profile.executor, run: ex.run, opts }
+}

@@ -10,4 +10,5 @@ export {
 export { withSelfModGuard, captureBaseline } from './self-mod-guard.js'
 export { runGate, runGates } from './quality-gate.js'
 export { writeFailureContext, readAndConsumeFailureContext } from './failure-context.js'
-export { interpolateEnv, loadProviders, resolveProvider } from './provider.js'
+export { interpolateEnv, loadProviders, resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
+export { EXECUTORS, getExecutor, loadAgents, resolveAgent } from './executor.js'

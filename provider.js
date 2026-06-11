@@ -21,7 +21,10 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 
-const CONFIG_BASENAMES = ['providers.json', 'providers.yaml', 'providers.yml', 'providers.js', 'providers.mjs']
+/** 给定配置文件 stem，返回按优先级排列的候选文件名。 */
+export function basenamesFor(stem) {
+  return [`${stem}.json`, `${stem}.yaml`, `${stem}.yml`, `${stem}.js`, `${stem}.mjs`]
+}
 
 /**
  * ${VAR} 插值（移植 ilink-hub env-interpolation-spec）：
@@ -68,27 +71,34 @@ async function loadConfigFile(file) {
 }
 
 /**
- * 加载并合并多层 provider 配置。
+ * 通用多层配置加载：~/.flowx → <repo>/.flowx，后者覆盖前者。
+ * @param {string[]} basenames  候选文件名（见 basenamesFor）
  * @param {object} [o]
- * @param {string} [o.repo]    项目根（用于查找 <repo>/.flowx/providers.*）
- * @param {string[]} [o.dirs]  完全覆盖默认搜索目录（测试用）
- * @returns {Promise<Record<string, object>>} providers map
+ * @param {string} [o.repo]   项目根（查找 <repo>/.flowx/*）
+ * @param {string[]} [o.dirs] 完全覆盖默认搜索目录（测试用）
+ * @param {string} [o.key]    顶层 section key（如 'providers' / 'agents'）；文件可写 {key:{...}} 或裸 {...}
+ * @returns {Promise<Record<string, object>>}
  */
-export async function loadProviders({ repo, dirs } = {}) {
+export async function loadMergedConfig(basenames, { repo, dirs, key } = {}) {
   const searchDirs = dirs ?? [join(homedir(), '.flowx'), ...(repo ? [join(repo, '.flowx')] : [])]
   let merged = {}
   for (const dir of searchDirs) {
-    for (const base of CONFIG_BASENAMES) {
+    for (const base of basenames) {
       const file = join(dir, base)
       if (existsSync(file)) {
         const cfg = await loadConfigFile(file)
-        const providers = cfg?.providers ?? cfg ?? {}
-        merged = { ...merged, ...providers } // 后者（项目级）覆盖前者（机器级）
+        const section = key ? (cfg?.[key] ?? cfg ?? {}) : (cfg ?? {})
+        merged = { ...merged, ...section } // 后者（项目级）覆盖前者（机器级）
         break // 每个目录只取第一个命中的文件
       }
     }
   }
   return merged
+}
+
+/** 加载并合并多层 provider 配置。 */
+export async function loadProviders({ repo, dirs } = {}) {
+  return loadMergedConfig(basenamesFor('providers'), { repo, dirs, key: 'providers' })
 }
 
 /**

@@ -22,6 +22,7 @@
     "quality-gate.js",
     "failure-context.js",
     "provider.js",
+    "executor.js",
     "flows/",
     "examples/",
     "bin/"
