@@ -3,8 +3,8 @@
 > AI 恢复上下文先读本文件，再读 implement.md / plan.md / prompt.md。
 
 **最后更新**：2026-06-11
-**分支**：`feat/self-iteration-engine`（flowx 仓，尚未提交本次成果）
-**整体状态**：🟢 Step 1 全部里程碑完成，等待 kongjie 拍板后续
+**分支**：`feat/self-iteration-engine`（flowx 仓，已提交 commit c08a6a9）
+**整体状态**：🟢 Step 1 全部里程碑完成并提交；count_lines review=PASS
 
 ## 进度
 
@@ -28,11 +28,11 @@
 - `test/{agent,self-mod-guard,quality-gate,failure-context,flow-e2e}.test.js`
 - `agent.js`（新增 recursive adapter + 可插拔 HITL）、`index.js`（导出）、`package.json`（test 脚本 + files）
 
-## 待 kongjie 拍板（已企微问询，超时未回）
+## kongjie 决议（2026-06-11）
 
-- **A) count_lines 分支处置**：`self-improve/count-lines-deepseek-20260611T145956`（recursive 仓，commit cf0b9b2）→ 保留待 review / 合 main / 丢弃清理 worktree？（默认：保留不动）
-- **B) review 健壮化**（限步数 + 强制结构化 verdict 提取）现在做还是后续？
-- **C) 是否把 Step 1 成果提交到 flowx `feat/self-iteration-engine` 分支？**（默认：等指令，暂不提交）
+- **A) count_lines review**：由 AI 来 review（已完成）。verdict=**PASS**——代码遵循 ReadFile 模式、sandbox 正确、2 单测覆盖、改动面最小（3 文件）。分支 `self-improve/count-lines-deepseek-20260611T145956` commit cf0b9b2 merge-ready。recursive main 当前有无关脏文件（permission_pipeline.rs），合并时机/由谁合留 jeffkit/kongjie 定，未自动合入。
+- **B) review 健壮化**：写成 goal，晚点另一个 session 让 self-improve workflow 自己做 → 已写 `.dev/goals/001-self-review-structured-verdict.md`。
+- **C) 提交 Step 1 成果到 flowx feat 分支**：已提交（c08a6a9）。
 
 ## 已知下一步（不阻塞）
 
