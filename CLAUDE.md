@@ -4,6 +4,9 @@
 自改安全沙箱、质量门，以及在其之上的 L3 codegen 编排层（动态生成并执行 flow）。
 **零运行时依赖、纯 ESM、Node ≥ 20。**
 
+> **新 session 先读 [docs/BACKGROUND.md](docs/BACKGROUND.md)**——flowx 的来龙去脉与愿景
+> （统一自我迭代引擎、三层架构、边界决策、路线图）。本文只讲架构与 API。
+
 ## 三层架构（核心心智模型）
 
 ```
