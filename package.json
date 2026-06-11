@@ -23,7 +23,9 @@
     "failure-context.js",
     "provider.js",
     "executor.js",
+    "dry-run.js",
     "flows/",
+    "orchestrator/",
     "examples/",
     "bin/"
   ],

@@ -1,4 +1,5 @@
 import { spawnCapture } from './agent.js'
+import { isDryRun } from './dry-run.js'
 
 // ── qualityGate：声明式质量门 ⭐ ───────────────────────────────────
 //
@@ -32,6 +33,9 @@ async function runShell(cmd, cwd, timeout) {
 export async function runGate(gate, deps = {}) {
   const { name, cmd, cwd = process.cwd(), onFail = 'rollback', autofixCmd, timeout } = gate
   const resumeFix = gate.resumeFix ?? deps.resumeFix
+
+  // dry-run：不 spawn，直接判过（结构校验用，不烧构建时间）
+  if (isDryRun()) return { name, passed: true, attempts: 1, dryRun: true, output: '[dry-run] gate skipped' }
 
   let { stdout, exitCode } = await runShell(cmd, cwd, timeout)
   if (exitCode === 0) return { name, passed: true, attempts: 1, output: stdout }

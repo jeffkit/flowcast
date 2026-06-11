@@ -15,6 +15,7 @@ import {
   claude, cursor, gemini, codex, aider, recursive, recursiveProviderEnv,
 } from './agent.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
+import { isDryRun } from './dry-run.js'
 
 // ── provider 翻译器（通用 bundle → 各执行器的调用选项）──────────────
 
@@ -77,6 +78,8 @@ const META_KEYS = new Set(['executor', 'provider'])
 export function resolveAgent(name, agents = {}, { providers = {}, env = process.env } = {}) {
   const profile = agents[name]
   if (!profile) {
+    // dry-run 是结构冒烟，不校验 agent 配置是否齐全 → 给个 fake runner 让 flow 跑下去
+    if (isDryRun()) return { executor: name, run: makeFakeRun(name), opts: {} }
     const known = Object.keys(agents)
     const hint = known.length ? `已定义：${known.join(' / ')}` : '当前无任何 agent 配置，请创建 ~/.flowx/agents.json'
     throw new Error(`未知 agent '${name}'（${hint}）`)
@@ -98,12 +101,24 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
         `请从 agent '${name}' 去掉 provider，改用它自带的 model 选择`,
       )
     }
-    const bundle = resolveProvider(profile.provider, providers, env)
-    const applied = ex.applyProvider(bundle) ?? {}
-    // profile 显式选项优先于翻译器产出（如 profile 里写了 model，不被 provider 默认 model 覆盖）
-    opts.env = { ...(applied.env ?? {}), ...(opts.env ?? {}) }
-    if (applied.model != null && opts.model == null) opts.model = applied.model
+    // dry-run 跳过真实 provider 解析（无需真 key），但 provider-locked 校验上面已恒做
+    if (!isDryRun()) {
+      const bundle = resolveProvider(profile.provider, providers, env)
+      const applied = ex.applyProvider(bundle) ?? {}
+      // profile 显式选项优先于翻译器产出（如 profile 里写了 model，不被 provider 默认 model 覆盖）
+      opts.env = { ...(applied.env ?? {}), ...(opts.env ?? {}) }
+      if (applied.model != null && opts.model == null) opts.model = applied.model
+    }
   }
 
-  return { executor: profile.executor, run: ex.run, opts }
+  const run = isDryRun() ? makeFakeRun(profile.executor) : ex.run
+  return { executor: profile.executor, run, opts }
+}
+
+/** dry-run 假执行器：不调真 CLI，返回成功占位 + _meta。 */
+function makeFakeRun(executor) {
+  return async (goal, _opts = {}) => {
+    const out = `[dry-run] ${executor} would run: ${String(goal ?? '').slice(0, 80)}`
+    return Object.assign(out, { _meta: { cli: executor, dryRun: true, exitCode: 0 } })
+  }
 }
