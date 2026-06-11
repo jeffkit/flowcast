@@ -24,6 +24,7 @@
     "provider.js",
     "executor.js",
     "dry-run.js",
+    "git.js",
     "flows/",
     "orchestrator/",
     "examples/",

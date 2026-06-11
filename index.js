@@ -13,3 +13,4 @@ export { writeFailureContext, readAndConsumeFailureContext } from './failure-con
 export { interpolateEnv, loadProviders, resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 export { EXECUTORS, getExecutor, loadAgents, resolveAgent } from './executor.js'
 export { isDryRun } from './dry-run.js'
+export { gitStatus, gitDiff, gitCommitAll } from './git.js'

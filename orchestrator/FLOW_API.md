@@ -36,6 +36,8 @@
 | `waitForInput(prompt)` | HITL：阻塞等人工输入 |
 | `notify(message)` | HITL：单向通知 |
 | `writeFailureContext(dir, tag, info)` | 失败上下文落盘（下次注入 prompt） |
+| `gitCommitAll(repo, message)` | 暂存全部并提交（dry-run 下不实际提交）；需要 commit 时用它，**不要**裸调 shell |
+| `gitDiff(repo, {staged})` / `gitStatus(repo)` | 看 diff / 工作树状态 |
 | `isDryRun()` | 是否 dry-run（用于跳过真实副作用，如 requireClean） |
 
 ## 禁止项（validateFlow 会拦截）
