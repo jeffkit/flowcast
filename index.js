@@ -10,6 +10,8 @@ export {
 export { withSelfModGuard, captureBaseline } from './self-mod-guard.js'
 export { runGate, runGates } from './quality-gate.js'
 export { writeFailureContext, readAndConsumeFailureContext } from './failure-context.js'
+export { recordLearning, recall, buildMemorySection, promoteFailureContext } from './memory.js'
+export { loop } from './loop.js'
 export { interpolateEnv, loadProviders, resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 export { EXECUTORS, getExecutor, loadAgents, resolveAgent } from './executor.js'
 export { isDryRun } from './dry-run.js'
