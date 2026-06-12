@@ -12,7 +12,7 @@
 // flow / L3 编排层按名字引用它。resolveAgent 负责校验 + 解析 + 绑定。
 
 import {
-  claude, cursor, gemini, codex, aider, recursive, recursiveProviderEnv,
+  claude, cursor, gemini, codex, aider, recursive, agy, recursiveProviderEnv,
 } from './agent.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
@@ -48,8 +48,10 @@ export const EXECUTORS = {
   aider:     { run: aider,     applyProvider: aiderApply },
   claude:    { run: claude,    applyProvider: claudeApply },
   cursor:    { run: cursor },   // 自管鉴权/路由，不接受外部 provider
+  agent:     { run: cursor },   // cursor-agent CLI（二进制名 agent）的别名
   gemini:    { run: gemini },
   codex:     { run: codex },
+  agy:       { run: agy },      // 自带鉴权的编译型 agent CLI
 }
 
 /** 取执行器描述符；未注册抛错。 */

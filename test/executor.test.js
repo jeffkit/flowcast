@@ -29,8 +29,25 @@ test('getExecutor: 未知执行器报错', () => {
   assert.throws(() => getExecutor('nope'), /未知执行器 'nope'/)
 })
 
-test('EXECUTORS: 注册表覆盖现有 6 个 adapter', () => {
-  assert.deepEqual(Object.keys(EXECUTORS).sort(), ['aider', 'claude', 'codex', 'cursor', 'gemini', 'recursive'])
+test('EXECUTORS: 注册表覆盖全部 adapter', () => {
+  assert.deepEqual(
+    Object.keys(EXECUTORS).sort(),
+    ['agent', 'agy', 'aider', 'claude', 'codex', 'cursor', 'gemini', 'recursive'],
+  )
+})
+
+test('EXECUTORS: agent/agy/codex 为锁定型（不接受外部 provider）', () => {
+  for (const name of ['agent', 'agy', 'codex']) {
+    assert.equal(getExecutor(name).acceptsProvider, false, `${name} 应为锁定型`)
+  }
+})
+
+test('resolveAgent: 锁定型执行器配 provider → fail-fast', () => {
+  const agents = { 'agy-ds': { executor: 'agy', provider: 'deepseek' } }
+  assert.throws(
+    () => resolveAgent('agy-ds', agents, { providers: PROVIDERS, env: ENV }),
+    /不接受外部 provider/,
+  )
 })
 
 // ── resolveAgent：BYO 执行器绑定 provider ────────────────────────

@@ -25,6 +25,7 @@
     "executor.js",
     "dry-run.js",
     "git.js",
+    "subflow.js",
     "flows/",
     "orchestrator/",
     "examples/",

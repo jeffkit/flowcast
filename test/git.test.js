@@ -5,7 +5,8 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { gitCommitAll, gitStatus, gitDiff } from '../git.js'
+import { existsSync } from 'node:fs'
+import { gitCommitAll, gitStatus, gitDiff, gitWorktreeAdd, gitWorktreeRemove } from '../git.js'
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'flowx-git-'))
@@ -53,4 +54,44 @@ test('gitCommitAll: dry-run 不实际提交', () => {
     delete process.env.FLOWX_DRY_RUN
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('gitWorktreeAdd/Remove: 新增隔离工作树，复用已存在，移除', () => {
+  const dir = tempRepo()
+  writeFileSync(join(dir, 'a.txt'), 'hi')
+  gitCommitAll(dir, 'init')  // worktree add 需要至少一个 commit
+  const wt = join(dir, '.worktrees', 'w1')
+  try {
+    const r = gitWorktreeAdd(dir, wt)
+    assert.equal(r.created, true)
+    assert.ok(existsSync(join(wt, 'a.txt')), 'worktree 应包含已提交文件')
+
+    // 已存在 → 复用不报错
+    const r2 = gitWorktreeAdd(dir, wt)
+    assert.equal(r2.created, false)
+    assert.equal(r2.reason, 'exists')
+
+    const rm = gitWorktreeRemove(dir, wt)
+    assert.equal(rm.removed, true)
+    assert.ok(!existsSync(wt), 'worktree 目录应被移除')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('gitWorktreeAdd: dry-run 不实际创建', () => {
+  const dir = tempRepo()
+  process.env.FLOWX_DRY_RUN = '1'
+  try {
+    const wt = join(dir, '.worktrees', 'w-dry')
+    const r = gitWorktreeAdd(dir, wt)
+    assert.equal(r.dryRun, true)
+    assert.equal(r.created, false)
+    assert.ok(!existsSync(wt))
+  } finally {
+    delete process.env.FLOWX_DRY_RUN
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('gitWorktreeAdd: 缺 dir 抛错', () => {
+  assert.throws(() => gitWorktreeAdd('/tmp'), /需要 dir/)
 })

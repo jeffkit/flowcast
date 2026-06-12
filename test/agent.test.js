@@ -5,8 +5,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 import {
-  recursive, spawnCapture,
-  setHitlBackend, getHitlBackend, waitForInput, notify,
+  recursive, spawnCapture, claudeProviderEnv, isProviderRetryable, runAgentChain,
+  setHitlBackend, getHitlBackend, waitForInput, notify, parallel,
 } from '../agent.js'
 
 // 假的 recursive 二进制：按 FAKE_MODE 控制输出/退出码，并按 --transcript-out 写 transcript。
@@ -86,6 +86,97 @@ test('recursive 二进制不存在 → spawnError，不抛', async () => {
   assert.equal(out._meta.exitCode, -1)
 })
 
+// ── claude provider 注入 ──────────────────────────────────────────
+
+test('claudeProviderEnv：anthropic provider → ANTHROPIC_BASE_URL/_AUTH_TOKEN', () => {
+  const env = claudeProviderEnv({
+    name: 'anthropic-deepseek',
+    type: 'anthropic',
+    apiBase: 'https://api.deepseek.com/anthropic',
+    apiKey: 'sk-xxx',
+    model: 'deepseek-chat',
+  })
+  assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic')
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-xxx')
+})
+
+test('claudeProviderEnv：无 provider 返回 undefined（用 ambient env）', () => {
+  assert.equal(claudeProviderEnv(undefined), undefined)
+  assert.equal(claudeProviderEnv(null), undefined)
+})
+
+test('claudeProviderEnv：非 anthropic 协议 fail-fast', () => {
+  assert.throws(
+    () => claudeProviderEnv({ name: 'deepseek', type: 'openai', apiBase: 'x', apiKey: 'y' }),
+    /只支持 anthropic 协议/
+  )
+})
+
+// ── provider 回退判定 ─────────────────────────────────────────────
+
+test('isProviderRetryable：429/529 状态码 → 可回退', () => {
+  assert.equal(isProviderRetryable({ apiStatus: 429, message: 'x' }), true)
+  assert.equal(isProviderRetryable({ apiStatus: 529, message: 'x' }), true)
+})
+
+test('isProviderRetryable：限额类错误信息 → 可回退', () => {
+  assert.equal(isProviderRetryable({ message: "You've hit your session limit" }), true)
+  assert.equal(isProviderRetryable({ message: 'rate limit exceeded' }), true)
+  assert.equal(isProviderRetryable({ message: 'Too Many Requests (429)' }), true)
+  assert.equal(isProviderRetryable({ message: 'insufficient quota' }), true)
+  assert.equal(isProviderRetryable({ message: 'service overloaded' }), true)
+})
+
+test('isProviderRetryable：普通错误 → 不回退', () => {
+  assert.equal(isProviderRetryable({ apiStatus: 404, message: 'model not found' }), false)
+  assert.equal(isProviderRetryable({ message: '[claude] exit 1' }), false)
+  assert.equal(isProviderRetryable({}), false)
+  assert.equal(isProviderRetryable(null), false)
+})
+
+// ── runAgentChain 跨 CLI 回退 ─────────────────────────────────────
+
+test('runAgentChain：首个成功 → 不回退', async () => {
+  const calls = []
+  const runner = async (_p, spec) => { calls.push(spec.cli); return 'OK-' + spec.cli }
+  const r = await runAgentChain('x', [{ cli: 'claude' }, { cli: 'agy' }], { runner })
+  assert.equal(r, 'OK-claude')
+  assert.deepEqual(calls, ['claude'])
+})
+
+test('runAgentChain：minimax 限额(429) → agy → deepseek 按序回退', async () => {
+  const calls = []
+  const runner = async (_p, spec) => {
+    calls.push(spec.cli + (spec.provider?.name ? '/' + spec.provider.name : ''))
+    if (spec.cli === 'claude' && spec.provider?.name === 'anthropic-minimax') {
+      const e = new Error('rate limit'); e.apiStatus = 429; throw e
+    }
+    if (spec.cli === 'agy') throw Object.assign(new Error("You've hit your session limit"))
+    return 'OK-' + spec.cli
+  }
+  const chain = [
+    { cli: 'claude', provider: { name: 'anthropic-minimax' } },
+    { cli: 'agy' },
+    { cli: 'claude', provider: { name: 'anthropic-deepseek' } },
+  ]
+  const r = await runAgentChain('x', chain, { runner })
+  assert.equal(r, 'OK-claude')
+  assert.deepEqual(calls, ['claude/anthropic-minimax', 'agy', 'claude/anthropic-deepseek'])
+})
+
+test('runAgentChain：非限额错误 → 不回退，直接抛', async () => {
+  const calls = []
+  const runner = async (_p, spec) => {
+    calls.push(spec.cli)
+    const e = new Error('model not found'); e.apiStatus = 404; throw e
+  }
+  await assert.rejects(
+    () => runAgentChain('x', [{ cli: 'claude' }, { cli: 'agy' }], { runner }),
+    /model not found/,
+  )
+  assert.deepEqual(calls, ['claude'])  // 未尝试 agy
+})
+
 // ── HITL 可插拔后端 ───────────────────────────────────────────────
 
 test('默认后端是 terminal', () => {
@@ -133,4 +224,29 @@ test('notify 在后端无 notify 时回退终端（不抛）', async () => {
   setHitlBackend({ async waitForInput() { return '' } }) // 无 notify
   await assert.doesNotReject(notify('fallback message'))
   setHitlBackend('terminal')
+})
+
+// ── parallel ─────────────────────────────────────────────────────
+
+test('parallel: 无 concurrency 时全部并行，结果按序，某个失败返回 null', async () => {
+  const r = await parallel([
+    () => Promise.resolve(1),
+    () => Promise.reject(new Error('boom')),
+    () => Promise.resolve(3),
+  ])
+  assert.deepEqual(r, [1, null, 3])
+})
+
+test('parallel: concurrency 限并发，峰值不超上限，结果仍按原序', async () => {
+  let inFlight = 0
+  let peak = 0
+  const mk = (v) => async () => {
+    inFlight++; peak = Math.max(peak, inFlight)
+    await new Promise(res => setTimeout(res, 10))
+    inFlight--
+    return v
+  }
+  const r = await parallel([mk('a'), mk('b'), mk('c'), mk('d'), mk('e')], { concurrency: 2 })
+  assert.deepEqual(r, ['a', 'b', 'c', 'd', 'e'])
+  assert.ok(peak <= 2, `peak in-flight ${peak} 应 <= 2`)
 })

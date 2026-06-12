@@ -1,12 +1,17 @@
 import { spawn } from 'child_process'
-import { readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
+import { tmpdir } from 'os'
 
 // ── 底层 CLI 调用 ─────────────────────────────────────────────────
 
-function spawnCli(cli, args, cwd, timeout) {
+function spawnCli(cli, args, cwd, timeout, env) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(cli, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    const proc = spawn(cli, args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: env ? { ...process.env, ...env } : process.env,
+    })
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', d => { stdout += d })
@@ -28,31 +33,88 @@ function spawnCli(cli, args, cwd, timeout) {
 // ── CLI 封装：各 Agent ────────────────────────────────────────────
 
 /**
+ * 把通用 provider bundle（见 provider.js resolveProvider）翻译成 claude Code 读取的
+ * ANTHROPIC_* 环境变量，让 claude 走自定义网关（deepseek/minimax 等 anthropic 兼容端点）。
+ * 只接受 anthropic 协议族 provider；apiKey 已由上层从 ${VAR} 插值好（明文不入仓）。
+ * @param {{type?,apiBase?,apiKey?,model?}} [provider]
+ * @returns {Record<string,string>|undefined}
+ */
+export function claudeProviderEnv(provider) {
+  if (!provider) return undefined
+  if (provider.type && provider.type !== 'anthropic') {
+    throw new Error(`claude adapter 只支持 anthropic 协议 provider，收到 type=${provider.type}`)
+  }
+  const env = {}
+  if (provider.apiBase) env.ANTHROPIC_BASE_URL = provider.apiBase
+  if (provider.apiKey) env.ANTHROPIC_AUTH_TOKEN = provider.apiKey
+  return Object.keys(env).length ? env : undefined
+}
+
+// provider 限额/超载错误 → 可回退到下一个 provider。
+const RETRYABLE_PROVIDER_ERR = /rate.?limit|session limit|too many requests|quota|overloaded|\b429\b|\b529\b/i
+export function isProviderRetryable(err) {
+  return err?.apiStatus === 429 || err?.apiStatus === 529 || RETRYABLE_PROVIDER_ERR.test(err?.message ?? '')
+}
+
+/**
+ * 单次 claude 调用。用 spawnCapture（不因非零退出 reject），这样 claude 因 429/限额
+ * 退出非零时，仍能从 stdout 的 result JSON 里读出 api_error_status，供回退判断。
+ */
+async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
+  const args = ['-p', prompt, '--output-format', 'json']
+  if (effModel) args.push('--model', effModel)
+  args.push(...extraArgs)
+  const { stdout, exitCode, timedOut, spawnError } = await spawnCapture('claude', args, { cwd, timeout, env })
+  if (spawnError) throw new Error(`[claude] spawn error: ${spawnError}`)
+  if (timedOut) throw new Error(`[claude] timeout after ${timeout}ms`)
+  let data
+  try {
+    data = JSON.parse(stdout)
+  } catch {
+    if (exitCode !== 0) throw new Error(`[claude] exit ${exitCode}\n${stdout.trim()}`)
+    return stdout.trim()
+  }
+  const item = Array.isArray(data) ? data.find(x => x.type === 'result') : data
+  if (item?.is_error) {
+    const err = new Error(`claude error: ${item.result}`)
+    err.apiStatus = item.api_error_status
+    throw err
+  }
+  const usage = item?.usage ?? {}
+  const result = item?.result ?? stdout.trim()
+  return Object.assign(String(result), {
+    _meta: { cli: 'claude', model: item?.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens },
+  })
+}
+
+/**
  * Claude Code CLI  (claude -p ...)
  * 输出格式：JSON 数组，取 type=result 条目的 result 字段
+ * provider（可选）：anthropic 兼容网关 bundle，注入 ANTHROPIC_BASE_URL/_AUTH_TOKEN。
+ * providerFallbacks（可选）：主 provider 限额/超载时按序回退的 bundle 列表。
  */
-export async function claude(prompt, { cwd = process.cwd(), model, timeout = 300_000, extraArgs = [] } = {}) {
-  const args = ['-p', prompt, '--output-format', 'json']
-  if (model) args.push('--model', model)
-  args.push(...extraArgs)
-  const raw = await spawnCli('claude', args, cwd, timeout)
-  try {
-    const data = JSON.parse(raw)
-    if (Array.isArray(data)) {
-      const item = data.find(x => x.type === 'result')
-      if (item?.is_error) throw new Error(`claude error: ${item.result}`)
-      const usage = item?.usage ?? {}
-      const result = item?.result ?? raw.trim()
-      // 把 token 用量附在结果上，供审计层读取
-      return Object.assign(String(result), {
-        _meta: { cli: 'claude', model: item?.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }
-      })
+export async function claude(prompt, {
+  cwd = process.cwd(), model, timeout = 300_000, extraArgs = [], provider, providerFallbacks = [],
+} = {}) {
+  // provider 链：主 + 回退；空链表示用 ambient env（claude 自身配置）。
+  const chain = [provider, ...providerFallbacks].filter(p => p != null)
+  if (chain.length === 0) chain.push(undefined)
+  let lastErr
+  for (let i = 0; i < chain.length; i++) {
+    const p = chain[i]
+    try {
+      // 回退到不同 provider 时，模型必须跟随该 provider（CLI --model 显式覆盖除外）。
+      return await claudeOnce(prompt, { cwd, effModel: model ?? p?.model, extraArgs, timeout, env: claudeProviderEnv(p) })
+    } catch (e) {
+      lastErr = e
+      if (i < chain.length - 1 && isProviderRetryable(e)) {
+        console.warn(`  [provider fallback] ${p?.name ?? 'default'} 不可用（${e.apiStatus ?? String(e.message).slice(0, 40)}），切换 → ${chain[i + 1]?.name ?? 'default'}`)
+        continue
+      }
+      throw e
     }
-    return data.result ?? raw.trim()
-  } catch (e) {
-    if (e.message.startsWith('claude error:')) throw e
-    return raw.trim()
   }
+  throw lastErr
 }
 
 /**
@@ -69,15 +131,39 @@ export async function gemini(prompt, { cwd = process.cwd(), model, timeout = 300
 }
 
 /**
- * Codex CLI  (codex -p ...)
+ * Codex CLI  (codex exec ...)
  * https://github.com/openai/codex
- * 输出格式：纯文本
+ * 自管鉴权（codex login），不接受外部 provider。
+ * 用 codex exec 非交互模式；stdout 含事件日志噪声，故用 --output-last-message
+ * 把最终回复写到临时文件，读出干净结果（拿不到则回退 stdout）。
  */
 export async function codex(prompt, { cwd = process.cwd(), model, timeout = 300_000, extraArgs = [] } = {}) {
-  const args = ['--approval-mode', 'full-auto', '-q', prompt]
+  const outFile = join(tmpdir(), `flowx-codex-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
+  const args = ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-o', outFile]
+  if (model) args.push('--model', model)
+  args.push(...extraArgs, prompt)
+  const raw = await spawnCli('codex', args, cwd, timeout)
+  try {
+    if (existsSync(outFile)) {
+      const msg = readFileSync(outFile, 'utf8').trim()
+      unlinkSync(outFile)
+      if (msg) return msg
+    }
+  } catch { /* 读临时文件失败则回退 stdout */ }
+  return raw.trim()
+}
+
+/**
+ * agy CLI  (agy -p ...)
+ * 自带鉴权的编译型 coding agent CLI，不接受外部 provider。
+ * 非交互单次执行用 -p/--print；prompt 为位置参数；输出纯文本。
+ * 需要自动放行工具权限时，在 extraArgs 里加 --dangerously-skip-permissions。
+ */
+export async function agy(prompt, { cwd = process.cwd(), model, timeout = 300_000, extraArgs = [] } = {}) {
+  const args = ['-p', prompt]
   if (model) args.push('--model', model)
   args.push(...extraArgs)
-  const raw = await spawnCli('codex', args, cwd, timeout)
+  const raw = await spawnCli('agy', args, cwd, timeout)
   return raw.trim()
 }
 
@@ -265,7 +351,8 @@ export function recursiveProviderEnv({ type, apiBase, model, apiKey, maxSteps } 
 
 // ── 通用 runAgent：根据 cli 参数路由到对应封装 ────────────────────
 
-const CLI_MAP = { claude, gemini, codex, aider, cursor, recursive }
+// agent 是 cursor-agent CLI（二进制名就叫 agent），cursor adapter 已封装它 → 别名复用。
+const CLI_MAP = { claude, gemini, codex, aider, cursor, recursive, agy, agent: cursor }
 
 let _defaultCwd = process.cwd()
 
@@ -282,16 +369,65 @@ export async function runAgent(prompt, { cli = 'claude', cwd, ...opts } = {}) {
   return result
 }
 
+// 一个 agent spec 的可读标签（cli[/provider]），用于回退日志。
+function specLabel(spec = {}) {
+  return `${spec.cli ?? 'claude'}${spec.provider?.name ? '/' + spec.provider.name : ''}`
+}
+
+/**
+ * 跨 CLI 的 agent 链式回退：chain 是一组 runAgent opts，按序尝试，
+ * 某个因限额/不可用（isProviderRetryable）失败就切下一个（如 claude+minimax → agy → claude+deepseek）。
+ * 与 claude adapter 内部的 provider 回退正交：这里能跨不同 CLI 回退。
+ * @param {string} prompt
+ * @param {Array<object>} chain  每个元素是一份 runAgent opts（含 cli/model/provider/...）
+ * @param {{runner?:Function}} [io]  runner 默认 runAgent，可注入便于测试
+ */
+export async function runAgentChain(prompt, chain, { runner = runAgent } = {}) {
+  const list = Array.isArray(chain) && chain.length ? chain : [{}]
+  let lastErr
+  for (let i = 0; i < list.length; i++) {
+    try {
+      return await runner(prompt, list[i])
+    } catch (e) {
+      lastErr = e
+      if (i < list.length - 1 && isProviderRetryable(e)) {
+        console.warn(`  [agent fallback] ${specLabel(list[i])} 不可用（${e.apiStatus ?? String(e.message).slice(0, 50)}），切换 → ${specLabel(list[i + 1])}`)
+        continue
+      }
+      throw e
+    }
+  }
+  throw lastErr
+}
+
 // ── 并发工具 ─────────────────────────────────────────────────────
 
-/** 并行跑多个 agent，某个失败返回 null 不中断整体 */
-export async function parallel(thunks) {
-  return Promise.all(thunks.map(fn =>
-    fn().catch(err => {
-      console.error(`  [parallel error] ${err.message}`)
-      return null
-    })
-  ))
+/**
+ * 并行跑多个 thunk（() => Promise），某个失败返回 null 不中断整体。
+ * @param {Array<Function>} thunks
+ * @param {object} [o]
+ * @param {number} [o.concurrency]  并发上限；缺省 = 全部一起跑。结果按原下标顺序返回。
+ */
+export async function parallel(thunks, { concurrency } = {}) {
+  const guard = fn => fn().catch(err => {
+    console.error(`  [parallel error] ${err.message}`)
+    return null
+  })
+  // 无上限：全部一起跑（向后兼容默认行为）
+  if (!concurrency || concurrency >= thunks.length) {
+    return Promise.all(thunks.map(guard))
+  }
+  // 限并发：worker 池按序消费，结果保持原下标顺序
+  const results = new Array(thunks.length)
+  let next = 0
+  const worker = async () => {
+    while (next < thunks.length) {
+      const i = next++
+      results[i] = await guard(thunks[i])
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker))
+  return results
 }
 
 /** 把 items 依次流经多个 stage，每个 stage 是 async (item) => result */
