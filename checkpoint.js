@@ -67,6 +67,18 @@ export class Checkpoint {
     this._writeReport()
   }
 
+  // 是否已记录过某个 key（fan-out 时用来跳过已完成的子任务）
+  has(key) { return this.state.completed[key] !== undefined }
+
+  // 并发安全地记录一个已算好的结果（非 fn）。整段同步执行、无 await，
+  // 单线程下并发回调也不会交错，适合 parallel/fanOut 里各子任务回写完成状态。
+  record(key, result, meta = {}) {
+    this.state.completed[key] = result
+    this.state.steps.push({ key, status: 'done', completedAt: new Date().toISOString(), ...meta })
+    this._flush()
+    return result
+  }
+
   getPauseContext() { return this.state.pauseContext || {} }
   get status() { return this.state.status }
 

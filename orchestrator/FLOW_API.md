@@ -30,7 +30,10 @@
 | `resolveAgent(name, agents, {providers})` | 需要更细控制时直接解析 agent → `{run, opts}` |
 | `runGate(gate, deps?)` | 单个质量门（`{name, cmd, cwd, onFail}`；onFail: rollback/resume-fix/autofix） |
 | `runGates(gates, deps?)` | 顺序跑多个质量门 |
-| `parallel(thunks)` | 并行跑多个 `() => Promise`，某个失败返回 null 不中断 |
+| `parallel(thunks, {concurrency?})` | 并行跑多个 `() => Promise`，某个失败返回 null 不中断；`concurrency` 限并发 |
+| `runFlow(flowRef, opts)` | 把另一条 flow 当独立子进程跑（隔离+超时+续跑由其 `--run-id` 负责） |
+| `fanOut(tasks, {concurrency?, isolate?, logDir?, onResult?})` | 并发编排多条子 flow：限并发 + 可选 worktree 隔离 + 每任务日志 + 结果汇总 |
+| `gitWorktreeAdd(repo, dir)` / `gitWorktreeRemove(repo, dir)` | 受控 git worktree（给 fanOut 做每任务隔离用） |
 | `withSelfModGuard(fn, {repo, baseline})` | 自改安全沙箱：失败硬回滚（需要先 `captureBaseline`） |
 | `captureBaseline(repo, {requireClean})` | 捕获 git baseline |
 | `waitForInput(prompt)` | HITL：阻塞等人工输入 |

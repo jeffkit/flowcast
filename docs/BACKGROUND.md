@@ -87,7 +87,16 @@ L3 编排理念。不一次性大融合。
 ## 5. 路线图（下一步重点）
 
 1. **L3 动态编排 dogfooding**：接单 → 分拆 → 动态生成 flow → 跨 executor 调度，复用 `resolveAgent` 路由。
-   当前 codegen harness 已具备生成/校验/执行/续跑锁定的骨架，下一步是把"接单分拆"的上层接通并跑真实任务。
+   当前 codegen harness 已具备生成/校验/执行/续跑锁定的骨架，并已接出命令行入口
+   `flowx orchestrate "<目标>"`（`orchestrator/cli.js`）——一行需求即可端到端跑通生成→校验→执行。
+   **多 flow 并发调度的通用底座已就位**：`subflow.js` 的 `runFlow`（把一条 flow 当隔离子进程跑）
+   + `fanOut`（限并发 + worktree 隔离 + per-task 日志 + 汇总），配 `git.js` 的 worktree 原语、
+   `parallel(thunks,{concurrency})` 限并发、`Checkpoint.record/has` 并发安全记录。
+   `flows/todo-drain.js` 已用这套原语重写，作为「拆多组 → fanOut 并发跑子 flow → 隔离 → 汇总」的活样例。
+   **接单分拆层已落地**：`orchestrator/decompose.js`（LLM 受控分拆大目标 → 校验的子任务清单，刻意不做 DAG）
+   + `orchestrateMulti`（分拆 → 每子任务生成一条 flow → `fanOut` 并发执行，两段都续跑锁定），
+   CLI 入口 `flowx orchestrate "<大目标>" --split`。手写编排（todo-drain）与 LLM 分拆（orchestrateMulti）
+   共用 `fanOut` 这一底座。下一步是拿真实 agent 跑真实大目标做端到端 dogfooding。
 2. **revengers 选择性集成**：只取其 L3 编排理念（接单/分拆/调度/Arbiter），**不吞**其运行时（SQLite/daemon/锁/dashboard）。
 3. **review 健壮化**：goal 在 `recursive/.dev/flows/goals/001-self-review-structured-verdict.md`，留给 self-improve 自己 dogfooding。
 4. **selfImprove preset（通用内置 flow）**：暂缓（kongjie 决定先放）。

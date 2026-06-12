@@ -2,5 +2,7 @@
 
 export { validateFlow, scanImports } from './validate.js'
 export { generateFlow, extractCode, buildGenPrompt } from './generate.js'
-export { runGeneratedFlow, orchestrate } from './run.js'
+export { decompose, parseTasks, buildDecomposePrompt } from './decompose.js'
+export { runGeneratedFlow, orchestrate, orchestrateMulti } from './run.js'
+export { runOrchestrate } from './cli.js'
 export { FLOW_SKELETON, GOLDEN_SAMPLE, FLOW_API_DOC } from './paths.js'
