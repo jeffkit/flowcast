@@ -1,6 +1,8 @@
-import { mkdirSync, appendFileSync, readFileSync, existsSync } from 'fs'
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { flowcastDir } from './dirs.js'
+
+const DEFAULT_MAX_ENTRIES = 500  // scope 文件超出此条数时，保留最新的一半（LRU 淘汰）
 
 // ── memory：轻量「跨-run」记忆（learnings 的持久累积）─────────────────
 //
@@ -57,7 +59,7 @@ function scoreEntry(entry, terms) {
  * @param {object} [opts] - baseDir 覆盖默认 .flowx/memory
  * @returns {object} 实际写入的记录（含 ts）
  */
-export function recordLearning(scope, entry = {}, { baseDir = defaultBase() } = {}) {
+export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
   const rec = {
     ts: new Date().toISOString(),
     topic: entry.topic ?? 'untitled',
@@ -67,7 +69,15 @@ export function recordLearning(scope, entry = {}, { baseDir = defaultBase() } = 
     runId: entry.runId ?? null,
   }
   mkdirSync(baseDir, { recursive: true })
-  appendFileSync(scopePath(baseDir, scope), JSON.stringify(rec) + '\n')
+  const p = scopePath(baseDir, scope)
+  appendFileSync(p, JSON.stringify(rec) + '\n')
+  // 容量守卫：超限时（包含刚写入的那条）保留最新一半，避免无限膨胀。
+  // 读全量只在真正超限时做，正常路径只有一次 appendFileSync。
+  const entries = readEntries(baseDir, scope)
+  if (entries.length > maxEntries) {
+    // 保留最新的 ceil(maxEntries/2) 条，下次再触发前还有半箱余量
+    writeFileSync(p, entries.slice(-Math.ceil(maxEntries / 2)).map(e => JSON.stringify(e)).join('\n') + '\n')
+  }
   return rec
 }
 

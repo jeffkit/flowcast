@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process'
+import { git, gitOk } from './git.js'
 
 // ── withSelfModGuard：自我修改安全沙箱 ⭐ ──────────────────────────
 //
@@ -11,14 +11,6 @@ import { execFileSync } from 'child_process'
 //   5. verdict='committed' → 调用方已自行 commit，不回滚。
 //
 // 对应 self-improve.sh 的 git 预检 + EXIT trap + verdict_and_exit 的回滚分支。
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
-}
-
-function gitOk(args, cwd) {
-  try { git(args, cwd); return true } catch { return false }
-}
 
 /**
  * 捕获 baseline：要求存在 HEAD commit；requireClean 时要求工作树干净。

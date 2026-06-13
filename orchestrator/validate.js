@@ -65,8 +65,6 @@ export async function validateFlow(file, { timeout = 60_000, repo, cwd } = {}) {
   try {
     if (!repo) {
       execFileSync('git', ['init', '-q'], { cwd: tmp })
-      execFileSync('git', ['config', 'user.email', 'dryrun@flowcast'], { cwd: tmp })
-      execFileSync('git', ['config', 'user.name', 'flowcast-dryrun'], { cwd: tmp })
     }
     execFileSync('node', [file, '--dry-run', '--repo', tmp, '--goal', 'dry-run-demo', '--run-id', `dryrun-${Date.now()}`], {
       stdio: 'pipe',

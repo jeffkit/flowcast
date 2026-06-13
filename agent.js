@@ -392,8 +392,14 @@ function emitAgentEvent(e) {
 export async function runAgent(prompt, { cli = 'claude', cwd, ...opts } = {}) {
   // dry-run：不真实调用任何 CLI/API，返回假结果让 flow 骨架能空跑（写 flow/改原语时校验流程）。
   if (isDryRun()) return Object.assign(`[dry-run] ${cli} 未真实执行`, { _meta: { cli, dryRun: true } })
-  const fn = CLI_MAP[cli]
-  if (!fn) throw new Error(`未知 CLI: ${cli}，支持：${Object.keys(CLI_MAP).join('/')}`)
+  let fn = CLI_MAP[cli]
+  if (!fn) {
+    // CLI_MAP 未命中时回退查 EXECUTORS（registerExecutor 注册的自定义执行器）。
+    // 用动态 import 避免 agent.js ↔ executor.js 的初始化时循环依赖。
+    const { EXECUTORS } = await import('./executor.js')
+    fn = EXECUTORS[cli]?.run
+  }
+  if (!fn) throw new Error(`未知 CLI: ${cli}，支持：${Object.keys(CLI_MAP).join('/')}（或通过 registerExecutor 注册的自定义执行器）`)
   const result = await fn(prompt, { cwd: cwd ?? _defaultCwd, ...opts })
   // 把 _meta 暴露出来方便 checkpoint 记录，不影响 result 字符串本身
   return result
@@ -493,30 +499,41 @@ export async function runAgentChain(prompt, chain, {
 // ── 并发工具 ─────────────────────────────────────────────────────
 
 /**
- * 并行跑多个 thunk（() => Promise），某个失败返回 null 不中断整体。
+ * 并行跑多个 thunk（() => Promise）。
  * @param {Array<Function>} thunks
  * @param {object} [o]
  * @param {number} [o.concurrency]  并发上限；缺省 = 全部一起跑。结果按原下标顺序返回。
+ * @param {boolean} [o.strict=false]  true：任一失败立即抛错；false（默认）：失败返回 null 不中断整体。
  */
-export async function parallel(thunks, { concurrency } = {}) {
-  const guard = fn => fn().catch(err => {
+export async function parallel(thunks, { concurrency, strict = false } = {}) {
+  const failures = []
+  const guard = (fn, i) => fn().catch(err => {
     console.error(`  [parallel error] ${err.message}`)
+    if (strict) failures.push({ index: i, error: err })
     return null
   })
+  let results
   // 无上限：全部一起跑（向后兼容默认行为）
   if (!concurrency || concurrency >= thunks.length) {
-    return Promise.all(thunks.map(guard))
-  }
-  // 限并发：worker 池按序消费，结果保持原下标顺序
-  const results = new Array(thunks.length)
-  let next = 0
-  const worker = async () => {
-    while (next < thunks.length) {
-      const i = next++
-      results[i] = await guard(thunks[i])
+    results = await Promise.all(thunks.map((fn, i) => guard(fn, i)))
+  } else {
+    // 限并发：worker 池按序消费，结果保持原下标顺序
+    results = new Array(thunks.length)
+    let next = 0
+    const worker = async () => {
+      while (next < thunks.length) {
+        const i = next++
+        results[i] = await guard(thunks[i], i)
+      }
     }
+    await Promise.all(Array.from({ length: concurrency }, worker))
   }
-  await Promise.all(Array.from({ length: concurrency }, worker))
+  if (strict && failures.length > 0) {
+    const msgs = failures.map(f => `[${f.index}] ${f.error.message}`).join('; ')
+    const err = new Error(`parallel: ${failures.length} task(s) failed — ${msgs}`)
+    err.failures = failures
+    throw err
+  }
   return results
 }
 

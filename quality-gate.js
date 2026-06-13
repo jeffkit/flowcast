@@ -44,9 +44,25 @@ export async function runGate(gate, deps = {}) {
   if (exitCode === 0) { emit({ status: 'pass', attempts: 1 }); return { name, passed: true, attempts: 1, output: stdout } }
 
   if (onFail === 'autofix') {
-    if (autofixCmd) await runShell(autofixCmd, cwd, timeout)
-    emit({ status: 'pass', attempts: 1, autofixed: true })
-    return { name, passed: true, attempts: 1, autofixed: true, output: stdout }
+    if (autofixCmd) {
+      const fix = await runShell(autofixCmd, cwd, timeout)
+      if (fix.exitCode !== 0) {
+        emit({ status: 'fail', exitCode: fix.exitCode, autofixFailed: true })
+        const err = new Error(`quality gate '${name}': autofixCmd failed (exit ${fix.exitCode})`)
+        err.gate = name; err.output = fix.stdout; err.exitCode = fix.exitCode
+        throw err
+      }
+    }
+    // autofix 后重跑检查，确认真的修好了
+    const re = await runShell(cmd, cwd, timeout)
+    if (re.exitCode !== 0) {
+      emit({ status: 'fail', exitCode: re.exitCode, autofixFailed: true })
+      const err = new Error(`quality gate '${name}': still failing after autofix (exit ${re.exitCode})`)
+      err.gate = name; err.output = re.stdout; err.exitCode = re.exitCode
+      throw err
+    }
+    emit({ status: 'pass', attempts: 2, autofixed: true })
+    return { name, passed: true, attempts: 2, autofixed: true, output: re.stdout }
   }
 
   if (onFail === 'resume-fix' && typeof resumeFix === 'function') {

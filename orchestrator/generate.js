@@ -5,9 +5,9 @@
 
 import { writeFileSync, readFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import { resolveAgent } from '../executor.js'
 import { validateFlow } from './validate.js'
 import { FLOW_API_DOC, GOLDEN_SAMPLE } from './paths.js'
+import { resolveGenerateFn } from './agent-helper.js'
 
 /** 从 LLM 输出里抽取代码：优先 ```js 代码块，否则整段。 */
 export function extractCode(text) {
@@ -57,7 +57,7 @@ Output ONLY the flow code in a single \`\`\`js code block. No explanation.`
 export async function generateFlow(request, {
   repo = process.cwd(),
   runDir,
-  agent = 'claude-sonnet',
+  agent,
   agents = {},
   providers = {},
   generate,
@@ -67,11 +67,7 @@ export async function generateFlow(request, {
   mkdirSync(runDir, { recursive: true })
   const file = join(runDir, 'flow.mjs')
   const agentsList = Object.keys(agents)
-
-  const gen = generate ?? (async (prompt) => {
-    const a = resolveAgent(agent, agents, { providers })
-    return String(await a.run(prompt, { cwd: repo, ...a.opts }))
-  })
+  const gen = resolveGenerateFn({ agent, agents, providers, repo, generate, context: 'orchestrate' })
 
   let validation
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

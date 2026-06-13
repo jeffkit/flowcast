@@ -138,3 +138,122 @@ test('Checkpoint.step: fn 抛错后 _inFlight 清理，同一 key 可重试', as
     assert.equal(out, 'recovered')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
+
+// ── onStep 横切钩子 ───────────────────────────────────────────────
+
+test('onStep: start/done 事件按序触发，携带 key 和 durationMs', async () => {
+  const dir = tempDir()
+  try {
+    const events = []
+    const cp = new Checkpoint('hook-done', dir, { onStep: (e) => events.push(e) })
+    await cp.step('p1.work', async () => 'result')
+    assert.equal(events.length, 2)
+    assert.equal(events[0].event, 'start')
+    assert.equal(events[0].key, 'p1.work')
+    assert.equal(events[1].event, 'done')
+    assert.equal(events[1].key, 'p1.work')
+    assert.ok(Number.isFinite(events[1].durationMs), 'done 事件应有 durationMs')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('onStep: skip 事件在续跑跳过时触发', async () => {
+  const dir = tempDir()
+  try {
+    const cp1 = new Checkpoint('hook-skip', dir)
+    await cp1.step('p1', async () => 'cached')
+
+    const events = []
+    const cp2 = new Checkpoint('hook-skip', dir, { onStep: (e) => events.push(e) })
+    await cp2.step('p1', async () => 'fresh')
+    assert.equal(events.length, 1)
+    assert.equal(events[0].event, 'skip')
+    assert.equal(events[0].key, 'p1')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('onStep: error 事件在步骤失败时触发，携带 error 信息', async () => {
+  const dir = tempDir()
+  try {
+    const events = []
+    const cp = new Checkpoint('hook-err', dir, { onStep: (e) => events.push(e) })
+    await assert.rejects(() => cp.step('p1', async () => { throw new Error('boom') }))
+    const errEvt = events.find(e => e.event === 'error')
+    assert.ok(errEvt, 'error 事件应触发')
+    assert.equal(errEvt.key, 'p1')
+    assert.match(errEvt.error, /boom/)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('onStep: 钩子抛异常不影响主流程', async () => {
+  const dir = tempDir()
+  try {
+    const cp = new Checkpoint('hook-safe', dir, { onStep: () => { throw new Error('hook crash') } })
+    const result = await cp.step('p1', async () => 'ok')
+    assert.equal(result, 'ok')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('onStep: start/skip/error 事件自动写进 run.log.jsonl', async () => {
+  const dir = tempDir()
+  try {
+    const cp = new Checkpoint('hook-log', dir)
+    await cp.step('p1', async () => 'done')
+    // 续跑 skip
+    const cp2 = new Checkpoint('hook-log', dir)
+    await cp2.step('p1', async () => 'fresh')
+
+    const lines = readFileSync(join(dir, 'hook-log', 'run.log.jsonl'), 'utf8')
+      .trim().split('\n').map(l => JSON.parse(l))
+    const statuses = lines.map(l => l.status)
+    assert.ok(statuses.includes('start'), 'jsonl 应有 start 条目')
+    assert.ok(statuses.includes('done'),  'jsonl 应有 done 条目')
+    assert.ok(statuses.includes('skip'),  'jsonl 应有 skip 条目')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint.step: timeout 超时抛错并带 key 信息', async () => {
+  const dir = tempDir()
+  try {
+    const cp = new Checkpoint('r-timeout', dir)
+    await assert.rejects(
+      () => cp.step('slow', async () => new Promise(res => setTimeout(res, 200)), { timeout: 50 }),
+      /timed out/,
+    )
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint.step: 续跑时 _meta 从步骤记录里还原', async () => {
+  const dir = tempDir()
+  try {
+    const cp1 = new Checkpoint('r-meta-resume', dir)
+    const agentResult = Object.assign(String('output'), {
+      _meta: { cli: 'claude', model: 'claude-sonnet', inputTokens: 500, outputTokens: 100 },
+    })
+    await cp1.step('impl', async () => agentResult)
+
+    const cp2 = new Checkpoint('r-meta-resume', dir)
+    const cached = await cp2.step('impl', async () => 'fresh')
+    assert.equal(String(cached), 'output')
+    assert.equal(cached._meta?.cli, 'claude')
+    assert.equal(cached._meta?.model, 'claude-sonnet')
+    assert.equal(cached._meta?.inputTokens, 500)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint.step: 循环里重复调用同一 key 触发 warn（但不报错）', async () => {
+  const dir = tempDir()
+  const warnings = []
+  const origWarn = console.warn
+  console.warn = (...args) => warnings.push(args.join(' '))
+  try {
+    const cp = new Checkpoint('r-dupkey', dir)
+    await cp.step('task', async () => 'first')
+    // 同 key 再次调用（模拟循环里忘加下标），应 warn 并返回缓存值
+    const out = await cp.step('task', async () => 'second')
+    assert.equal(out, 'first', '应返回缓存值')
+    assert.ok(warnings.some(w => w.includes('task') && w.includes('下标')), '应打出 warn 提示')
+  } finally {
+    console.warn = origWarn
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

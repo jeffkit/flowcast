@@ -61,7 +61,7 @@ function summarizeResult(result) {
 function summarizeEvents(events, steps) {
   const signals = {
     fallback: 0,            // provider/CLI 回退次数（429 等）
-    fallbackByScope: {},    // {provider:n, cli:n}
+    fallbackByScope: {},    // {provider:n, cli:n}（按回退类型分类，供看板钻取）
     gatePass: 0,
     gateFail: 0,
     group: { done: 0, failed: 0 },
@@ -70,7 +70,8 @@ function summarizeEvents(events, steps) {
   for (const e of events) {
     if (e.event === 'fallback') {
       signals.fallback++
-      signals.fallbackByScope[e.scope] = (signals.fallbackByScope[e.scope] ?? 0) + 1
+      // scope: 'provider'（同 CLI 换 provider）或 'cli'（跨 CLI 回退）
+      signals.fallbackByScope[e.scope ?? 'unknown'] = (signals.fallbackByScope[e.scope ?? 'unknown'] ?? 0) + 1
     } else if (e.event === 'gate') {
       if (e.status === 'pass') signals.gatePass++
       else if (e.status === 'fail') signals.gateFail++
@@ -108,10 +109,19 @@ export function readRun(dir, runId, {
   const status = state.status ?? 'unknown'
   const stale = status === 'running' && lastActivityMs > 0 && (now - lastActivityMs) > staleMs
 
+  // 从 jsonl 建 start 时间戳索引（onStep 钩子写入），用于计算步骤等待时间。
+  const startTsMap = new Map()
+  const skipKeys = new Set()
+  for (const e of logEntries) {
+    if (e.key && e.status === 'start' && e.ts) startTsMap.set(e.key, e.ts)
+    if (e.key && e.status === 'skip') skipKeys.add(e.key)
+  }
+
   const steps = (state.steps ?? []).map(s => ({
     key: s.key,
     status: s.status ?? 'done',
     durationMs: Number.isFinite(s.durationMs) ? s.durationMs : null,
+    startedAt: startTsMap.get(s.key) ?? null,
     completedAt: s.completedAt ?? null,
     cli: s.cli ?? null,
     model: s.model ?? null,
@@ -133,6 +143,21 @@ export function readRun(dir, runId, {
   }
   usage.totalTokens = usage.inputTokens + usage.outputTokens
   const models = [...modelSet]
+
+  // 计算步间 gap（上步 completedAt → 本步 startedAt），需要 onStep 钩子写入的 start 时间戳。
+  for (let i = 0; i < steps.length; i++) {
+    const prev = steps[i - 1]
+    const cur = steps[i]
+    if (prev?.completedAt && cur.startedAt) {
+      const gap = new Date(cur.startedAt) - new Date(prev.completedAt)
+      cur.waitMs = Number.isFinite(gap) && gap >= 0 ? gap : null
+    } else {
+      cur.waitMs = null
+    }
+  }
+
+  // 跳过步（续跑时已完成的步骤）从 jsonl skip 条目重建，附上 completedAt（来自 state.completed 写入时间）。
+  const skippedSteps = [...skipKeys].map(key => ({ key, status: 'skip' }))
 
   // 找出失败步：jsonl 里 status=error 的步骤 key（步骤本身在 state.steps 里只存成功的）
   const errorSteps = logEntries
@@ -170,7 +195,9 @@ export function readRun(dir, runId, {
     summary: state.summary ?? null,
     completedCount: Object.keys(state.completed ?? {}).length,
     stepCount: steps.length,
+    skippedCount: skippedSteps.length,
     errorSteps,
+    skippedSteps,
     paused: status === 'paused',
     usage,
     models,
@@ -279,6 +306,7 @@ function computeStats(runs) {
     total: runs.length,
     running: 0, paused: 0, completed: 0, stale: 0, other: 0,
     fallback: 0, gateFail: 0, gatePass: 0,
+    skipped: 0,
     inputTokens: 0, outputTokens: 0, totalTokens: 0,
   }
   for (const r of runs) {
@@ -290,6 +318,7 @@ function computeStats(runs) {
     stats.fallback += r.signals.fallback
     stats.gateFail += r.signals.gateFail
     stats.gatePass += r.signals.gatePass
+    stats.skipped += r.skippedCount ?? 0
     if (r.usage?.hasTokens) {
       stats.inputTokens += r.usage.inputTokens
       stats.outputTokens += r.usage.outputTokens

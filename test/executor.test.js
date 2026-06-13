@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { EXECUTORS, getExecutor, loadAgents, resolveAgent } from '../executor.js'
+import { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor } from '../executor.js'
 
 const PROVIDERS = {
   deepseek: { type: 'openai', apiBase: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', apiKey: '${DS_KEY}' },
@@ -29,11 +29,9 @@ test('getExecutor: 未知执行器报错', () => {
   assert.throws(() => getExecutor('nope'), /未知执行器 'nope'/)
 })
 
-test('EXECUTORS: 注册表覆盖全部 adapter', () => {
-  assert.deepEqual(
-    Object.keys(EXECUTORS).sort(),
-    ['agent', 'agy', 'aider', 'claude', 'codex', 'cursor', 'gemini', 'recursive'],
-  )
+test('EXECUTORS: 注册表包含全部内置 adapter', () => {
+  const builtins = ['agent', 'agy', 'aider', 'claude', 'codex', 'cursor', 'gemini', 'recursive']
+  for (const name of builtins) assert.ok(name in EXECUTORS, `内置 adapter ${name} 应在注册表`)
 })
 
 test('EXECUTORS: agent/agy/codex 为锁定型（不接受外部 provider）', () => {
@@ -126,4 +124,38 @@ test('loadAgents: 项目级覆盖机器级', async () => {
     rmSync(home, { recursive: true, force: true })
     rmSync(proj, { recursive: true, force: true })
   }
+})
+
+// ── registerExecutor ─────────────────────────────────────────────
+
+test('registerExecutor: 注册后 getExecutor 能查到，acceptsProvider 按 applyProvider 派生', () => {
+  const myRun = async () => 'my-result'
+  registerExecutor('my-cli', myRun)
+  try {
+    const ex = getExecutor('my-cli')
+    assert.equal(ex.name, 'my-cli')
+    assert.equal(ex.run, myRun)
+    assert.equal(ex.acceptsProvider, false)
+  } finally {
+    delete EXECUTORS['my-cli']
+  }
+})
+
+test('registerExecutor: 带 applyProvider 则 acceptsProvider=true，resolveAgent 能用', () => {
+  const myRun = async (prompt, { model } = {}) => `result-${model}`
+  const myApply = (bundle) => ({ model: bundle.model ?? 'default' })
+  registerExecutor('my-byo', myRun, { applyProvider: myApply })
+  try {
+    assert.equal(getExecutor('my-byo').acceptsProvider, true)
+    const agents = { dev: { executor: 'my-byo', provider: 'deepseek' } }
+    const r = resolveAgent('dev', agents, { providers: PROVIDERS, env: ENV })
+    assert.equal(r.executor, 'my-byo')
+    assert.equal(r.opts.model, 'deepseek-v4-pro')
+  } finally {
+    delete EXECUTORS['my-byo']
+  }
+})
+
+test('registerExecutor: run 非函数抛 TypeError', () => {
+  assert.throws(() => registerExecutor('bad', 'not-a-fn'), /TypeError|run 必须是函数/)
 })

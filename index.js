@@ -13,7 +13,7 @@ export { writeFailureContext, readAndConsumeFailureContext } from './failure-con
 export { recordLearning, recall, buildMemorySection, promoteFailureContext } from './memory.js'
 export { loop } from './loop.js'
 export { interpolateEnv, loadProviders, resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
-export { EXECUTORS, getExecutor, loadAgents, resolveAgent } from './executor.js'
+export { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor } from './executor.js'
 export { isDryRun } from './dry-run.js'
 export { flowcastDir } from './dirs.js'
 export { gitStatus, gitDiff, gitCommitAll, gitHead, gitCurrentBranch, gitCommitsAhead, gitCreateBranch, gitWorktreeAdd, gitWorktreeRemove } from './git.js'

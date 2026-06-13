@@ -61,6 +61,19 @@ export function getExecutor(name) {
   return { name, run: e.run, applyProvider: e.applyProvider, acceptsProvider: typeof e.applyProvider === 'function' }
 }
 
+/**
+ * 注册自定义执行器，之后 runAgent({cli: name}) 和 resolveAgent 都能识别。
+ * @param {string}   name           执行器名（如 'my-cli'）
+ * @param {Function} run            adapter 函数 async (prompt, opts) => string
+ * @param {object}   [opts]
+ * @param {Function} [opts.applyProvider]  provider 翻译器 (bundle) => {env?, model?}；
+ *                                         提供则表示该执行器接受外部 provider（BYO-LLM）。
+ */
+export function registerExecutor(name, run, { applyProvider } = {}) {
+  if (typeof run !== 'function') throw new TypeError(`registerExecutor: run 必须是函数`)
+  EXECUTORS[name] = applyProvider ? { run, applyProvider } : { run }
+}
+
 /** 加载并合并多层 agent profile 配置（~/.flowx + <repo>/.flowx）。 */
 export async function loadAgents({ repo, dirs } = {}) {
   return loadMergedConfig(basenamesFor('agents'), { repo, dirs, key: 'agents' })

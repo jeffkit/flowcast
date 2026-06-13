@@ -25,19 +25,32 @@ test('红灯 + onFail=rollback → 抛错且带 gate/output', async () => {
   )
 })
 
-test('红灯 + onFail=autofix → 跑 autofixCmd 后视为通过', async () => {
+test('红灯 + onFail=autofix → autofixCmd 修好后重验通过', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'flowcast-gate-'))
   const flag = join(dir, 'fixed')
+  // cmd：flag 存在才绿灯；autofixCmd 创建 flag，之后重验通过
   const r = await runGate({
     name: 'fmt',
-    cmd: 'exit 1',
+    cmd: `test -f ${flag}`,
     onFail: 'autofix',
     autofixCmd: `touch ${flag}`,
   })
   assert.equal(r.passed, true)
   assert.equal(r.autofixed, true)
+  assert.equal(r.attempts, 2, 'autofix 后应重验一次（attempts=2）')
   assert.equal(existsSync(flag), true, 'autofixCmd 应被执行')
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('红灯 + onFail=autofix → autofixCmd 修后重验仍失败 → 抛错', async () => {
+  await assert.rejects(
+    runGate({ name: 'fmt', cmd: 'exit 1', onFail: 'autofix', autofixCmd: 'true' }),
+    (err) => {
+      assert.match(err.message, /still failing after autofix/)
+      assert.equal(err.gate, 'fmt')
+      return true
+    },
+  )
 })
 
 test('红灯 + resume-fix 成功 → 第二次通过', async () => {

@@ -4,7 +4,7 @@
 // 刻意「不做 DAG」：产出的是一组相互独立、可并行的子任务（与 BACKGROUND 的边界决策一致），
 // 由 fanOut 限并发 + worktree 隔离执行；任务间若真有依赖，应拆成多次 orchestrate 调用，而非在此引入编排图。
 
-import { resolveAgent } from '../executor.js'
+import { resolveGenerateFn } from './agent-helper.js'
 
 /** 构建分拆提示：要求只输出一个 JSON 数组，每项 {name, goal, agent?}。 */
 export function buildDecomposePrompt(goal, { agentsList = [], priorError } = {}) {
@@ -72,13 +72,10 @@ export function parseTasks(text) {
  * @returns {Promise<{tasks:Array, attempts:number}>}
  */
 export async function decompose(goal, {
-  repo = process.cwd(), agent = 'claude-sonnet', agents = {}, providers = {}, generate, maxAttempts = 2,
+  repo = process.cwd(), agent, agents = {}, providers = {}, generate, maxAttempts = 2,
 } = {}) {
   const agentsList = Object.keys(agents)
-  const gen = generate ?? (async (prompt) => {
-    const a = resolveAgent(agent, agents, { providers })
-    return String(await a.run(prompt, { cwd: repo, ...a.opts }))
-  })
+  const gen = resolveGenerateFn({ agent, agents, providers, repo, generate, context: 'orchestrate --split' })
 
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

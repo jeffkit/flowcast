@@ -69,7 +69,10 @@ export async function loop(iterate, opts = {}) {
   // 已完成轮数从 Checkpoint 推断，支持续跑：扫已落盘的 turn-N 结果（completed 才算真完成）。
   let turn = Object.keys(cp.state.completed ?? {}).filter((k) => /^turn-\d+$/.test(k)).length
   // lastResult 从最后一个已完成 turn 推断，避免额外缓存 key 的 flush 时序缺口。
-  let lastResult = turn > 0 ? cp.state.completed[`turn-${turn}`]?.result : undefined
+  // 续跑时从最后一个完成 turn 的旁路存储里读完整 lastResult（cp._loadResult 会透明处理 sidecar）
+  let lastResult = turn > 0
+    ? cp._loadResult(`turn-${turn}`, cp.state.completed[`turn-${turn}`])?.result
+    : undefined
 
   emit({ phase: 'start', goal, fromTurn: turn, maxTurns })
 
@@ -86,15 +89,23 @@ export async function loop(iterate, opts = {}) {
       ? buildMemorySection(memoryScope, { query: memoryQuery ?? goal, baseDir: memoryBaseDir })
       : ''
 
-    const result = await cp.step(`turn-${turnNo}`, async () => {
-      emit({ phase: 'iterate', turn: turnNo })
-      const r = await iterate({ turn: turnNo, goal, memorySection, lastVerdict, lastResult })
+    let result
+    try {
+      result = await cp.step(`turn-${turnNo}`, async () => {
+        emit({ phase: 'iterate', turn: turnNo })
+        const r = await iterate({ turn: turnNo, goal, memorySection, lastVerdict, lastResult })
 
-      // 每轮硬验证：跑质量门（dry-run 下自动判过）。门红灯按其 onFail 策略处理，
-      // rollback/resume-fix 仍失败会抛错——错误上抛、状态已落盘，下次可续跑。
-      const gateResults = gates.length ? await runGates(gates, gateDeps) : []
-      return { result: r, gateResults }
-    })
+        // 每轮硬验证：跑质量门（dry-run 下自动判过）。门红灯按其 onFail 策略处理，
+        // rollback/resume-fix 仍失败会抛错——错误上抛、状态已落盘，下次可续跑。
+        const gateResults = gates.length ? await runGates(gates, gateDeps) : []
+        return { result: r, gateResults }
+      })
+    } catch (e) {
+      cp.state.loopStatus = 'failed'
+      cp._flush()
+      emit({ phase: 'failed', turn: turnNo, error: e.message })
+      throw e
+    }
 
     const { result: iterResult, gateResults } = result
     lastResult = iterResult
@@ -102,6 +113,7 @@ export async function loop(iterate, opts = {}) {
     const done = await isDone({ turn: turnNo, result: iterResult, gateResults, state: cp.state })
     lastVerdict = done ? 'done' : 'continue'
     cp.state.loopVerdict = lastVerdict
+    cp._flush()
 
     // 把本轮结论沉淀进跨-run 记忆（可选）。
     if (memoryScope) {

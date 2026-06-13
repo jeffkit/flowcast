@@ -112,7 +112,9 @@ export async function fanOut(tasks, {
         worktree = dir
         cwd = dir
       } catch (e) {
-        console.warn(`  ⚠ ${task.name}: 建 worktree 失败，退回主 repo：${e.message}`)
+        // worktree 创建失败时不能静默降级到主 repo——并发任务会互相污染，直接抛错
+        throw new Error(`fanOut: 任务 '${task.name}' 建 worktree 失败（${e.message}）；` +
+          `请用 isolate='none' 或修复 git worktree 环境`)
       }
     }
     if (prepare) await prepare(task, { cwd, worktree })
@@ -141,13 +143,13 @@ export async function fanOut(tasks, {
 }
 
 /**
- * 把 worktree 内某条子 run 的状态镜像回主仓 `.flowx/runs`（观测数据保全）。
+ * 把 worktree 内某条子 run 的状态镜像回主仓 runs 目录（观测数据保全）。
  *
  * worktree 隔离的子 flow 把 state.json / run.log.jsonl 写在
- * `<worktree>/.flowx/runs/<childRunId>`。worktree 会被后续 fanOut 复用或被清理，
- * 这些观测数据随之消失（实测：失败组的子 run 就这样被覆盖、看板再也找不到）。
- * 每组完成后镜像回 `<repo>/.flowx/runs/<childRunId>`，让看板（跨 worktree 采集）
- * 能在主仓一处稳定读到。纯保全操作，失败只告警、不影响主流程。
+ * `<worktree>/.flowcast/runs/<childRunId>`（或 .flowx/，由 flowcastDir 决定）。
+ * worktree 会被后续 fanOut 复用或被清理，这些观测数据随之消失。
+ * 每组完成后镜像回主仓 runs 目录，让看板（跨 worktree 采集）能在主仓一处稳定读到。
+ * 纯保全操作，失败只告警、不影响主流程。
  *
  * @param {string} repo        主仓根目录（镜像目标）
  * @param {string} worktree    子 flow 的 worktree 路径（镜像来源；为空则跳过）

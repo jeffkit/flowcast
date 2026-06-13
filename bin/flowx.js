@@ -25,7 +25,11 @@ const require = createRequire(import.meta.url)
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const [,, command, ...rest] = process.argv
 
-const USER_FLOWS_DIR = join(homedir(), '.flowx', 'flows')
+// 用户级 flows 目录：优先 ~/.flowcast/flows，向后兼容 ~/.flowx/flows
+const _home = homedir()
+const USER_FLOWS_DIR = existsSync(join(_home, '.flowcast'))
+  ? join(_home, '.flowcast', 'flows')
+  : join(_home, '.flowx', 'flows')
 
 /**
  * 解析 flow 名或文件路径 → 绝对路径。
@@ -36,7 +40,10 @@ function resolveFlowFile(nameOrPath, cwd = process.cwd()) {
     return resolve(cwd, nameOrPath)
   }
   const name = nameOrPath.endsWith('.js') ? nameOrPath : `${nameOrPath}.js`
-  const projectFlow = join(cwd, '.flowx', 'flows', name)
+  // 项目级：优先 .flowcast/flows，向后兼容 .flowx/flows
+  const projectFlowCast = join(cwd, '.flowcast', 'flows', name)
+  const projectFlowX = join(cwd, '.flowx', 'flows', name)
+  const projectFlow = existsSync(projectFlowCast) ? projectFlowCast : projectFlowX
   if (existsSync(projectFlow)) return projectFlow
   const userFlow = join(USER_FLOWS_DIR, name)
   if (existsSync(userFlow)) return userFlow
@@ -153,7 +160,7 @@ if (command === 'flows') {
   if (!flowAbs) {
     console.error(`未找到 flow: ${nameOrFile}`)
     console.error(`查找路径：`)
-    console.error(`  项目级: ${join(process.cwd(), '.flowx', 'flows', nameOrFile + '.js')}`)
+    console.error(`  项目级: ${join(process.cwd(), '.flowcast', 'flows', nameOrFile + '.js')} 或 .flowx/flows/`)
     console.error(`  用户级: ${join(USER_FLOWS_DIR, nameOrFile + '.js')}`)
     console.error(`安装：flowx flows install <path-to-flow.js>`)
     process.exit(1)

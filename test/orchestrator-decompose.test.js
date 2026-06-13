@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url'
 
 import { decompose, parseTasks, orchestrateMulti } from '../orchestrator/index.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
+import { flowcastDir } from '../dirs.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const goldenCode = readFileSync(GOLDEN_SAMPLE, 'utf8')
 const fence = (code) => '```js\n' + code + '\n```'
-const cleanRun = (id) => rmSync(join(REPO, '.flowx', 'runs', id), { recursive: true, force: true })
+const cleanRun = (id) => rmSync(join(flowcastDir(REPO), 'runs', id), { recursive: true, force: true })
 
 // ── parseTasks ───────────────────────────────────────────────────
 
@@ -67,8 +68,8 @@ test('orchestrateMulti: 分拆 → 每任务生成 flow → fanOut dry-run 跑�
     assert.equal(r.results.length, 2)
     assert.deepEqual(r.results.map(x => x.task.name), ['alpha', 'beta'])
     // 落盘：tasks.json + 每个子任务的 flow.mjs
-    assert.ok(existsSync(join(REPO, '.flowx', 'runs', id, 'tasks.json')))
-    assert.ok(existsSync(join(REPO, '.flowx', 'runs', id, 'sub', 'alpha', 'flow.mjs')))
+    assert.ok(existsSync(join(flowcastDir(REPO), 'runs', id, 'tasks.json')))
+    assert.ok(existsSync(join(flowcastDir(REPO), 'runs', id, 'sub', 'alpha', 'flow.mjs')))
   } finally {
     cleanRun(id)
     ;['alpha', 'beta'].forEach(n => cleanRun(`${id}-${n}`))

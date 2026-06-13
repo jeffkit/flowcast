@@ -7,8 +7,13 @@ import { execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import { isDryRun } from './dry-run.js'
 
-function git(args, cwd) {
+// 内部 helper，供 self-mod-guard.js 共用；不经 index.js 对外暴露。
+export function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+}
+
+export function gitOk(args, cwd) {
+  try { git(args, cwd); return true } catch { return false }
 }
 
 /** 工作树改动（porcelain）。 */

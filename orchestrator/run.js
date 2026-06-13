@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { generateFlow } from './generate.js'
 import { decompose } from './decompose.js'
 import { runFlow, fanOut } from '../subflow.js'
+import { flowcastDir } from '../dirs.js'
 
 const FLOWX_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -63,7 +64,7 @@ export async function orchestrate(request, {
   const dep = checkFlowxResolvable(repo)
   if (!dep.ok) return { ok: false, stage: 'precheck', error: dep.error }
 
-  const runDir = join(repo, '.flowx', 'runs', runId)
+  const runDir = join(flowcastDir(repo), 'runs', runId)
   const file = join(runDir, 'flow.mjs')
   let reused = false
   let attempts = 0
@@ -74,8 +75,7 @@ export async function orchestrate(request, {
     const g = await generateFlow(request, { repo, runDir, agent, agents, providers, generate })
     attempts = g.attempts
     if (!g.validation.ok) return { ok: false, stage: 'generate', error: g.validation.error, file, attempts }
-    mkdirSync(runDir, { recursive: true })
-    writeFileSync(join(runDir, 'request.txt'), request, 'utf8')
+    writeFileSync(join(runDir, 'request.txt'), request, 'utf8')  // runDir 已由 generateFlow 创建
   }
 
   const res = await runGeneratedFlow(file, { repo, runId, goal: request, agent, dryRun, timeout, cwd: repo, onData, extraArgs })
@@ -106,7 +106,7 @@ export async function orchestrateMulti(goal, {
   const dep = checkFlowxResolvable(repo)
   if (!dep.ok) return { ok: false, stage: 'precheck', runId, error: dep.error }
 
-  const runDir = join(repo, '.flowx', 'runs', runId)
+  const runDir = join(flowcastDir(repo), 'runs', runId)
   mkdirSync(runDir, { recursive: true })
 
   // ① 分拆（续跑锁定：tasks.json 已存在则复用，绝不重新分拆）

@@ -371,3 +371,25 @@ test('parallel: concurrency 限并发，峰值不超上限，结果仍按原序'
   assert.deepEqual(r, ['a', 'b', 'c', 'd', 'e'])
   assert.ok(peak <= 2, `peak in-flight ${peak} 应 <= 2`)
 })
+
+test('parallel: strict=true 任一失败抛错，err.failures 含下标和原始 error', async () => {
+  await assert.rejects(
+    () => parallel([
+      () => Promise.resolve(1),
+      () => Promise.reject(new Error('task-1-fail')),
+      () => Promise.reject(new Error('task-2-fail')),
+    ], { strict: true }),
+    (err) => {
+      assert.match(err.message, /2 task\(s\) failed/)
+      assert.equal(err.failures.length, 2)
+      assert.equal(err.failures[0].index, 1)
+      assert.match(err.failures[0].error.message, /task-1-fail/)
+      return true
+    },
+  )
+})
+
+test('parallel: strict=true 全部成功时正常返回结果', async () => {
+  const r = await parallel([() => Promise.resolve('a'), () => Promise.resolve('b')], { strict: true })
+  assert.deepEqual(r, ['a', 'b'])
+})

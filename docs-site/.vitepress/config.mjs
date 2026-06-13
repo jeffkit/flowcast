@@ -58,6 +58,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: 'L3 编排（orchestrate）', link: '/guide/orchestration' },
+            { text: 'loop · memory · failure-context', link: '/guide/loop-memory' },
             { text: '配置分层', link: '/guide/configuration' },
             { text: '示例', link: '/guide/examples' },
           ],

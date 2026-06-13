@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url'
 
 import { runFlow, fanOut } from '../subflow.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
+import { flowcastDir } from '../dirs.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
-const cleanRun = (id) => rmSync(join(REPO, '.flowx', 'runs', id), { recursive: true, force: true })
+const cleanRun = (id) => rmSync(join(flowcastDir(REPO), 'runs', id), { recursive: true, force: true })
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'flowcast-fo-'))
@@ -36,7 +37,7 @@ test('runFlow: 子进程 dry-run 跑黄金样例 → ok, exit 0', async () => {
 
 test('runFlow: logFile 给定时输出重定向到文件', async () => {
   const id = `t-rf-log-${Date.now()}`
-  const logFile = join(REPO, '.flowx', 'runs', id, 'out.log')
+  const logFile = join(flowcastDir(REPO), 'runs', id, 'out.log')
   try {
     const r = await runFlow(GOLDEN_SAMPLE, { repo: REPO, runId: id, goal: 'x', dryRun: true, timeout: 30_000, logFile })
     assert.equal(r.ok, true, r.stderr)

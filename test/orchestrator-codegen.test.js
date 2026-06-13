@@ -7,11 +7,12 @@ import { fileURLToPath } from 'node:url'
 
 import { generateFlow, extractCode, runGeneratedFlow, orchestrate, checkFlowxResolvable } from '../orchestrator/index.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
+import { flowcastDir } from '../dirs.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const goldenCode = readFileSync(GOLDEN_SAMPLE, 'utf8')
 const fence = (code) => '```js\n' + code + '\n```'
-const cleanRun = (id) => rmSync(join(REPO, '.flowx', 'runs', id), { recursive: true, force: true })
+const cleanRun = (id) => rmSync(join(flowcastDir(REPO), 'runs', id), { recursive: true, force: true })
 
 // ── extractCode ──────────────────────────────────────────────────
 
@@ -24,7 +25,7 @@ test('extractCode: 取代码块 / 裸文本', () => {
 
 test('generateFlow: 注入好代码一次过', async () => {
   const id = `t-gen-ok-${Date.now()}`
-  const runDir = join(REPO, '.flowx', 'runs', id)
+  const runDir = join(flowcastDir(REPO), 'runs', id)
   try {
     const r = await generateFlow('analyze src', { repo: REPO, runDir, generate: async () => fence(goldenCode) })
     assert.equal(r.validation.ok, true, r.validation.error)
@@ -34,7 +35,7 @@ test('generateFlow: 注入好代码一次过', async () => {
 
 test('generateFlow: 首次违规 → 回喂错误 → 第二次修正（attempts=2）', async () => {
   const id = `t-gen-retry-${Date.now()}`
-  const runDir = join(REPO, '.flowx', 'runs', id)
+  const runDir = join(flowcastDir(REPO), 'runs', id)
   let n = 0
   const gen = async () => { n++; return n === 1 ? fence("import { x } from 'fs'\nawait Promise.resolve()") : fence(goldenCode) }
   try {
@@ -46,7 +47,7 @@ test('generateFlow: 首次违规 → 回喂错误 → 第二次修正（attempts
 
 test('generateFlow: 始终违规 → ok false', async () => {
   const id = `t-gen-bad-${Date.now()}`
-  const runDir = join(REPO, '.flowx', 'runs', id)
+  const runDir = join(flowcastDir(REPO), 'runs', id)
   try {
     const r = await generateFlow('x', { repo: REPO, runDir, maxAttempts: 2,
       generate: async () => fence("import { x } from 'fs'\nawait Promise.resolve()") })

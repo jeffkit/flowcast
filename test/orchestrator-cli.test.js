@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url'
 
 import { runOrchestrate } from '../orchestrator/index.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
+import { flowcastDir } from '../dirs.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const goldenCode = readFileSync(GOLDEN_SAMPLE, 'utf8')
 const fence = (code) => '```js\n' + code + '\n```'
-const cleanRun = (id) => rmSync(join(REPO, '.flowx', 'runs', id), { recursive: true, force: true })
+const cleanRun = (id) => rmSync(join(flowcastDir(REPO), 'runs', id), { recursive: true, force: true })
 
 // ── runOrchestrate（fake 生成，不烧 API）─────────────────────────
 
@@ -23,7 +24,7 @@ test('runOrchestrate: 位置参数当 goal → 生成 → 校验 → dry-run 跑
     )
     assert.equal(code, 0)
     // 生成产物落盘到 run 目录
-    assert.ok(existsSync(join(REPO, '.flowx', 'runs', id, 'flow.mjs')))
+    assert.ok(existsSync(join(flowcastDir(REPO), 'runs', id, 'flow.mjs')))
   } finally { cleanRun(id) }
 })
 

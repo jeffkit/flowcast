@@ -81,7 +81,10 @@ async function loadConfigFile(file) {
  * @returns {Promise<Record<string, object>>}
  */
 export async function loadMergedConfig(basenames, { repo, dirs, key } = {}) {
-  const searchDirs = dirs ?? [join(homedir(), '.flowx'), ...(repo ? [flowcastDir(repo)] : [])]
+  // 机器级：优先 ~/.flowcast，向后兼容 ~/.flowx（与项目级 flowcastDir 逻辑一致）
+  const home = homedir()
+  const homeDir = existsSync(join(home, '.flowcast')) ? join(home, '.flowcast') : join(home, '.flowx')
+  const searchDirs = dirs ?? [homeDir, ...(repo ? [flowcastDir(repo)] : [])]
   let merged = {}
   for (const dir of searchDirs) {
     for (const base of basenames) {

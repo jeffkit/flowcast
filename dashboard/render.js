@@ -107,13 +107,17 @@ h2{margin:0 0 4px;font-size:18px;word-break:break-all}
 .timeline{display:flex;flex-direction:column;gap:3px}
 .tl-row{display:grid;grid-template-columns:200px 1fr 70px;gap:8px;align-items:center;font-size:11px}
 .tl-key{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.tl-bar-wrap{background:var(--bg);border-radius:4px;height:14px;overflow:hidden}
+.tl-bar-wrap{background:var(--bg);border-radius:4px;height:14px;overflow:hidden;position:relative}
 .tl-bar{height:100%;background:linear-gradient(90deg,var(--accent),#9b7dfb);border-radius:4px;min-width:2px}
+.tl-bar.wait{background:var(--border);opacity:.6}
 .tl-row.err .tl-key{color:var(--err)}
 .tl-row.err .tl-bar{background:var(--err)}
+.tl-row.skip .tl-key{color:var(--muted);font-style:italic}
+.tl-row.skip .tl-bar{background:var(--muted);opacity:.35}
 .tl-dur{text-align:right;color:var(--muted)}
 .tl-model{color:var(--muted);font-size:10px;margin-left:6px;opacity:.8}
 .tl-tok{display:block;font-size:9px;color:var(--accent);opacity:.75}
+.tl-wait{display:block;font-size:9px;color:var(--muted);opacity:.6}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .cell{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;cursor:pointer}
 .cell:hover{border-color:var(--accent)}
@@ -150,6 +154,7 @@ function renderHeader(){
     ['总计',s.total,''],['运行中',s.running,'running'],['僵尸',s.stale,'stale'],
     ['暂停',s.paused,'paused'],['完成',s.completed,'completed'],
     ['fallback',s.fallback,'warn'],['质量门红灯',s.gateFail,'err'],
+    ...(s.skipped?[['续跑跳过',s.skipped,'']]:[]),
     ['Token',fmtTok(s.totalTokens),''],
   ];
   $('stats').innerHTML = items.map(([k,v,c])=>
@@ -184,7 +189,7 @@ function renderList(){
       + '<div class="rid">'+esc(r.runId)+'</div>'
       + '<div class="meta"><span class="badge b-'+sl+'">'+sl+'</span>'
       + (r.feature?'<span>'+esc(r.feature)+'</span>':'')
-      + '<span>'+r.completedCount+' steps</span>'
+      + '<span>'+r.completedCount+' steps'+(r.skippedCount?'<span style="color:var(--muted);font-size:10px"> +'+r.skippedCount+'↩</span>':'')+'</span>'
       + (r.signals.fallback?'<span title="fallback">↻'+r.signals.fallback+'</span>':'')
       + (r.signals.gateFail?'<span title="gate fail" style="color:var(--err)">✗gate</span>':'')
       + (r.children&&r.children.length?'<span>['+r.children.length+' 子]</span>':'')
@@ -228,7 +233,11 @@ function renderDetail(r){
   // 信号
   const sg=r.signals;
   const sigs=[];
-  if(sg.fallback) sigs.push('<span class="sigchip warn"><b>'+sg.fallback+'</b>fallback</span>');
+  if(sg.fallback){
+    const byScope=sg.fallbackByScope||{};
+    const detail=Object.entries(byScope).map(([s,n])=>s+':'+n).join(' ');
+    sigs.push('<span class="sigchip warn" title="'+esc(detail)+'"><b>'+sg.fallback+'</b>fallback</span>');
+  }
   if(sg.gateFail) sigs.push('<span class="sigchip err"><b>'+sg.gateFail+'</b>质量门红灯</span>');
   if(sg.gatePass) sigs.push('<span class="sigchip ok"><b>'+sg.gatePass+'</b>质量门通过</span>');
   if(sg.fixRounds) sigs.push('<span class="sigchip warn"><b>'+sg.fixRounds+'</b>fix 轮</span>');
@@ -247,25 +256,41 @@ function renderDetail(r){
   }
 
   // 步骤时间线
-  if(r.steps&&r.steps.length){
-    const max=Math.max(...r.steps.map(s=>s.durationMs||0),1);
-    const errKeys=new Set((r.errorSteps||[]).map(e=>e.key));
-    h+='<div class="section-title">步骤时间线（'+r.steps.length+' 步）</div><div class="timeline">';
-    for(const s of r.steps){
+  const allSteps = r.steps||[];
+  const skipped = r.skippedSteps||[];
+  const errSteps = r.errorSteps||[];
+  if(allSteps.length||skipped.length||errSteps.length){
+    const max=Math.max(...allSteps.map(s=>s.durationMs||0),1);
+    const totalLabel = allSteps.length+(skipped.length?' (续跑跳过 '+skipped.length+')':'');
+    h+='<div class="section-title">步骤时间线（'+totalLabel+'）</div><div class="timeline">';
+    for(const s of allSteps){
       const w=Math.max(2,Math.round((s.durationMs||0)/max*100));
       const tok=(s.inputTokens!=null||s.outputTokens!=null)?(fmtTok((s.inputTokens||0)+(s.outputTokens||0))+' tok'):'';
-      const tip=esc(s.key)+(s.model?(' · '+s.model):'')+(tok?(' · '+tok):'');
+      const waitLabel = s.waitMs!=null && s.waitMs>100 ? 'wait '+fmtDur(s.waitMs) : '';
+      const tip=esc(s.key)+(s.model?(' · '+s.model):'')+(tok?(' · '+tok):'')+(waitLabel?(' · '+waitLabel):'');
       h+='<div class="tl-row"><div class="tl-key" title="'+tip+'">'+esc(s.key)
         +(s.model?'<span class="tl-model">'+esc(s.model)+'</span>':'')+'</div>'
         +'<div class="tl-bar-wrap"><div class="tl-bar" style="width:'+w+'%"></div></div>'
-        +'<div class="tl-dur">'+fmtDur(s.durationMs)+(tok?'<span class="tl-tok">'+tok+'</span>':'')+'</div></div>';
+        +'<div class="tl-dur">'+fmtDur(s.durationMs)
+        +(tok?'<span class="tl-tok">'+tok+'</span>':'')
+        +(waitLabel?'<span class="tl-wait">'+esc(waitLabel)+'</span>':'')
+        +'</div></div>';
     }
-    h+='</div>';
-    // 失败步（jsonl 里 status=error）
-    for(const e of (r.errorSteps||[])){
+    // 续跑跳过的步骤（灰显斜体）
+    if(skipped.length){
+      h+='<div style="margin-top:6px;font-size:10px;color:var(--muted)">↩ 续跑跳过（已完成）：</div>';
+      for(const s of skipped){
+        h+='<div class="tl-row skip"><div class="tl-key" title="skip: '+esc(s.key)+'">'+esc(s.key)+'</div>'
+          +'<div class="tl-bar-wrap"><div class="tl-bar skip" style="width:15%"></div></div>'
+          +'<div class="tl-dur">skip</div></div>';
+      }
+    }
+    // 失败步
+    for(const e of errSteps){
       h+='<div class="tl-row err" style="margin-top:4px"><div class="tl-key">✗ '+esc(e.key)+'</div>'
         +'<div style="color:var(--err);font-size:11px">'+esc(e.error||'error')+'</div><div></div></div>';
     }
+    h+='</div>';
   }
 
   // 事件表
