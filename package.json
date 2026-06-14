@@ -5,7 +5,8 @@
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./internal": "./internal.js"
   },
   "bin": {
     "flowcast": "./bin/flowx.js",
@@ -18,6 +19,7 @@
   },
   "files": [
     "index.js",
+    "internal.js",
     "dirs.js",
     "checkpoint.js",
     "agent.js",

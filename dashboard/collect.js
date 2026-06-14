@@ -55,8 +55,41 @@ function summarizeResult(result) {
 }
 
 /**
- * 把 jsonl 事件流归并成可观测信号（fallback 率 / 质量门红灯 / fanOut 分组 / 修复轮数）。
- * 事件由 cp.event 写入：{event:'fallback'|'gate'|'group', ...}。
+ * run.log.jsonl 事件 schema 字典（中央注册表）。
+ *
+ * 事件由 cp.event(type, data) 写入 jsonl，dashboard summarizeEvents 按这里读。
+ * 新增事件 type 时务必：(1) 在此表登记 schema；(2) 在 summarizeEvents 加 case。
+ *
+ * schema: { fieldName: 'type' | 'optional type' }
+ * writer: 负责写入的源（哪个模块 + 哪行）
+ * reader: 负责读的源（通常是 dashboard summarizeEvents）
+ */
+export const EVENT_TYPES = {
+  fallback: {
+    schema: { scope: "'provider'|'cli'", cli: 'string', from: 'string', to: 'string', reason: 'string' },
+    writer: 'agent.js（emitAgentEvent，触发于 provider/CLI 限额回退）',
+    reader: 'dashboard/collect.js summarizeEvents（按 scope 分桶）',
+  },
+  gate: {
+    schema: { name: 'string', status: "'pass'|'fail'", exitCode: 'number' },
+    writer: 'quality-gate.js runGates 的 onEvent 回调',
+    reader: 'dashboard/collect.js summarizeEvents（gatePass / gateFail 计数）',
+  },
+  group: {
+    schema: { name: 'string', status: "'done'|'failed'", reason: 'optional string' },
+    writer: 'subflow.js fanOut onResult（每组完成后写）',
+    reader: 'dashboard/collect.js summarizeEvents（按 status 计数）',
+  },
+  loop: {
+    schema: { phase: "'start'|'iterate'|'turn-done'|'budget'|'failed'", turn: 'number', fromTurn: 'optional number', maxTurns: 'optional number', reason: 'optional string', done: 'optional boolean', error: 'optional string' },
+    writer: 'loop.js emit()（每个阶段发一条）',
+    reader: 'dashboard/collect.js summarizeEvents（统计 turn 数 / 预算触发 / 失败）',
+  },
+}
+
+/**
+ * 把 jsonl 事件流归并成可观测信号（fallback 率 / 质量门红灯 / fanOut 分组 / 修复轮数 / loop 周期）。
+ * 事件由 cp.event 写入：{event: EVENT_TYPES key, ...}。
  */
 function summarizeEvents(events, steps) {
   const signals = {
@@ -66,6 +99,12 @@ function summarizeEvents(events, steps) {
     gateFail: 0,
     group: { done: 0, failed: 0 },
     fixRounds: 0,           // fix-loop 轮数（从 step key 推断）
+    loop: {                 // loop 周期统计
+      turns: 0,             // 总 turn 数
+      done: 0,              // 达到 isDone 的次数
+      budgetExhausted: 0,   // budget 触顶的次数
+      failed: 0,            // iterate 抛错的次数
+    },
   }
   for (const e of events) {
     if (e.event === 'fallback') {
@@ -78,6 +117,13 @@ function summarizeEvents(events, steps) {
     } else if (e.event === 'group') {
       if (e.status === 'failed') signals.group.failed++
       else signals.group.done++
+    } else if (e.event === 'loop') {
+      // loop 阶段：start / iterate / turn-done / budget / failed
+      if (e.phase === 'turn-done') signals.loop.turns++
+      else if (e.phase === 'budget') signals.loop.budgetExhausted++
+      else if (e.phase === 'failed') signals.loop.failed++
+      // 兼容 done 字段（end-of-loop marker）
+      if (e.done === true) signals.loop.done++
     }
   }
   // fix-loop 轮数：force-dev 的修复步形如 p3.<m>.fix-1 / fix-2…

@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### 破坏性变更
+
+> **本节面向**通过 `file:` 依赖或 npm 安装消费 flowx 的下游仓（如 recursive / ilink-hub）。
+> 升级前请通读本节并相应更新代码。
+
+- **`executor.js` 删除 `claudeApply` / `recursiveApply` 翻译器函数**。
+  `applyProvider` 现在挂在 adapter 自身（`claude.applyProvider = claudeApplyProvider`、`recursive.applyProvider = recursiveProviderEnv`、`aider.applyProvider = aiderApply`）。下游若 `import { claudeApply } from 'flowcast/executor.js'` 会直接断——改 import `claudeApplyProvider` from `'flowcast/agent.js'`，或在 `agents.json` 改用标准 provider 字段（`resolveAgent` 自动接）。
+- **`setHitlBackend` 默认值从 `terminalBackend` 改为 `null`**。
+  未调 `setHitlBackend` 时 `waitForInput` / `notify` 抛清晰错误（不再静默用 terminal 在非 TTY 卡死）。下游若依赖「未配 backend 就走 terminal」的隐式行为，必须显式 `setHitlBackend('terminal')` 启动。
+- **`claude` adapter 注入的 env 变量名从 `ANTHROPIC_API_KEY` 统一为 `ANTHROPIC_AUTH_TOKEN`**。
+  旧 `executor.claudeApply` 写 `ANTHROPIC_API_KEY`；新 `claudeApplyProvider`（adapter 自带）写 `ANTHROPIC_AUTH_TOKEN`（Claude Code CLI 实际读取的字段）。下游若依赖 `process.env.ANTHROPIC_API_KEY`（不是从 spawn 来的而是 ambient），行为不变——但如果通过 `runProfile` + provider 注入，env 注入字段改了。
+- **`agent.js` 删除 `notify` 的「backend 无 notify 回退 terminal」兜底**。
+  旧版 `notify` 会在 `_hitlBackend` 缺 `notify` 方法时退到 `terminalBackend.notify`（`console.log`）。新版抛错（"HITL 后端未配置"）或调 backend.notify。必须给所有走 `notify` 的 backend 显式提供 `notify` 方法。
+- **`claudeProviderEnv` 不再 fail-fast 拒绝非 `anthropic` 类型 provider**。
+  旧版 `claudeProviderEnv({type: 'openai'})` 抛错；新版接受任何 type（Claude Code CLI 网关可转发多协议）。下游客服端若依赖"非 anthropic type 拒绝"的旧行为需要自行加检查。
+- **新增 `flowcast/internal` 子路径**（见变更节），下游不应 import 此路径（内部 helper，仅供测试 / 工具脚本）。
+
 ### 安全
 - **`setHitlBackend('wecom', cfg)` 加固**：`cfg.mcp2cli` 必须是 `mcp2cli`（默认走 PATH）或白名单目录（`/usr/local/bin`、`/usr/bin`、`/opt/homebrew/bin` 等）下的绝对路径；`cfg.server` 必须是 `@<namespace>/<name>` 形式。防 generated flow / 配置文件注入 `/bin/sh`、`curl evil.com` 等任意 binary 的 RCE 信道。
 - **`resolveAgent` 配置字段白名单**：透传给 adapter 的字段必须在 `SAFE_OPTS_KEYS` 白名单内（`cwd` / `timeout` / `model` / `maxSteps` / `allowTools` / `extraArgs` / `transcriptOut` / `pricingFile`）；白名单外字段（如 `systemPromptFile` / `workspace` 任意路径）静默丢弃。`extraArgs` 元素级白名单 `sanitizeExtraArgs` 进一步过滤 `claude` / `recursive` 已知安全 flag，锁定型执行器（`cursor` / `gemini` / `codex` / `agy`）拒绝任何 flag。

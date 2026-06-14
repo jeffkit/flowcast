@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Checkpoint, PauseSignal } from '../checkpoint.js'
-import { clearFlowcastDirCache } from '../dirs.js'
+import { clearFlowcastDirCache, flowcastDir } from '../dirs.js'
 
 function tempDir() { return mkdtempSync(join(tmpdir(), 'flowcast-cp-')) }
 
@@ -404,4 +404,22 @@ test('dry-run 下 dirs.js 把 flowcastDir 指向 ~/.flowx/dryrun/', async () => 
     else process.env.FLOWCAST_DRY_RUN = origEnv
     clearFlowcastDirCache()
   }
+})
+
+test('flowcastDir: 缓存 mtime 守护——.flowcast/ 创建后缓存自动切到新目录', () => {
+  // 模拟用户从 .flowx/ 升级到 .flowcast/：先无 .flowcast/（缓存走 .flowx/），
+  // 然后建 .flowcast/（mtime 变了），缓存应自动切到 .flowcast/
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-fcdir-'))
+  try {
+    // 1) 初始：无 .flowcast/，无 .flowx/ → fallback .flowx
+    clearFlowcastDirCache()
+    const p1 = flowcastDir(repo, { dryRun: false })
+    assert.equal(p1, join(repo, '.flowx'), '初始应选 .flowx')
+
+    // 2) 建 .flowcast/——mtime 守护应让缓存自动切
+    mkdirSync(join(repo, '.flowcast'), { recursive: true })
+    // 不调 clearFlowcastDirCache！靠 mtime 守护自动失效
+    const p2 = flowcastDir(repo, { dryRun: false })
+    assert.equal(p2, join(repo, '.flowcast'), '建 .flowcast/ 后应自动切到 .flowcast')
+  } finally { rmSync(repo, { recursive: true, force: true }) }
 })

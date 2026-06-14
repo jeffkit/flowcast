@@ -4,48 +4,43 @@
 // 和 dirs.js 的 _cache 都是模块级全局状态。任意一个 test 漏掉 finally 复位
 // 会污染后续 test。手动 finally 复位易遗漏。
 //
-// 用法（test 文件第一行）：
-//   import { setup, teardown } from './_setup.js'
-//   setup()   // 立刻复位 + 注册 beforeEach
-//   teardown()
-// 或更简单：
+// 用法 1：包整个文件所有 test 到一个 suite 里：
+//   import { describe, test } from 'node:test'
 //   import { autoReset } from './_setup.js'
-//   autoReset()
+//   describe('xxx.test.js', () => {
+//     autoReset()           // 注册 before/after 钩子
+//     test('a', () => ...)
+//     test('b', () => ...)
+//   })
+//
+// 用法 2：临时设 FLOWCAST_DRY_RUN（用完自动复原）：
+//   const captured = await withDryRunEnv(async () => process.env.FLOWCAST_DRY_RUN)
+//   assert.equal(captured, '1')
 
-import { before, after } from 'node:test'
-import { clearFlowcastDirCache, flowcastDir } from '../dirs.js'
-import { isDryRun } from '../dry-run.js'
-
-// 暴露 agent.js 的 reset API（通过 setAgentEventSink(null) / setHitlBackend('terminal')）
-// 已有 setter 直接调即可；这里抽公共 reset 函数。
+import { before, after, describe } from 'node:test'
+import { clearFlowcastDirCache } from '../dirs.js'
 
 /**
  * 把模块级全局状态复位到「干净测试起点」。
  * - dirs.js _cache 清空
  * - agent.js _agentEventSink = null
- * - agent.js _hitlBackend = null（强制每个 test 显式 setHitlBackend，避免静默 terminal）
- *
- * 也清掉 FLOWCAST_DRY_RUN env 痕迹——某些 test 会临时 set 然后没清。
+ * - agent.js _hitlBackend = 'terminal'
  */
-export function resetModuleState() {
+export async function resetModuleState() {
   clearFlowcastDirCache()
-  // 走显式 setter（agent.js 提供）
-  // 动态 import 避免循环依赖（_setup 引入 agent 但 agent 不引入 _setup）
-  return import('../agent.js').then(({ setAgentEventSink, setHitlBackend }) => {
-    setAgentEventSink(null)
-    setHitlBackend('terminal')
-  })
+  const { setAgentEventSink, setHitlBackend } = await import('../agent.js')
+  setAgentEventSink(null)
+  setHitlBackend('terminal')
 }
 
 /**
- * 在当前 test 文件里启用自动复位：每个 test 跑前都执行 resetModuleState。
- * 在 test 文件顶层调一次即可。
+ * 在当前 suite 注册 before/after 钩子：每个 test 跑前自动复位。
+ * 必须在 describe() 回调内调用（Node test runner 的 before/after 是 suite-scoped）。
  */
 export function autoReset() {
   before(async () => {
     await resetModuleState()
   })
-  // after 也跑一次保险（万一某 test 在 before 之前写入了状态）
   after(async () => {
     await resetModuleState()
   })
@@ -65,4 +60,26 @@ export async function withDryRunEnv(fn) {
     else process.env.FLOWCAST_DRY_RUN = orig
     clearFlowcastDirCache()
   }
+}
+
+/**
+ * 便捷：把传入的 suiteFn 包到 describe('<filename>', ...) 内并附加 autoReset。
+ * 用法（替换散落的 test() 为包到 suite 里）：
+ *   import { test } from 'node:test'
+ *   import { autoResetSuite, fileName } from './_setup.js'
+ *   autoResetSuite(fileName(import.meta.url), () => {
+ *     test('a', ...)
+ *   })
+ */
+export function autoResetSuite(suiteName, suiteFn) {
+  describe(suiteName, () => {
+    autoReset()
+    suiteFn()
+  })
+}
+
+/** 从 import.meta.url 提取文件名（不含路径）作为 suite 名。 */
+export function fileName(url) {
+  const m = url.match(/([^/\\]+)$/)
+  return m ? m[1] : 'suite'
 }

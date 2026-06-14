@@ -164,3 +164,25 @@ test('gitWorktreeAdd: 孤儿目录（存在但未注册）→ 抛明确错误', 
     )
   } finally { rmSync(repo, { recursive: true, force: true }) }
 })
+
+// ── macOS realpath 兜底（/var/folders/... → /private/var/folders/...）──
+
+test('gitWorktreeAdd: macOS 风格 symlink 路径（realpath 后比较）', () => {
+  // macOS 上 /tmp、/var/folders/... 是 /private/var/folders/... 的 symlink
+  // 输入路径不带 /private 前缀但 registered worktree 带，realpathSync 必须把它们
+  // 规范成同一路径才能正确识别为合法（不是孤儿）。
+  const repo = tempRepo()
+  // tempRepo 不带 commit，worktree add 需要 HEAD commit 先建好
+  writeFileSync(join(repo, 'a.txt'), 'init\n')
+  execFileSync('git', ['add', '.'], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+  const wt = join(repo, '.worktrees', 'macos-test')
+  try {
+    gitWorktreeAdd(repo, wt)
+    // macOS 二次调用应识别为已注册（realpath 后路径一致）
+    const r = gitWorktreeAdd(repo, wt)
+    assert.equal(r.created, false, '已注册 worktree 应被复用')
+    // Linux 上 /tmp 不是 symlink（realpath 不变），行为与 macOS 一致——这条
+    // 测试是 macOS 行为的功能性覆盖，跨平台都能跑。
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})

@@ -275,3 +275,40 @@ test('collectRuns: state.json 存在 + stat 异常 → orphanedStateFile=true（
     assert.equal(r.lastActivityMs > 0, true, '正常写入 mtime > 0')
   } finally { rmSync(repo, { recursive: true, force: true }) }
 })
+
+// ── R4.3: run.log.jsonl event schema 字典 + loop 事件识别 ─────────
+
+test('dashboard: EVENT_TYPES 字典登记全部事件 schema（fallback/gate/group/loop）', async () => {
+  const { EVENT_TYPES } = await import('../dashboard/collect.js')
+  // 字典应包含这 4 类事件
+  for (const k of ['fallback', 'gate', 'group', 'loop']) {
+    assert.ok(EVENT_TYPES[k], `EVENT_TYPES.${k} 应登记`)
+    assert.ok(EVENT_TYPES[k].schema, `${k} 应有 schema 字段`)
+    assert.ok(EVENT_TYPES[k].writer, `${k} 应标 writer`)
+    assert.ok(EVENT_TYPES[k].reader, `${k} 应标 reader`)
+  }
+  // loop schema 含 phase 字段
+  assert.match(EVENT_TYPES.loop.schema.phase, /start.*iterate.*turn-done.*budget.*failed/)
+})
+
+test('dashboard: loop 事件被 summarizeEvents 统计（不再静默丢）', () => {
+  const repo = tempRepo()
+  try {
+    const mainRuns = join(repo, '.flowx', 'runs')
+    // 模拟 loop 跑完 3 turn 然后 budget 触顶
+    writeRun(mainRuns, 'loop-test', { runId: 'loop-test', status: 'completed', completed: {}, steps: [] }, [
+      { event: 'loop', phase: 'start', fromTurn: 0, maxTurns: 3 },
+      { event: 'loop', phase: 'iterate', turn: 1 },
+      { event: 'loop', phase: 'turn-done', turn: 1 },
+      { event: 'loop', phase: 'iterate', turn: 2 },
+      { event: 'loop', phase: 'turn-done', turn: 2 },
+      { event: 'loop', phase: 'budget', reason: 'maxTurns', turn: 3 },
+    ])
+    const model = collectRuns(repo)
+    const r = model.runs.find(x => x.runId === 'loop-test')
+    // loop signals 应有数据（之前 0/0/0/0 → 现在 turns=2, budget=1）
+    assert.equal(r.signals.loop.turns, 2, '2 个 turn-done 应计 2')
+    assert.equal(r.signals.loop.budgetExhausted, 1, '1 个 budget 应计 1')
+    assert.equal(r.signals.loop.failed, 0)
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
