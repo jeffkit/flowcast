@@ -161,3 +161,65 @@ test('registerExecutor: 带 applyProvider 则 acceptsProvider=true，resolveAgen
 test('registerExecutor: run 非函数抛 TypeError', () => {
   assert.throws(() => registerExecutor('bad', 'not-a-fn'), /TypeError|run 必须是函数/)
 })
+
+// ── extraArgs / 配置字段白名单（防 LLM 注入任意文件路径）──────────
+
+test('resolveAgent: 透传字段必须在白名单内（systemPromptFile/workspace 等被丢弃）', () => {
+  // 攻击面：agents.json 写 `systemPromptFile: "/etc/shadow"` → 传给 recursive → 任意文件读
+  // 防护：白名单 SAFE_OPTS_KEYS 之外的字段被静默丢弃
+  const agents = {
+    'evil-rec': {
+      executor: 'recursive',
+      systemPromptFile: '/etc/shadow',   // 不在白名单
+      workspace: '/etc',                  // 不在白名单（之前能透传）
+      maxSteps: 50,                       // 在白名单
+    },
+  }
+  const r = resolveAgent('evil-rec', agents, { providers: PROVIDERS, env: ENV })
+  // 透传给 recursive 的 opts 必须不含危险字段
+  assert.equal(r.opts.systemPromptFile, undefined, 'systemPromptFile 应被丢弃')
+  assert.equal(r.opts.workspace, undefined, 'workspace 应被丢弃')
+  assert.equal(r.opts.maxSteps, 50, '白名单字段应保留')
+})
+
+test('resolveAgent: extraArgs 元素级白名单——只允许已知安全 flag', () => {
+  const agents = {
+    'cl-injected': {
+      executor: 'claude',
+      extraArgs: [
+        '--model', 'sonnet',                 // 合法
+        '--output-format', 'json',            // 合法
+        '--system-prompt-file', '/etc/shadow', // 非法——claude 不允许此 flag
+        '--upload-file', '/etc/passwd',       // 非法
+        '--exec', 'rm -rf /',                  // 非法
+      ],
+    },
+  }
+  const r = resolveAgent('cl-injected', agents, { providers: PROVIDERS, env: ENV })
+  // 应该只保留白名单内的 flag
+  assert.deepEqual(r.opts.extraArgs, ['--model', 'sonnet', '--output-format', 'json'])
+})
+
+test('resolveAgent: extraArgs 锁定型执行器（cursor/gemini/codex/agy）拒绝任何 flag', () => {
+  // 锁定型不接 extraArgs——用户不能往这些 CLI 塞 flag
+  for (const ex of ['cursor', 'gemini', 'codex', 'agy']) {
+    const agents = { [`bad-${ex}`]: { executor: ex, extraArgs: ['--model', 'x'] } }
+    const r = resolveAgent(`bad-${ex}`, agents, { providers: PROVIDERS, env: ENV })
+    assert.deepEqual(r.opts.extraArgs, [], `${ex} 不应保留 extraArgs`)
+  }
+})
+
+test('resolveAgent: extraArgs 未知执行器 → 拒绝所有 flag（保守）', () => {
+  // 通过 registerExecutor 注册的未知 executor，extraArgs 应被空集过滤
+  registerExecutor('my-cli', async () => 'ok')
+  const agents = { 'c1': { executor: 'my-cli', extraArgs: ['--flag', 'val'] } }
+  const r = resolveAgent('c1', agents, { providers: PROVIDERS, env: ENV })
+  assert.deepEqual(r.opts.extraArgs, [], '未知 executor 应丢弃 extraArgs')
+})
+
+test('sanitizeExtraArgs: --flag=value 形式正常处理', async () => {
+  // 边界：值在同一个 argv 元素里（= 形式）应被识别
+  const { sanitizeExtraArgs } = await import('../executor.js')
+  const out = sanitizeExtraArgs('claude', ['--model=sonnet', '--output-format=json', '--system-prompt-file=/etc/shadow'])
+  assert.deepEqual(out, ['--model=sonnet', '--output-format=json'])
+})

@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
+import { assertSafeIdent } from './helpers.js'
 
 // ── failure-context：最小 learnings（写入 on-fail + 注入 on-retry）─────
 //
@@ -20,6 +21,9 @@ function ctxPath(dir, tag) {
  * @returns {string} 写入的文件路径
  */
 export function writeFailureContext(dir, tag, { reason, tailLog = '', provider, model } = {}) {
+  // tag 最终拼到文件路径里，path.join 不阻止 `..` 解析，必须用白名单字符校验
+  // 拦在源头（跟 subflow.js 的 task.name 校验同套）。
+  assertSafeIdent(tag, 'tag')
   mkdirSync(dir, { recursive: true })
   const body = [
     '## Previous Attempt Failed', '',
@@ -48,6 +52,8 @@ export function writeFailureContext(dir, tag, { reason, tailLog = '', provider, 
  * @returns {string|null} 上下文内容，无则 null
  */
 export function readAndConsumeFailureContext(dir, tag) {
+  // 同样校验 tag（与 writeFailureContext 一致）
+  assertSafeIdent(tag, 'tag')
   const p = ctxPath(dir, tag)
   const tmp = `${p}.consuming.${process.pid}`
   const ownerSidecar = `${tmp}.owner.${process.pid}`

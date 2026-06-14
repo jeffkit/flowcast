@@ -89,3 +89,42 @@ test('并发 reader：先 rename 的进程拿到内容，另一个拿 null（不
   assert.match(winner.content, /RaceTest/)
   rmSync(dir, { recursive: true, force: true })
 })
+
+// ── tag 路径穿越防护 ─────────────────────────────────────────────
+
+test('writeFailureContext: tag 含路径穿越字符 → 抛错', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-fc-tag-'))
+  // .. 父目录穿越
+  assert.throws(
+    () => writeFailureContext(dir, '..', { reason: 'x' }),
+    /unsafe characters/,
+  )
+  assert.throws(
+    () => writeFailureContext(dir, '../escape', { reason: 'x' }),
+    /unsafe characters/,
+  )
+  // / 绝对路径
+  assert.throws(
+    () => writeFailureContext(dir, '/etc/shadow', { reason: 'x' }),
+    /unsafe characters/,
+  )
+  // \\ 反斜杠
+  assert.throws(
+    () => writeFailureContext(dir, 'a\\b', { reason: 'x' }),
+    /unsafe characters/,
+  )
+  // . 开头
+  assert.throws(
+    () => writeFailureContext(dir, '.hidden', { reason: 'x' }),
+    /unsafe characters/,
+  )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('readAndConsumeFailureContext: tag 同样校验', () => {
+  // read 路径不应绕过 write 的 tag 校验
+  assert.throws(
+    () => readAndConsumeFailureContext(tmpdir(), '..'),
+    /unsafe characters/,
+  )
+})

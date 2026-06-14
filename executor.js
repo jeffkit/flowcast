@@ -77,6 +77,62 @@ export async function loadAgents({ repo, dirs } = {}) {
 
 const META_KEYS = new Set(['executor', 'provider'])
 
+// 顶层 opts 字段白名单：profile 里允许出现的「调用选项」key。
+// 透传给 adapter 的所有字段必须在这里声明——白名单外的字段被静默丢弃（防 LLM 注入
+// `systemPromptFile: '/etc/shadow'`、`workspace: '/etc'` 等任意文件路径）。
+// 注：这是 L2 配置文件（agents.json）的白名单；generated flow 调的
+// `runProfile(agentName, goal, opts)` 走的是另一条 surface（runAgent chain），
+// 不受本表约束——runProfile 的 opts 校验在 agent.js 入口处。
+const SAFE_OPTS_KEYS = new Set([
+  'cwd', 'timeout', 'model', 'maxSteps', 'allowTools',
+  'extraArgs',  // 数组里每个 arg 仍要走 EXTRA_ARGS_WHITELIST 二次过滤
+  'transcriptOut', 'pricingFile',  // recursive 专用，路径约束在 adapter 内部
+])
+
+// extraArgs 元素级白名单：只允许 BYO-LLM adapter 已知安全的 flag。
+// LLM/配置文件若注入 `--system-prompt-file /etc/shadow` 这种 flag，会被这里拦掉。
+const EXTRA_ARGS_WHITELIST = {
+  claude: new Set([
+    '--model', '--output-format', '--max-steps', '--allowedTools', '--system-prompt',
+  ]),
+  recursive: new Set([
+    '--max-steps', '--model', '--workspace',
+  ]),
+  // 锁定型执行器不接 extraArgs（用户不能往 cursor/gemini/codex 塞 flag）
+  cursor: new Set(),
+  gemini: new Set(),
+  codex: new Set(),
+  agy: new Set(),
+}
+
+/**
+ * 过滤 extraArgs 数组：只保留白名单内 flag 的元素，且校验 flag 后的 value 不带危险字符。
+ * @param {string} executor  执行器名
+ * @param {string[]} args
+ * @returns {string[]} 过滤后的数组（白名单外的被丢弃）
+ */
+export function sanitizeExtraArgs(executor, args) {
+  if (!Array.isArray(args)) return []
+  const allowed = EXTRA_ARGS_WHITELIST[executor]
+  if (!allowed) return []  // 未知执行器：拒绝任何 extraArgs（保守）
+  const out = []
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (typeof a !== 'string' || !a.startsWith('--')) continue  // 跳过非 flag 形如（值会跟在前一个 flag 一起处理）
+    // 解析 flag 名：支持 --flag value / --flag=value 两种
+    const eq = a.indexOf('=')
+    const flag = eq >= 0 ? a.slice(0, eq) : a
+    if (!allowed.has(flag)) continue  // 丢弃非白名单 flag
+    out.push(a)
+    // 跟在这个 flag 后的非 flag 元素是 flag 的值
+    if (eq < 0 && i + 1 < args.length && !args[i + 1].startsWith('--')) {
+      out.push(args[i + 1])
+      i++
+    }
+  }
+  return out
+}
+
 /**
  * 解析具名 agent profile 为可直接喂给执行器的 { executor, run, opts }。
  * @param {string} name      agent profile 名
@@ -100,9 +156,16 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
   const ex = getExecutor(profile.executor)
 
   // 透传业务无关的调用选项（maxSteps / cwd / timeout / allowTools / model / workspace …）
+  // 白名单外字段静默丢弃——防 LLM 注入 systemPromptFile/workspace 等任意路径字段。
   const opts = {}
   for (const [k, v] of Object.entries(profile)) {
-    if (!META_KEYS.has(k)) opts[k] = v
+    if (META_KEYS.has(k)) continue
+    if (!SAFE_OPTS_KEYS.has(k)) continue  // 丢弃非白名单字段
+    opts[k] = v
+  }
+  // extraArgs 内部元素级白名单过滤（防 `--system-prompt-file /etc/shadow` 注入）
+  if (opts.extraArgs) {
+    opts.extraArgs = sanitizeExtraArgs(profile.executor, opts.extraArgs)
   }
 
   if (profile.provider) {

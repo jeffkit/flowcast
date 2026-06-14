@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { readFileSync, existsSync, unlinkSync } from 'fs'
+import { readFileSync, existsSync, unlinkSync, realpathSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { isDryRun } from './dry-run.js'
@@ -662,8 +662,10 @@ function makeWecomBackend(config = {}) {
   }
 
   // mcp2cli 真实实现：调用 wecom-hil MCP 工具。
-  const mcp2cli = config.mcp2cli ?? 'mcp2cli'
-  const server = config.server ?? '@wecom-hil'
+  // 安全：mcp2cli 必须是 PATH 上的 mcp2cli（默认）或用户在白名单目录下的绝对路径。
+  // server 必须是 `@<namespace>` 形式的 mcp 命名空间。避免 LLM 注入任意 binary/shell 命令。
+  const mcp2cli = resolveMcp2cliPath(config.mcp2cli ?? 'mcp2cli')
+  const server = resolveMcpServerName(config.server ?? '@wecom-hil')
   const waitTimeoutMs = config.waitTimeoutMs ?? 86_400_000  // 默认 24h，可通过 config 覆盖
   const callTool = async (tool, message, { wait }) => {
     const payload = JSON.stringify({ message, project_name: projectName, ...(chatId ? { chat_id: chatId } : {}) })
@@ -694,6 +696,52 @@ function makeWecomBackend(config = {}) {
 // 防止在非 TTY（CI/cron/subflow 子进程）下用 terminal 后端静默挂死。
 // 这是从 module-level 默认 terminalBackend 改来的契约——强制 flow 启动时显式选后端。
 let _hitlBackend = null
+
+// mcp2cli 路径白名单：只允许默认 mcp2cli（走 PATH 解析）或以下目录下的绝对路径。
+// 防止 generated flow / 配置文件注入任意 binary（/bin/sh、curl、wget 等）。
+const MCP2CLI_ALLOWED_DIRS = [
+  '/usr/local/bin',
+  '/usr/bin',
+  '/opt/homebrew/bin',
+  '/opt/local/bin',
+  // 用户层安装路径
+  join(process.env.HOME ?? '', '.local', 'bin'),
+  // 显式白名单子目录（项目仓/flowx 仓内）
+]
+
+/**
+ * 把 mcp2cli 输入规整成 spawn 第一个参数：
+ *   - 默认值 'mcp2cli' → 直接返回 'mcp2cli'（让 spawn 走 PATH 解析）
+ *   - 显式绝对路径 → 必须在白名单目录下；用 realpathSync 解析 symlink 后再校验
+ *     （防恶意用户在 /usr/local/bin/myevil 软链到 /bin/sh）
+ *   - 其他情况 → 抛错
+ */
+function resolveMcp2cliPath(input) {
+  if (input === 'mcp2cli') return input  // 默认走 PATH
+  if (typeof input !== 'string' || !input.startsWith('/')) {
+    throw new Error(`wecom backend: mcp2cli 必须是 'mcp2cli'（默认）或绝对路径，收到: ${input}`)
+  }
+  let resolved
+  try { resolved = realpathSync(input) } catch {
+    throw new Error(`wecom backend: mcp2cli 路径不存在或无法解析: ${input}`)
+  }
+  const allowed = MCP2CLI_ALLOWED_DIRS.some(d => d && resolved.startsWith(d + '/') || resolved === d)
+  if (!allowed) {
+    throw new Error(`wecom backend: mcp2cli 路径不在白名单目录（${MCP2CLI_ALLOWED_DIRS.filter(Boolean).join(', ')}）: ${input}（resolved: ${resolved}）`)
+  }
+  return resolved
+}
+
+/**
+ * 校验 mcp server 命名空间：必须是 `@<namespace>/<name>` 形式。
+ * 防止 LLM 注入 `-c`、`--exec` 等被 spawn 解释成 flag 的字符串。
+ */
+function resolveMcpServerName(input) {
+  if (typeof input !== 'string' || !/^@[\w.-]+\/[\w.-]+$/.test(input)) {
+    throw new Error(`wecom backend: server 必须是 @<namespace>/<name> 形式，收到: ${input}`)
+  }
+  return input
+}
 
 /** 选定 HITL 后端：'terminal' | 'wecom' | 自定义 backend 对象。 */
 export function setHitlBackend(backend, config = {}) {

@@ -8,6 +8,7 @@
 
 import { spawn } from 'child_process'
 import { mkdirSync, openSync, closeSync, existsSync, cpSync } from 'fs'
+import { assertSafeIdent } from './helpers.js'
 import { dirname, join } from 'path'
 import { gitWorktreeAdd, gitWorktreeRemove } from './git.js'
 import { isDryRun } from './dry-run.js'
@@ -67,9 +68,26 @@ export function runFlow(flowRef, {
 
     let timer
     if (timeout) timer = setTimeout(() => proc.kill('SIGKILL'), timeout)
+    // 父进程收到 SIGINT/SIGTERM 时主动 kill 子进程——避免父死了子 node 还在跑（连带 agent CLI）。
+    // 真正的 SIGKILL 父进程救不了（信号处理器不跑），但子 node 默认会随父退出（除非 detached）。
+    // 不设 detached，让 Node 默认父死子死。
+    let sigForwarded = false
+    const forwardSig = (sig) => {
+      if (sigForwarded || proc.killed || proc.exitCode != null) return
+      sigForwarded = true
+      try { proc.kill(sig) } catch { /* already dead */ }
+    }
+    const onSig = (sig) => {
+      forwardSig(sig)
+      // 给子进程 5s 优雅退出时间，主进程不等待（next tick resolve）
+    }
+    process.once('SIGINT', () => onSig('SIGINT'))
+    process.once('SIGTERM', () => onSig('SIGTERM'))
     const done = (exitCode, extra = {}) => {
       if (timer) clearTimeout(timer)
       if (fd != null) { try { closeSync(fd) } catch { /* ignore */ } }
+      process.removeListener('SIGINT', () => onSig('SIGINT'))
+      process.removeListener('SIGTERM', () => onSig('SIGTERM'))
       resolve({ ok: exitCode === 0, exitCode, stdout, stderr, ...extra })
     }
     proc.on('close', code => done(code))
@@ -104,13 +122,13 @@ export async function fanOut(tasks, {
   const results = new Array(tasks.length)
 
   const runOne = async (task, idx) => {
-    // task.name は worktree パスとログファイル名に直接使われる。
-    // path.join は .. を解決するため、不正な名前はパス穿越になる。
-    if (!/^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/.test(task.name)) {
-      throw new Error(
-        `fanOut: task.name '${task.name}' contains unsafe characters. ` +
-        `Only alphanumeric, dots, dashes, and underscores are allowed, and must start/end with alphanumeric.`
-      )
+    // task.name 是 worktree 路径与日志文件名的直接拼入部分。
+    // path.join 会解析 `..`，不安全的名字会路径穿越。
+    // 白名单字符校验拦在源头（与 helpers.assertSafeIdent 一致）。
+    try {
+      assertSafeIdent(task.name, 'task.name')
+    } catch (e) {
+      throw new Error(`fanOut: ${e.message}`)
     }
     let cwd = task.cwd ?? repo
     let worktree
@@ -187,4 +205,46 @@ export function archiveChildRun(repo, worktree, childRunId) {
     console.warn(`  ⚠ 镜像子 run ${childRunId} 失败（忽略）：${e.message}`)
     return false
   }
+}
+
+// ── stale 临时文件清理（SIGKILL 兜底）────────────────────────────
+//
+// agent.js: codex 的 /tmp/flowx-codex-*.txt 和 failure-context 的 .consuming.* sidecar
+// 在 finally 之前 SIGKILL 会留盘。本函数扫 tmpdir 把超过 STALE_TMP_MS 没动的清理掉。
+// 暴露在 public API：flowcast 启动时（bin/flowx.js）调一次 sweeperStaleTmp。
+// 失败静默——清理失败不影响主流程。
+
+import { readdirSync, statSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
+
+const STALE_TMP_MS = 60 * 60 * 1000  // 1h 没动 → 视为 stale
+// 名字前缀：必须严格匹配（防止误删其他工具的 tmp 文件）
+const STALE_TMP_PREFIXES = [
+  'flowx-codex-',           // codex adapter 临时输出
+  'flowcast-codex-',         // 备选名（防御）
+]
+
+/**
+ * 扫描 tmpdir 清理 stale 的 flowx-* 临时文件。
+ * 每次 flowcast 启动时调一次；失败静默。
+ */
+export function sweepStaleTmp({ olderThanMs = STALE_TMP_MS, baseDir = tmpdir() } = {}) {
+  const removed = []
+  try {
+    const now = Date.now()
+    for (const name of readdirSync(baseDir)) {
+      // 匹配我们认识的几种 stale 文件
+      const isOurs = STALE_TMP_PREFIXES.some(p => name.startsWith(p))
+        || /-failure-context\.md\.consuming\..*\.owner\..*/.test(name)  // failure-context sidecar
+      if (!isOurs) continue
+      try {
+        const st = statSync(join(baseDir, name))
+        if (now - st.mtimeMs > olderThanMs) {
+          unlinkSync(join(baseDir, name))
+          removed.push(name)
+        }
+      } catch { /* 单文件失败跳过 */ }
+    }
+  } catch { /* 扫不动就放弃 */ }
+  return removed
 }

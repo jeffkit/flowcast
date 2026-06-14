@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { rmSync, existsSync, readFileSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { rmSync, existsSync, readFileSync, mkdtempSync, writeFileSync, utimesSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { runFlow, fanOut } from '../subflow.js'
+import { runFlow, fanOut, sweepStaleTmp } from '../subflow.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
 import { flowcastDir } from '../dirs.js'
 
@@ -137,4 +137,61 @@ test('fanOut: isolate=worktree 为每个任务建隔离工作树并在其中跑 
       assert.ok(cwdWritten.endsWith(join('.worktrees', r.task.name)), `cwd=${cwdWritten}`)
     }
   } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
+// ── F2: subflow 信号透传 + stale 临时文件清理 ───────────────────
+
+test('runFlow: 父进程收 SIGTERM 时主动转发给子进程（不留孤儿）', async () => {
+  // 跑一个 sleep 子进程，验证父进程收 SIGTERM 时子进程被 kill
+  // 用一个写好 echo 'running' + sleep 的临时 flow 文件
+  const flowDir = mkdtempSync(join(tmpdir(), 'flowcast-sigfwd-'))
+  const flowFile = join(flowDir, 'flow.mjs')
+  writeFileSync(flowFile, `
+    import { setTimeout as wait } from 'node:timers/promises'
+    process.stdout.write('running\\n')
+    await wait(30000)  // 30s
+  `)
+  try {
+    const proc = new Promise((resolve) => {
+      const r = runFlow(flowFile, { cwd: flowDir, timeout: 30_000, dryRun: true })
+      // 等子进程跑到 'running'
+      setTimeout(() => {
+        // 模拟父进程收 SIGTERM
+        process.emit('SIGTERM')
+        resolve(r)
+      }, 500)
+    })
+    const result = await proc
+    // 子进程应该被 kill 退出
+    assert.notEqual(result.exitCode, 0, '子进程被信号杀掉时 exitCode 非 0')
+  } finally { rmSync(flowDir, { recursive: true, force: true }) }
+})
+
+test('sweepStaleTmp: 清理超龄的 flowx-codex-* 临时文件', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-sweep-'))
+  // 造 1h 前 mtime 的 flowx-codex-xxx.txt
+  const stale = join(dir, 'flowx-codex-stale-test.txt')
+  const fresh = join(dir, 'flowx-codex-fresh-test.txt')
+  writeFileSync(stale, 'stale')
+  writeFileSync(fresh, 'fresh')
+  // 把 stale 改成 2h 前
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+  utimesSync(stale, twoHoursAgo, twoHoursAgo)
+  // sweeper 扫 baseDir=dir
+  const removed = sweepStaleTmp({ baseDir: dir, olderThanMs: 60 * 60 * 1000 })
+  assert.ok(removed.includes('flowx-codex-stale-test.txt'), 'stale 应被清')
+  assert.ok(!existsSync(stale), 'stale 文件应已被删')
+  assert.ok(existsSync(fresh), 'fresh 文件应保留')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('sweepStaleTmp: 保留其他工具的 tmp 文件', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-sweep-safe-'))
+  // 别人的 tmp 文件（不同前缀）应不动
+  const other = join(dir, 'some-tool-tempfile.tmp')
+  writeFileSync(other, 'x')
+  utimesSync(other, new Date(Date.now() - 2 * 60 * 60 * 1000), new Date(Date.now() - 2 * 60 * 60 * 1000))
+  sweepStaleTmp({ baseDir: dir, olderThanMs: 60 * 60 * 1000 })
+  assert.ok(existsSync(other), '其他工具的 tmp 文件应保留')
+  rmSync(dir, { recursive: true, force: true })
 })

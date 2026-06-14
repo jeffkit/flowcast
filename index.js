@@ -17,5 +17,6 @@ export { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor } fr
 export { isDryRun } from './dry-run.js'
 export { flowcastDir, clearFlowcastDirCache } from './dirs.js'
 export { gitStatus, gitDiff, gitCommitAll, gitHead, gitCurrentBranch, gitCommitsAhead, gitCreateBranch, gitWorktreeAdd, gitWorktreeRemove } from './git.js'
-export { runFlow, fanOut, archiveChildRun } from './subflow.js'
+export { runFlow, fanOut, archiveChildRun, sweepStaleTmp } from './subflow.js'
 export { collectRuns, renderHtml, generateDashboard } from './dashboard/index.js'
+export { assertSafeIdent } from './helpers.js'

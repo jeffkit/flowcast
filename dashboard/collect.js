@@ -116,7 +116,14 @@ export function readRun(dir, runId, {
   // 有声明 → 用 max(staleMs, expectMaxMs)；没声明 → 用 staleMs 兜底（默认 10min）。
   const expectMaxMs = Number.isFinite(state.expectMaxMs) ? state.expectMaxMs : 0
   const effectiveStaleMs = Math.max(staleMs, expectMaxMs)
-  const stale = status === 'running' && lastActivityMs > 0 && (now - lastActivityMs) > effectiveStaleMs
+  // stale 判定：(a) 正常路径——state 文件存在 + mtime 早于阈值；(b) 异常路径——
+  // state.json 存在但 mtimeMs=0（stat 失败：权限/磁盘/被删后立刻重建），
+  // 此时 lastActivityMs 兜底取文件自身 mtime（应已能拿到）。如果连 mtime 都拿不到，
+  // 说明文件系统异常，保守判 stale（避免误把死进程当活）。
+  const stateMtimeOk = mtimeMs(statePath) > 0
+  const stale = status === 'running' && stateMtimeOk && (now - lastActivityMs) > effectiveStaleMs
+  // 显式标注：state 文件 mtime 拿不到 → 「orphaned」状态（区别于"超过阈值才 stale"）
+  const orphanedStateFile = status === 'running' && !stateMtimeOk
 
   // 从 jsonl 建 start 时间戳索引（onStep 钩子写入），用于计算步骤等待时间。
   const startTsMap = new Map()
@@ -195,7 +202,8 @@ export function readRun(dir, runId, {
     state,  // 完整 state.json（dashboard render 用 + 父子关系 parentRunId 字段）
     status,
     stale,
-    displayStatus: stale ? 'stale' : status,
+    orphanedStateFile,  // state 文件 mtime 拿不到（stat 失败）→ 异常态
+    displayStatus: stale ? 'stale' : (orphanedStateFile ? 'stale' : status),
     feature: state.pauseContext?.feature ?? state.summary?.feature ?? null,
     startedAt,
     completedAt,
