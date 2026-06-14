@@ -19,7 +19,9 @@ import {
   writeFailureContext, readAndConsumeFailureContext,
   // Provider / Executor
   interpolateEnv, loadProviders, resolveProvider, loadMergedConfig, basenamesFor,
-  EXECUTORS, getExecutor, loadAgents, resolveAgent,
+  EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor,
+  // 路径校验
+  assertSafeIdent,
   // dry-run
   isDryRun,
   // Git
@@ -29,6 +31,8 @@ import {
   runFlow, fanOut, archiveChildRun,
   // Dashboard
   collectRuns, renderHtml, generateDashboard,
+  // 数据目录
+  flowcastDir,
 } from 'flowcast'
 ```
 
@@ -36,12 +40,13 @@ import {
 
 | 分页 | 内容 |
 |------|------|
-| [Checkpoint](/api/checkpoint) | 断点续跑的步骤记录 |
+| [Checkpoint](/api/checkpoint) | 断点续跑的步骤记录（含 loop 协作窄接口） |
 | [Agent 执行](/api/agent) | `runAgent` / adapter / 链式回退 / 并发 / HITL |
 | [质量门 / 自改沙箱](/api/quality-gate) | `runGate` / `runGates` / `withSelfModGuard` / `captureBaseline` |
 | [Provider / Executor](/api/provider-executor) | 配置加载、解析、执行器能力分层 |
 | [Git / Subflow](/api/git-subflow) | 受控 git 原语 + 子 flow 调度 |
-| [Dashboard](/api/dashboard) | 可观测看板采集与渲染 |
+| [Dashboard](/api/dashboard) | 可观测看板采集与渲染（含 EVENT_TYPES） |
+| [实用工具](/api/utilities) | `assertSafeIdent` + `flowcast/internal` 入口 |
 
 ## L3 编排（orchestrator）
 

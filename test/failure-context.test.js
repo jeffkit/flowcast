@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, rmSync, readdirSync, writeFileSync } from 'fs'
+import { mkdtempSync, existsSync, rmSync, readdirSync, writeFileSync, renameSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
@@ -127,4 +127,62 @@ test('readAndConsumeFailureContext: tag 同样校验', () => {
     () => readAndConsumeFailureContext(tmpdir(), '..'),
     /unsafe characters/,
   )
+})
+
+// ── R5.4: 三类并发回归覆盖 ───────────────────────────────────────
+
+test('failure-context: 同 runId 多 tag 串写不互相污染', () => {
+  // orchestrate / fanOut 多子 flow 用同名 runId 不同 tag 写失败上下文，
+  // 应各写各的、互不覆盖
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-fc-multi-'))
+  try {
+    writeFailureContext(dir, 'task-a', { reason: 'first-fail', tailLog: 'log-a' })
+    writeFailureContext(dir, 'task-b', { reason: 'second-fail', tailLog: 'log-b' })
+    writeFailureContext(dir, 'task-c', { reason: 'third-fail', tailLog: 'log-c' })
+
+    // 各 tag 独立可读
+    const a = readAndConsumeFailureContext(dir, 'task-a')
+    const b = readAndConsumeFailureContext(dir, 'task-b')
+    const c = readAndConsumeFailureContext(dir, 'task-c')
+    assert.match(a, /first-fail.*log-a/s)
+    assert.match(b, /second-fail.*log-b/s)
+    assert.match(c, /third-fail.*log-c/s)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('failure-context: 同 tag 多次写后读 → 拿到最新（重试链语义）', () => {
+  // 重试链：旧 failure-context 被消费后，新失败再次写，read 拿到最新
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-fc-retry-'))
+  try {
+    writeFailureContext(dir, 'attempt', { reason: 'first', tailLog: 'try-1' })
+    // 模拟下次重试：消费旧 ctx
+    const first = readAndConsumeFailureContext(dir, 'attempt')
+    assert.match(first, /first.*try-1/s)
+    // 第二次失败
+    writeFailureContext(dir, 'attempt', { reason: 'second', tailLog: 'try-2' })
+    const second = readAndConsumeFailureContext(dir, 'attempt')
+    assert.match(second, /second.*try-2/s, '第二次写应覆盖第一次；读应拿最新')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('failure-context: 消费者 SIGKILL 后 owner sidecar 残留 → 下次 read 不应读到残留', () => {
+  // 真实场景：消费者 rename 成功、写 owner sidecar、然后 SIGKILL（rmSync 没跑）。
+  // 下次 readAndConsume 调一次：rename 找不到 p（已被消费者 rename 走）→ ENOENT → null。
+  // 这条覆盖：模拟「消费者已 rename 但没清理」的场景，read 不应被 stale sidecar 误导。
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-fc-sigkill-'))
+  try {
+    writeFailureContext(dir, 'attempt', { reason: 'real-fail', tailLog: 'log' })
+    // 模拟消费者已 rename 走原文件：删 p，留 stale tmp + owner sidecar
+    const p = join(dir, 'attempt-failure-context.md')
+    const tmp = `${p}.consuming.99999`
+    const owner = `${tmp}.owner.99999`
+    renameSync(p, tmp)
+    writeFileSync(owner, '99999')
+    // 原文件已被消费者 rename 走，新 readAndConsume 找不到 p → ENOENT → 返回 null
+    const result = readAndConsumeFailureContext(dir, 'attempt')
+    assert.equal(result, null, '原文件已被消费，read 应返回 null 不被残留误导')
+    // 残留 sidecar 仍在目录里（sweepStaleTmp 不扫 run dir）——验证语义被记录
+    const leftovers = readdirSync(dir).filter(f => f.includes('.consuming.') || f.includes('.owner.'))
+    assert.ok(leftovers.length > 0, 'SIGKILL 后 sidecar 仍在目录里（sweep 范围外）')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

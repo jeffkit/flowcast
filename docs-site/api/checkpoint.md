@@ -49,6 +49,28 @@ new Checkpoint(runId, stateDir = '.flowcast/runs')
 
 追加一条"非步骤"的结构化事件到 `run.log.jsonl`（**不**进 `state.json`，避免膨胀）。看板据此读取 provider fallback / 质量门红灯等信号。写盘异常会被吞掉（观测不影响主流程）。
 
+事件类型与字段约定见 [`EVENT_TYPES`](/api/dashboard#event_types) 中央字典——新增 event type 时务必在那里登记。
+
+### `cp.getStepResult(key) → result | undefined`
+
+读取已完成步骤的完整结果（透明处理 sidecar 大结果文件）。`key` 不在 `completed` 中返回 `undefined`。用于 loop 原语续跑时读上一轮产物。
+
+### `cp.getLoopState() → { verdict?, status?, turns?, reason? }`
+
+读 loop 协作状态（`verdict: 'done'|'continue'` 等）。`loop` 原语协作的窄接口——下游不要直接读 `cp.state.loopXxx`。
+
+### `cp.setLoopState({ verdict?, status?, turns?, reason? })`
+
+部分更新 loop 协作字段（未传不动）。**自动 flush 落盘**——外部 API 调用即意图已定。
+
+### `cp.countCompletedTurns() → number`
+
+统计已完成 `turn-N` 形式的步骤数（`^turn-\d+$`）。`loop` 原语续跑推断起始 turn 用。
+
+### `cp.setExpectMaxMs(ms)`
+
+声明本 run 期望最长跑多久。dashboard 自适应僵尸阈值用——`ms > 0` 时写 `state.expectMaxMs`，`staleMs = max(staleMs, expectMaxMs)`。
+
 ### `cp.getPauseContext() → object`
 
 取回 `pause` 时存的 `context`。
