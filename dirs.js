@@ -1,7 +1,9 @@
 // dirs.js — flowcast 目录约定
 //
 // 新项目使用 .flowcast/，旧项目 .flowx/ 向后兼容。
-// 规则：.flowcast/ 存在则用它，否则 fallback 到 .flowx/（旧项目无需迁移）。
+// 规则（见 resolveBaseDir）：全新项目默认 .flowcast/；仅有旧 .flowx/ 的项目继续用 .flowx/；
+// 两者并存时优先 .flowcast/，但若 .flowcast/ 尚无 runs/ 而 .flowx/runs 有数据则黏住 .flowx/
+// （防升级时把进行中的 run 续跑切断）。判定基于「哪个目录已承载 run 数据」而非「.flowcast/ 是否存在」。
 //
 // dry-run 隔离：FLOWCAST_DRY_RUN=1 时所有状态（memory/checkpoint/failure-context）写到
 // ~/.flowcast/dryrun/ 而非真实项目目录。这样 dry-run 跑完不污染真盘，clean up 一次 rm -rf 即可。
@@ -52,6 +54,7 @@ export function flowcastDir(repo = process.cwd(), { dryRun = isDryRun() } = {}) 
     return path
   }
   const fc = join(repo, '.flowcast')
+  const legacy = join(repo, '.flowx')
   const currentFcMtime = (() => {
     try { return statSync(fc).mtimeMs } catch { return 0 }
   })()
@@ -60,7 +63,29 @@ export function flowcastDir(repo = process.cwd(), { dryRun = isDryRun() } = {}) 
   if (cached && cached.fcMtimeMs === currentFcMtime) {
     return cached.path
   }
-  const path = currentFcMtime > 0 ? fc : join(repo, '.flowx')
+  const path = resolveBaseDir(fc, legacy, currentFcMtime > 0)
   _cache.set(key, { path, fcMtimeMs: currentFcMtime })
   return path
+}
+
+/**
+ * 在 .flowcast/ 与旧 .flowx/ 之间选 base 目录。规则（保证「升级不丢已有 run」）：
+ *   1. 全新项目（两者皆无）          → .flowcast（新默认，对齐重命名后的品牌与 README）
+ *   2. 仅有旧 .flowx/（老项目）       → .flowx（续跑连续性，旧项目无需迁移）
+ *   3. 两者都在，但 .flowcast/ 尚无 runs/ 而 .flowx/runs 有数据
+ *                                    → 黏住 .flowx（防升级时把进行中的 run 晾在一边、续跑找不到）
+ *   4. 其余（.flowcast/ 已是数据主目录）→ .flowcast
+ * 注：判定基于「哪个目录已经承载了本项目的 run 数据」，而非「.flowcast/ 目录是否恰好存在」——
+ * 这样用户按 README 新建 .flowcast/config.json 不会意外把旧 .flowx/runs 的续跑切断。
+ */
+function resolveBaseDir(fc, legacy, fcExists) {
+  const legacyExists = existsSync(legacy)
+  if (fcExists && legacyExists) {
+    const fcHasRuns = existsSync(join(fc, 'runs'))
+    const legacyHasRuns = existsSync(join(legacy, 'runs'))
+    return (!fcHasRuns && legacyHasRuns) ? legacy : fc
+  }
+  if (fcExists) return fc
+  if (legacyExists) return legacy
+  return fc  // 全新项目：默认 .flowcast
 }

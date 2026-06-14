@@ -407,19 +407,48 @@ test('dry-run 下 dirs.js 把 flowcastDir 指向 ~/.flowcast/dryrun/', async () 
 })
 
 test('flowcastDir: 缓存 mtime 守护——.flowcast/ 创建后缓存自动切到新目录', () => {
-  // 模拟用户从 .flowx/ 升级到 .flowcast/：先无 .flowcast/（缓存走 .flowx/），
-  // 然后建 .flowcast/（mtime 变了），缓存应自动切到 .flowcast/
+  // 模拟老项目（仅有空 .flowx/，无 run 数据）升级：先走 .flowx/，
+  // 然后建 .flowcast/（mtime 变了，且两者都无 runs/），缓存应自动切到 .flowcast/
   const repo = mkdtempSync(join(tmpdir(), 'flowcast-fcdir-'))
   try {
-    // 1) 初始：无 .flowcast/，无 .flowx/ → fallback .flowx
+    // 1) 仅有旧 .flowx/（无 runs/）→ legacy 分支选 .flowx
     clearFlowcastDirCache()
+    mkdirSync(join(repo, '.flowx'), { recursive: true })
     const p1 = flowcastDir(repo, { dryRun: false })
-    assert.equal(p1, join(repo, '.flowx'), '初始应选 .flowx')
+    assert.equal(p1, join(repo, '.flowx'), '仅有旧 .flowx/ 时应选 .flowx')
 
-    // 2) 建 .flowcast/——mtime 守护应让缓存自动切
+    // 2) 建 .flowcast/——mtime 守护应让缓存自动失效；两者都无 runs/ → 切到 .flowcast
     mkdirSync(join(repo, '.flowcast'), { recursive: true })
     // 不调 clearFlowcastDirCache！靠 mtime 守护自动失效
     const p2 = flowcastDir(repo, { dryRun: false })
     assert.equal(p2, join(repo, '.flowcast'), '建 .flowcast/ 后应自动切到 .flowcast')
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
+test('flowcastDir: 全新项目（两者皆无）默认选 .flowcast', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-fcfresh-'))
+  try {
+    clearFlowcastDirCache()
+    assert.equal(flowcastDir(repo, { dryRun: false }), join(repo, '.flowcast'),
+      '全新项目应默认 .flowcast（对齐重命名后的品牌/README）')
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
+test('flowcastDir: 旧 .flowx/runs 有数据 + 新建空 .flowcast/ → 黏住 .flowx（升级不丢续跑）', () => {
+  // 复现「升级时按 README 新建 .flowcast/config.json，导致进行中 run 续跑找不到」的风险：
+  // 只要 .flowx/runs 已承载数据而 .flowcast/ 尚无 runs/，就继续用 .flowx，保住断点续跑。
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-sticky-'))
+  try {
+    clearFlowcastDirCache()
+    mkdirSync(join(repo, '.flowx', 'runs'), { recursive: true })  // 旧项目已有 run 数据
+    mkdirSync(join(repo, '.flowcast'), { recursive: true })        // 新建配置目录（尚无 runs/）
+    assert.equal(flowcastDir(repo, { dryRun: false }), join(repo, '.flowx'),
+      '旧 .flowx/runs 有数据而 .flowcast/ 无 runs/ 时应黏住 .flowx')
+
+    // 一旦 .flowcast/runs 也有了数据（已迁移/已跑新 run），则切到 .flowcast
+    mkdirSync(join(repo, '.flowcast', 'runs'), { recursive: true })
+    clearFlowcastDirCache()
+    assert.equal(flowcastDir(repo, { dryRun: false }), join(repo, '.flowcast'),
+      '.flowcast/runs 有数据后应切到 .flowcast')
   } finally { rmSync(repo, { recursive: true, force: true }) }
 })
