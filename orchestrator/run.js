@@ -202,8 +202,16 @@ export async function orchestrateMulti(goal, {
   }
 
   // ③ fanOut 并发执行（worktree 隔离 + per-task 日志 + 续跑由各子 flow 的 --run-id 负责）
+  //    onResult 自动调 archiveChildRun：worktree 隔离下子 run 落 worktree 内 .flowx/runs/，
+  //    归档到主仓 .flowx/runs/ 让 dashboard 看到子 run 完整数据（父子关系靠 state.parentRunId）。
+  const { archiveChildRun } = await import('../subflow.js')
   const results = await fanOut(flowTasks, {
     repo, concurrency, isolate, dryRun, timeout, logDir: runDir, onData,
+    onResult: async ({ task, result, worktree }) => {
+      if (worktree && task.runId) {
+        archiveChildRun(repo, worktree, task.runId)
+      }
+    },
   })
 
   return { ok: results.every(r => r.result.ok), stage: 'run', runId, tasks: tasks.length, results }
