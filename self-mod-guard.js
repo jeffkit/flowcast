@@ -42,18 +42,17 @@ export function captureBaseline(repo, { requireClean = true } = {}) {
 export async function withSelfModGuard(fn, { repo = process.cwd(), requireClean = true, baseline: provided, clean = true } = {}) {
   const baseline = provided ?? captureBaseline(repo, { requireClean })
 
+  // 复合回滚：reset --hard 必须先成功，再 clean -fd。两步任一失败 throw，
+  // 末尾 status --porcelain 校验干净（处理 .gitignore 文件未被 clean 删的情况）。
+  // 失败 throw 而不是 console.error，让调用方区分「rollback succeeded」vs「rollback failed mid-way」。
   const rollback = () => {
-    try {
-      git(['reset', '--hard', baseline], repo)
-      if (clean) git(['clean', '-fd'], repo)
-      // 验证回滚是否干净：gitignore 的文件（如 .env、构建产物）不被 clean -fd 清除，
-      // 若仍存在可能污染下次运行，给出告警供人工介入。
-      const remaining = git(['status', '--porcelain'], repo)
-      if (remaining) {
-        console.warn(`withSelfModGuard: 回滚后仍有未跟踪/被忽略文件，可能影响续跑：\n${remaining}`)
-      }
-    } catch (e) {
-      console.error(`withSelfModGuard: 回滚失败，工作树可能仍脏：${e.message}`)
+    git(['reset', '--hard', baseline], repo)
+    if (clean) git(['clean', '-fd'], repo)
+    const remaining = git(['status', '--porcelain'], repo)
+    if (remaining) {
+      throw new Error(
+        `withSelfModGuard: 回滚后工作树仍脏（gitignore 文件未被 clean -fd 清除，可能影响续跑）：\n${remaining}`,
+      )
     }
   }
 
@@ -61,11 +60,31 @@ export async function withSelfModGuard(fn, { repo = process.cwd(), requireClean 
   try {
     result = await fn({ repo, baseline })
   } catch (err) {
-    rollback()
+    // rollback 失败时不丢 fn 原 err：用 Error cause 链式带上重新抛。
+    try {
+      rollback()
+    } catch (rollbackErr) {
+      const wrapped = new Error(
+        `withSelfModGuard: 回滚失败，工作树可能仍脏：${rollbackErr.message}`,
+        { cause: err },
+      )
+      wrapped.rollbackError = rollbackErr
+      throw wrapped
+    }
     throw err
   }
 
-  if (result?.verdict === 'rolled-back') rollback()
+  if (result?.verdict === 'rolled-back') {
+    try {
+      rollback()
+    } catch (rollbackErr) {
+      const wrapped = new Error(
+        `withSelfModGuard: verdict=rolled-back 但回滚失败：${rollbackErr.message}`,
+        { cause: rollbackErr },
+      )
+      throw wrapped
+    }
+  }
   // panic-preserved / skip-commit / committed → 不回滚
   return { baseline, ...result }
 }

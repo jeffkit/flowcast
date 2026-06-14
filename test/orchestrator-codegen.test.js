@@ -96,6 +96,65 @@ test('orchestrate: 目标仓不可解析本包 → stage=precheck，不生成不
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('orchestrate: 僵尸锁（已死 PID + 旧 startedAt）→ 自动清理并续跑', async () => {
+  const id = `t-zombie-${Date.now()}`
+  try {
+    // 第一次正常跑通，产物落地
+    const r1 = await orchestrate('analyze', {
+      repo: REPO, runId: id, generate: async () => fence(goldenCode), dryRun: true, timeout: 30_000,
+    })
+    assert.equal(r1.ok, true)
+
+    // 注入一个僵尸锁：lockDir 已存在 + owner.pid 是死 PID + startedAt 超 1h
+    const lockDir = join(flowcastDir(REPO), 'runs', id, '.lock')
+    const { mkdirSync: mk, writeFileSync: wr } = await import('node:fs')
+    mk(lockDir, { recursive: true })
+    wr(join(lockDir, 'owner.json'), JSON.stringify({
+      pid: 999_999, // 不可能活着的 PID
+      startedAt: Date.now() - 2 * 60 * 60 * 1000, // 2 小时前
+      runId: id,
+    }))
+    // 跑第二次——必须识别僵尸、自动 rm -rf lockDir、走 reuse 路径
+    let genCalled = false
+    const r2 = await orchestrate('analyze', {
+      repo: REPO, runId: id, dryRun: true, timeout: 30_000,
+      generate: async () => { genCalled = true; return fence('bad') },
+    })
+    assert.equal(r2.reused, true, '应当 reuse 已存在的 flow.mjs')
+    assert.equal(genCalled, false)
+    assert.equal(r2.ok, true)
+  } finally { cleanRun(id) }
+})
+
+test('orchestrate: 活进程持有锁（owner.pid 还活着）→ 抛错而非偷偷重试', async () => {
+  const id = `t-busy-${Date.now()}`
+  try {
+    // 第一次跑通
+    await orchestrate('x', {
+      repo: REPO, runId: id, generate: async () => fence(goldenCode), dryRun: true, timeout: 30_000,
+    })
+    // 注入一个「活进程持有」的锁：PID 是当前 node 进程（必定活着）+ 新 startedAt
+    const lockDir = join(flowcastDir(REPO), 'runs', id, '.lock')
+    const { mkdirSync: mk, writeFileSync: wr } = await import('node:fs')
+    mk(lockDir, { recursive: true })
+    wr(join(lockDir, 'owner.json'), JSON.stringify({
+      pid: process.pid, // 当前 node 进程
+      startedAt: Date.now(),
+      runId: id,
+    }))
+    // 跑第二次——必须识别活锁、抛错（不偷偷删、不走 reuse）
+    let genCalled = false
+    await assert.rejects(
+      orchestrate('x', {
+        repo: REPO, runId: id, dryRun: true, timeout: 30_000,
+        generate: async () => { genCalled = true; return fence('bad') },
+      }),
+      /正在被 pid=.* 执行/,
+    )
+    assert.equal(genCalled, false)
+  } finally { cleanRun(id) }
+})
+
 // ── M5 端到端 + 续跑锁定 ─────────────────────────────────────────
 
 test('orchestrate: 需求→生成→校验→dry-run 真跑；同 runId 续跑锁定不重生成', async () => {

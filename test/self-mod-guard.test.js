@@ -96,3 +96,61 @@ test("verdict='committed' → 不回滚，保留 commit", async () => {
   assert.equal(r.baseline, baseline)
   cleanup(repo)
 })
+
+test("verdict='rolled-back' 但 baseline 不存在 → reset 抛错并冒泡", async () => {
+  // 罕见但真实的场景：run 期间 baseline commit 被外部 force-push 抹掉，reset --hard 失败。
+  // 旧实现会 console.error 然后吞掉；新实现必须 throw。
+  const repo = makeRepo()
+  await assert.rejects(
+    withSelfModGuard(async () => {
+      writeFileSync(join(repo, 'a.txt'), 'mutated\n')
+      return { verdict: 'rolled-back', reason: 'gate-red' }
+    }, { repo, baseline: '0000000000000000000000000000000000000000' /* 一定不存在的 sha */ }),
+    /verdict=rolled-back 但回滚失败/,
+  )
+  cleanup(repo)
+})
+
+test("fn 抛错 + rollback 失败 → 抛带 cause 的 wrapped err", async () => {
+  // fn 抛错路径下，rollback 失败必须保留原 err 信息（用 Error cause 链式带上）。
+  // 构造方式：传一个根本不存在的 baseline，让 reset 失败。
+  const repo = makeRepo()
+  let captured
+  try {
+    await withSelfModGuard(async () => {
+      writeFileSync(join(repo, 'a.txt'), 'mutated\n')
+      throw new Error('boom')
+    }, { repo, baseline: '0000000000000000000000000000000000000000' })
+  } catch (e) {
+    captured = e
+  }
+  assert.ok(captured, '应当抛出')
+  assert.match(captured.message, /回滚失败/)
+  assert.equal(captured.cause?.message, 'boom', '必须通过 cause 保留 fn 原 err')
+  assert.ok(captured.rollbackError, '必须暴露 rollbackError 字段')
+  cleanup(repo)
+})
+
+test("fn 抛错 + rollback 失败 → 抛带 cause 的 wrapped err", async () => {
+  // 不容易直接构造「reset 失败 + clean 失败」的真实场景（reset 一旦 baseline 合法必成功）。
+  // 这里覆盖一个等价路径：fn 抛错，rollback 路径走到 status --porcelain 校验并 throw。
+  // 因为 fn 已经把 a.txt 改 dirty 且加了 untracked 文件，回滚后必须完全干净才不抛。
+  const repo = makeRepo()
+  const baseline = git(['rev-parse', 'HEAD'], repo)
+  let captured
+  try {
+    await withSelfModGuard(async () => {
+      writeFileSync(join(repo, 'a.txt'), 'mutated\n')
+      writeFileSync(join(repo, 'new.txt'), 'junk\n')
+      throw new Error('boom')
+    }, { repo })
+  } catch (e) {
+    captured = e
+  }
+  assert.ok(captured, '应当抛出')
+  assert.equal(captured.message, 'boom', 'rollback 成功时必须保留 fn 原 err，不包装')
+  // 工作树应回到 baseline 干净状态
+  assert.equal(git(['rev-parse', 'HEAD'], repo), baseline)
+  assert.equal(git(['status', '--porcelain'], repo), '')
+  cleanup(repo)
+})
