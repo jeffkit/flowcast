@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-14
+
 ### 变更
 - **品牌与仓库重命名 FlowX → FlowCast**：GitHub 仓库 `jeffkit/flowx` → `jeffkit/flowcast`；文档站 base `/flowcast/`；CLI 入口 `bin/flowcast.js`；`skills/flowcast/`；`checkFlowcastResolvable`（原 `checkFlowxResolvable`）；dry-run 根目录 `~/.flowcast/dryrun/`；codex 临时文件前缀 `flowcast-codex-*`。
 - **向后兼容保留**：CLI 别名 `flowx`；数据目录 `.flowx/` fallback；环境变量 `FLOWX_DRY_RUN` / `FLOWX_AGENT_COOLDOWN_*` / `FLOWX_PKG_INDEX`；legacy tmp 前缀 `flowx-codex-*` 仍会被 sweep。
@@ -90,5 +92,6 @@
   CLI `flowcast orchestrate [--split]`，护栏三件套（约束式生成 / 跑前校验 / 持久化+续跑锁定）。
 - **可观测看板**：`collectRuns` / `renderHtml` / `generateDashboard`，CLI `flowcast dashboard`。
 
-[Unreleased]: https://github.com/jeffkit/flowcast/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jeffkit/flowcast/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jeffkit/flowcast/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jeffkit/flowcast/releases/tag/v0.1.0

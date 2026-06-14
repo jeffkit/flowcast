@@ -114,7 +114,11 @@ if (command === 'flows') {
 
   } else if (sub === 'install') {
     const src = rest[1]
-    if (!src) { console.error('用法: flowcast flows install <flow-file.js>'); process.exit(1) }
+    if (!src) {
+      console.error('用法: flowcast flows install <flow-file.js>')
+      console.error('示例: flowcast flows install ./flows/force-dev.js')
+      process.exit(1)
+    }
     const srcAbs = resolve(process.cwd(), src)
     if (!existsSync(srcAbs)) { console.error(`文件不存在: ${srcAbs}`); process.exit(1) }
     mkdirSync(USER_FLOWS_DIR, { recursive: true })
@@ -124,7 +128,11 @@ if (command === 'flows') {
 
   } else if (sub === 'remove') {
     const name = rest[1]
-    if (!name) { console.error('用法: flowcast flows remove <name>'); process.exit(1) }
+    if (!name) {
+      console.error('用法: flowcast flows remove <name>')
+      console.error('示例: flowcast flows remove force-dev')
+      process.exit(1)
+    }
     const target = join(USER_FLOWS_DIR, name.endsWith('.js') ? name : `${name}.js`)
     if (!existsSync(target)) { console.error(`未找到: ${target}`); process.exit(1) }
     unlinkSync(target)
@@ -139,7 +147,10 @@ if (command === 'flows') {
   // 便捷别名：列出当前项目的所有 run（依赖 force-dev flow）
   const flowAbs = resolveFlowFile('force-dev')
   if (!flowAbs) {
-    console.error('需要先安装 force-dev flow：flowcast flows install <path-to-force-dev.js>')
+    console.error('需要先安装 force-dev flow 才能用 `list`：flowcast flows install <path-to-force-dev.js>')
+    console.error(`查找路径：`)
+    console.error(`  项目级: ${join(process.cwd(), '.flowcast', 'flows', 'force-dev.js')} 或 .flowx/flows/`)
+    console.error(`  用户级: ${join(USER_FLOWS_DIR, 'force-dev.js')}`)
     process.exit(1)
   }
   process.exit(spawnFlow(flowAbs, ['--list']))
@@ -175,6 +186,6 @@ if (command === 'flows') {
   process.exit(spawnFlow(flowAbs, rest.slice(1)))
 
 } else {
-  console.error(`未知命令: ${command}。运行 flowcast --help 查看帮助。`)
+  console.error(`未知命令: ${command}。运行 \`flowcast --help\` 查看可用命令。`)
   process.exit(1)
 }
