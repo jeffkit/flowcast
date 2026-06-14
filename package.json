@@ -1,6 +1,6 @@
 {
   "name": "flowcast",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "轻量 workflow 编排框架：断点续跑、HITL、多 CLI 调度",
   "type": "module",
   "main": "index.js",
@@ -39,15 +39,29 @@
     "skills/",
     "bin/"
   ],
-  "keywords": ["workflow", "agent", "cli", "claude", "cursor", "automation"],
+  "keywords": [
+    "workflow",
+    "agent",
+    "cli",
+    "claude",
+    "cursor",
+    "automation"
+  ],
   "author": "jeffkit <bbmyth@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/jeffkit/flowcast.git"
   },
-  "bugs": { "url": "https://github.com/jeffkit/flowcast/issues" },
+  "bugs": {
+    "url": "https://github.com/jeffkit/flowcast/issues"
+  },
   "homepage": "https://jeffkit.github.io/flowcast/",
-  "publishConfig": { "access": "public", "provenance": true },
-  "engines": { "node": ">=20" }
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }
