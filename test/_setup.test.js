@@ -69,3 +69,21 @@ describe('withDryRunEnv 验证', () => {
     assert.equal(process.env.FLOWCAST_DRY_RUN, undefined, '原本没设的应保持未设')
   })
 })
+// ── R4.4: flowcast/internal 入口 ───────────────────────────────────
+
+test('flowcast/internal: 内部 helper 入口与主入口隔离（clearFlowcastDirCache / sweepStaleTmp / AGENT_COOLDOWN_*）', async () => {
+  // 主入口 'flowcast' 不应暴露这些（避免下游误用）
+  const main = await import('../index.js')
+  assert.equal(typeof main.clearFlowcastDirCache, 'undefined', '主入口不应暴露 clearFlowcastDirCache')
+  assert.equal(typeof main.sweepStaleTmp, 'undefined', '主入口不应暴露 sweepStaleTmp')
+  assert.equal(typeof main.AGENT_COOLDOWN_BASE_MS, 'undefined', '主入口不应暴露 AGENT_COOLDOWN_*')
+
+  // flowcast/internal 入口应暴露
+  const internal = await import('../internal.js')
+  assert.equal(typeof internal.clearFlowcastDirCache, 'function')
+  assert.equal(typeof internal.sweepStaleTmp, 'function')
+  assert.equal(typeof internal.AGENT_COOLDOWN_BASE_MS, 'number')
+  assert.equal(typeof internal.AGENT_COOLDOWN_MAX_MS, 'number')
+  assert.equal(internal.AGENT_COOLDOWN_BASE_MS, 30_000)
+  assert.equal(internal.AGENT_COOLDOWN_MAX_MS, 480_000)
+})
