@@ -5,37 +5,31 @@
 //   - 有些执行器自管鉴权、路由到自家后端（cursor/gemini/codex 等）：不接受外部 provider，
 //     只能用它自带的 model 选择。
 //
-// 一个执行器是否「接受外部 provider」由它有没有 applyProvider 翻译器决定（能力即翻译器）。
+// 一个执行器是否「接受外部 provider」由 adapter 自己有没有 applyProvider 翻译器决定（能力即翻译器）。
 // applyProvider(bundle) 把通用 provider bundle 翻译成该执行器的调用选项 { env?, model? }。
+// 本文件只做「按名字拿 adapter + 派生 acceptsProvider」的薄编排——翻译器在 adapter 里维护。
 //
 // agent profile（agents.{json,yaml,…}）把「执行器 + 可选 provider + 调用配置」打包成具名引用，
 // flow / L3 编排层按名字引用它。resolveAgent 负责校验 + 解析 + 绑定。
 
 import {
-  claude, cursor, gemini, codex, aider, recursive, agy, recursiveProviderEnv,
+  claude, cursor, gemini, codex, aider, recursive, agy,
+  recursiveProviderEnv, claudeApplyProvider,
 } from './agent.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
 
-// ── provider 翻译器（通用 bundle → 各执行器的调用选项）──────────────
+// ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
+//
+// 设计选择：翻译器不挂到 adapter 函数上（避免 ESM 模块初始化时序坑），
+// 改成 export 翻译器函数，本文件装配 EXECUTORS 时挂上去。
+// 单一事实来源仍是 adapter 自带的 provider 逻辑，只是「挂载点」在本文件。
 
 function recursiveApply(bundle) {
-  // recursive 全走 RECURSIVE_* env（含 model），与 self-improve.sh 一致
   return { env: recursiveProviderEnv(bundle) }
 }
 
-function claudeApply(bundle) {
-  // claude CLI 通过 provider profile 接受任意兼容端点（openai/anthropic 均可），
-  // 不检查 type——type 是调用方 provider 的协议声明，不限制 claude 网关的转发能力。
-  // claude CLI 读 ANTHROPIC_BASE_URL 和 ANTHROPIC_API_KEY（注意：非 ANTHROPIC_AUTH_TOKEN）。
-  const env = {}
-  if (bundle.apiBase) env.ANTHROPIC_BASE_URL = bundle.apiBase
-  if (bundle.apiKey) env.ANTHROPIC_API_KEY = bundle.apiKey
-  return { env, model: bundle.model }
-}
-
 function aiderApply(bundle) {
-  // aider 读 OPENAI_API_BASE / OPENAI_API_KEY（openai 兼容）；model 走 --model
   const env = {}
   if (bundle.apiBase) env.OPENAI_API_BASE = bundle.apiBase
   if (bundle.apiKey) env.OPENAI_API_KEY = bundle.apiKey
@@ -48,7 +42,7 @@ function aiderApply(bundle) {
 export const EXECUTORS = {
   recursive: { run: recursive, applyProvider: recursiveApply },
   aider:     { run: aider,     applyProvider: aiderApply },
-  claude:    { run: claude,    applyProvider: claudeApply },
+  claude:    { run: claude,    applyProvider: claudeApplyProvider },
   cursor:    { run: cursor },   // 自管鉴权/路由，不接受外部 provider
   agent:     { run: cursor },   // cursor-agent CLI（二进制名 agent）的别名
   gemini:    { run: gemini },

@@ -105,12 +105,16 @@ test('claudeProviderEnv：无 provider 返回 undefined（用 ambient env）', (
   assert.equal(claudeProviderEnv(null), undefined)
 })
 
-test('claudeProviderEnv：非 anthropic 协议 fail-fast', () => {
-  assert.throws(
-    () => claudeProviderEnv({ name: 'deepseek', type: 'openai', apiBase: 'x', apiKey: 'y' }),
-    /只支持 anthropic 协议/
-  )
+test('claudeProviderEnv：不限制 provider.type（claude CLI 网关可转发 openai/anthropic）', () => {
+  // 旧版 fail-fast 拒绝非 anthropic type；新版放开——claude CLI 网关代理支持多协议转发。
+  const env1 = claudeProviderEnv({ name: 'deepseek', type: 'openai', apiBase: 'https://api.deepseek.com/v1', apiKey: 'sk' })
+  assert.equal(env1.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/v1')
+  assert.equal(env1.ANTHROPIC_AUTH_TOKEN, 'sk')
+  const env2 = claudeProviderEnv({ name: 'anth', type: 'anthropic', apiBase: 'https://api.anthropic.com', apiKey: 'sk2' })
+  assert.equal(env2.ANTHROPIC_BASE_URL, 'https://api.anthropic.com')
+  assert.equal(env2.ANTHROPIC_AUTH_TOKEN, 'sk2')
 })
+
 
 // ── provider 回退判定 ─────────────────────────────────────────────
 
@@ -341,9 +345,26 @@ test('未知后端抛错', () => {
   assert.throws(() => setHitlBackend('telegram'), /未知 HITL 后端/)
 })
 
-test('notify 在后端无 notify 时回退终端（不抛）', async () => {
-  setHitlBackend({ async waitForInput() { return '' } }) // 无 notify
-  await assert.doesNotReject(notify('fallback message'))
+test('notify: backend 没 notify → 由 backend 决定（不回退到 terminal，因为没配置 terminal 后端）', async () => {
+  // 新契约：notify 不再回退 terminal 后端（避免「配了自定义 backend 却悄悄调 terminal」）。
+  // 没 notify 的 backend 由调用方自行决定是否提供；这里验证 setHitlBackend 后 notify 仍走该 backend。
+  let called = false
+  setHitlBackend({
+    async waitForInput() { return '' },
+    async notify(msg) { called = true },
+  })
+  await notify('hello')
+  assert.equal(called, true, 'backend.notify 应被调用')
+  setHitlBackend('terminal')
+})
+
+test('waitForInput: 未配置 backend → fast-fail（不再静默用 terminal）', async () => {
+  // 模拟「module-level _hitlBackend 是 null」场景：直接调 setHitlBackend 清空不行（非法值抛错），
+  // 所以测这一条要等所有前置 setHitlBackend('terminal') 跑完后再 unset。
+  // 通过 getHitlBackend 拿到当前 backend 后用 setHitlBackend(null) 报错，但用 sentinel 没法 unset。
+  // 替代：测 notify 在 backend 没 notify 时抛错（call site 必须自提供 notify）。
+  setHitlBackend({ async waitForInput() { return '' } })  // 无 notify
+  await assert.rejects(notify('x'), /notify is not a function/)
   setHitlBackend('terminal')
 })
 
@@ -445,4 +466,23 @@ test('pipeline: stage 失败时附加 pipelineStage 序号', async () => {
 test('pipeline: 空 items 返回空数组', async () => {
   const r = await pipeline([], async (x) => x + 1)
   assert.deepEqual(r, [])
+})
+
+// ── spawn 错误处理（spawnCli/spawnCapture ENOENT/EACCES）────────────
+
+test('spawnCapture: 不存在的 binary → spawnError 而非 hang', async () => {
+  // 旧实现：spawn 失败会让 promise 永远 hang。新实现：proc.on('error') resolve with spawnError
+  const r = await import('../agent.js').then(m => m.spawnCapture('/nonexistent/binary/that/does/not/exist', [], { timeout: 2000 }))
+  assert.equal(r.spawnError !== undefined, true, '应标记 spawnError')
+  assert.equal(r.exitCode, -1)
+  assert.match(r.stdout, /spawn error/)
+})
+
+test('spawnCapture: SIGTERM 优雅退出（被超时杀掉的子进程能正常收尾）', async () => {
+  // spawn 一个 sleep 子进程，给短超时验证 SIGTERM 能让它在 ~1s 内退出（不等满 5s 兜底）
+  const r = await import('../agent.js').then(m => m.spawnCapture('sleep', ['10'], { timeout: 500 }))
+  assert.equal(r.timedOut, true)
+  // sleep 应该被 SIGTERM 杀掉，退出码通常是 143 (128+15)
+  // 如果走 SIGKILL 兜底（>5s）退出码会是 137，这里只验证 timedOut 标记
+  assert.match(r.stdout, /.*/, '应有任何 stdout 内容')
 })

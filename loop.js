@@ -67,9 +67,9 @@ export async function loop(iterate, opts = {}) {
   }
 
   const startedAt = Date.now()
-  let lastVerdict = cp.state.loopVerdict ?? null
+  let lastVerdict = cp.getLoopState().verdict ?? null
   // 已完成轮数从 Checkpoint 推断，支持续跑：扫已落盘的 turn-N 结果（completed 才算真完成）。
-  let turn = Object.keys(cp.state.completed ?? {}).filter((k) => /^turn-\d+$/.test(k)).length
+  let turn = cp.countCompletedTurns()
   // lastResult 从最后一个已完成 turn 推断，避免额外缓存 key 的 flush 时序缺口。
   // 续跑时从最后一个完成 turn 的旁路存储里读完整 lastResult（getStepResult 透明处理 sidecar）
   let lastResult = turn > 0
@@ -78,10 +78,15 @@ export async function loop(iterate, opts = {}) {
 
   emit({ phase: 'start', goal, fromTurn: turn, maxTurns })
 
+  // 声明期望最大时长（给 dashboard 自适应僵尸阈值用）：
+  // 有 maxRuntimeMs 用它，没声明时按 maxTurns * 经验值（默认 10min/turn）兜底。
+  const effectiveExpectMs = maxRuntimeMs ?? Math.max(maxTurns * 10 * 60_000, 10 * 60_000)
+  cp.setExpectMaxMs(effectiveExpectMs)
+
   while (turn < maxTurns) {
     if (maxRuntimeMs && Date.now() - startedAt >= maxRuntimeMs) {
       emit({ phase: 'budget', reason: 'maxRuntimeMs', turn })
-      cp.state.loopStatus = 'budget_exhausted'
+      cp.setLoopState({ status: 'budget_exhausted', turns: turn, reason: 'maxRuntimeMs' })
       cp.done({ loopStatus: 'budget_exhausted', turns: turn, reason: 'maxRuntimeMs' })
       return { status: 'budget_exhausted', turns: turn, lastResult, runId: cp.runId }
     }
@@ -103,7 +108,7 @@ export async function loop(iterate, opts = {}) {
         return { result: r, gateResults }
       })
     } catch (e) {
-      cp.state.loopStatus = 'failed'
+      cp.setLoopState({ status: 'failed' })
       cp.flush()
       emit({ phase: 'failed', turn: turnNo, error: e.message })
       throw e
@@ -114,7 +119,7 @@ export async function loop(iterate, opts = {}) {
 
     const done = await isDone({ turn: turnNo, result: iterResult, gateResults, state: cp.state })
     lastVerdict = done ? 'done' : 'continue'
-    cp.state.loopVerdict = lastVerdict
+    cp.setLoopState({ verdict: lastVerdict })
     cp.flush()
 
     // 把本轮结论沉淀进跨-run 记忆（可选）。
@@ -132,14 +137,14 @@ export async function loop(iterate, opts = {}) {
     emit({ phase: 'turn-done', turn: turnNo, done })
 
     if (done) {
-      cp.state.loopStatus = 'completed'
+      cp.setLoopState({ status: 'completed', turns: turnNo })
       cp.done({ loopStatus: 'completed', turns: turnNo })
       return { status: 'completed', turns: turnNo, lastResult, runId: cp.runId }
     }
   }
 
   emit({ phase: 'budget', reason: 'maxTurns', turn })
-  cp.state.loopStatus = 'budget_exhausted'
+  cp.setLoopState({ status: 'budget_exhausted', turns: turn, reason: 'maxTurns' })
   cp.done({ loopStatus: 'budget_exhausted', turns: turn, reason: 'maxTurns' })
   return { status: 'budget_exhausted', turns: turn, lastResult, runId: cp.runId }
 }

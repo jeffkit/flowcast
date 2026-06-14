@@ -8,25 +8,46 @@ import { isDryRun } from './dry-run.js'
 
 function spawnCli(cli, args, cwd, timeout, env) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(cli, args, {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: env ? { ...process.env, ...env } : process.env,
-    })
+    let proc
+    try {
+      proc = spawn(cli, args, {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: env ? { ...process.env, ...env } : process.env,
+      })
+    } catch (err) {
+      // spawn 同步抛错（参数非法等）——不挂死，直接 reject
+      const e = new Error(`[${cli}] spawn failed: ${err.message}`)
+      e.spawnError = err.message
+      reject(e)
+      return
+    }
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', d => { stdout += d })
     proc.stderr.on('data', d => { stderr += d })
 
+    // 超时：先 SIGTERM 给 5 秒清场，再 SIGKILL 兜底（防子进程吞 SIGTERM）
+    let hardKillTimer
     const timer = setTimeout(() => {
-      proc.kill()
-      const err = new Error(`[${cli}] timeout after ${timeout}ms`)
-      err.timedOut = true
-      reject(err)
+      try { proc.kill('SIGTERM') } catch { /* ignore */ }
+      hardKillTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL') } catch { /* ignore */ }
+      }, 5_000)
     }, timeout)
+
+    // spawn 异步错误（ENOENT / EACCES）：之前会让 promise 永远 hang，加 handler reject
+    proc.on('error', err => {
+      clearTimeout(timer)
+      if (hardKillTimer) clearTimeout(hardKillTimer)
+      const e = new Error(`[${cli}] spawn error: ${err.message}`)
+      e.spawnError = err.message
+      reject(e)
+    })
 
     proc.on('close', code => {
       clearTimeout(timer)
+      if (hardKillTimer) clearTimeout(hardKillTimer)
       if (code !== 0) reject(new Error(`[${cli}] exit ${code}\n${stderr.trim()}`))
       else resolve(stdout)
     })
@@ -36,26 +57,32 @@ function spawnCli(cli, args, cwd, timeout, env) {
 // ── CLI 封装：各 Agent ────────────────────────────────────────────
 
 /**
- * 把 provider 配置翻译成 claude CLI（Claude Code）读取的 ANTHROPIC_* 环境变量。
- * 用于直接调用 claude() adapter 时注入自定义网关（deepseek/minimax 等 anthropic 兼容端点）。
- * 只接受 anthropic 协议族 provider；apiKey 已由上层从 ${VAR} 插值好（明文不入仓）。
+ * claude adapter 自带的 provider 翻译器：把 provider bundle 翻译成 claude CLI 读的 env。
+ * 用于：
+ *   1) 直接调 claude({ provider }) 时（agent.js claude 函数内部用）
+ *   2) executor.js 的 EXECUTORS.claude.applyProvider 也指向这里（统一翻译器）
  *
- * 注意：此函数设置 ANTHROPIC_AUTH_TOKEN（Claude Code CLI 的 token 字段）。
- * executor.js 的 claudeApply 设置 ANTHROPIC_API_KEY（claude CLI 网关代理的 key）——
- * 两者用途不同，分开维护。
+ * Claude Code CLI 读取 ANTHROPIC_BASE_URL 和 ANTHROPIC_AUTH_TOKEN（前者是网关，后者是 token）。
+ * 不强制 type 必须是 anthropic：claude CLI 网关代理可转发 openai/anthropic 协议——
+ * type 是调用方 provider 的协议声明，不限制 claude 网关的转发能力。
+ * apiKey 已由上层从 ${VAR} 插值好（明文不入仓）。
  *
  * @param {{type?,apiBase?,apiKey?,model?}} [provider]
  * @returns {Record<string,string>|undefined}
  */
 export function claudeProviderEnv(provider) {
   if (!provider) return undefined
-  if (provider.type && provider.type !== 'anthropic') {
-    throw new Error(`claude adapter 只支持 anthropic 协议 provider，收到 type=${provider.type}`)
-  }
   const env = {}
   if (provider.apiBase) env.ANTHROPIC_BASE_URL = provider.apiBase
   if (provider.apiKey) env.ANTHROPIC_AUTH_TOKEN = provider.apiKey
   return Object.keys(env).length ? env : undefined
+}
+// 让 executor.js 通过 EXECUTORS.claude.applyProvider 引用同一份翻译器（避免双实现漂移）
+// 注意：必须在 claude 函数声明之后挂；这里用 export 让 executor.js 自己挂，避免初始化时序坑。
+// claudeApplyProvider 包装 claudeProviderEnv 为 {env, model} 形状（executor.js 解析统一形式）。
+export function claudeApplyProvider(bundle) {
+  const env = claudeProviderEnv(bundle)
+  return { env, model: bundle?.model }
 }
 
 // provider 限额/超载错误 → 可回退到下一个 provider。
@@ -260,13 +287,23 @@ export function spawnCapture(cmd, args, { cwd = process.cwd(), timeout, env, onD
     }
     proc.stdout.on('data', append)
     proc.stderr.on('data', append)
-    const timer = timeout ? setTimeout(() => { timedOut = true; proc.kill('SIGKILL') }, timeout) : null
+    // 超时：先 SIGTERM 给 5 秒清场，再 SIGKILL 兜底（防子进程吞 SIGTERM 留孤儿）
+    let hardKillTimer
+    const timer = timeout ? setTimeout(() => {
+      timedOut = true
+      try { proc.kill('SIGTERM') } catch { /* ignore */ }
+      hardKillTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL') } catch { /* ignore */ }
+      }, 5_000)
+    }, timeout) : null
     proc.on('error', err => {
       if (timer) clearTimeout(timer)
+      if (hardKillTimer) clearTimeout(hardKillTimer)
       resolve({ stdout: out + `\n[spawn error] ${err.message}`, exitCode: -1, timedOut, spawnError: err.message })
     })
     proc.on('close', code => {
       if (timer) clearTimeout(timer)
+      if (hardKillTimer) clearTimeout(hardKillTimer)
       resolve({ stdout: out, exitCode: code ?? -1, timedOut })
     })
   })
@@ -653,7 +690,10 @@ function makeWecomBackend(config = {}) {
   }
 }
 
-let _hitlBackend = terminalBackend
+// 默认 null：未调 setHitlBackend 时 waitForInput/notify 必须 fast-fail，
+// 防止在非 TTY（CI/cron/subflow 子进程）下用 terminal 后端静默挂死。
+// 这是从 module-level 默认 terminalBackend 改来的契约——强制 flow 启动时显式选后端。
+let _hitlBackend = null
 
 /** 选定 HITL 后端：'terminal' | 'wecom' | 自定义 backend 对象。 */
 export function setHitlBackend(backend, config = {}) {
@@ -666,13 +706,18 @@ export function setHitlBackend(backend, config = {}) {
 /** 当前 HITL 后端（测试 / 调试用）。 */
 export function getHitlBackend() { return _hitlBackend }
 
-/** 阻塞等待人类输入（路由到当前后端）。 */
+/** 阻塞等待人类输入（路由到当前后端）。未配置后端则 fast-fail，避免非 TTY 静默挂死。 */
 export async function waitForInput(prompt) {
+  if (!_hitlBackend) {
+    throw new Error('HITL 后端未配置：请在 flow 启动时调用 setHitlBackend("terminal"|"wecom"|customBackend)（非 TTY 环境下必须显式选后端）')
+  }
   return _hitlBackend.waitForInput(prompt)
 }
 
 /** 单向通知人类，不等待（路由到当前后端；后端无 notify 时回退终端打印）。 */
 export async function notify(message) {
-  if (typeof _hitlBackend.notify === 'function') return _hitlBackend.notify(message)
-  return terminalBackend.notify(message)
+  if (!_hitlBackend) {
+    throw new Error('HITL 后端未配置：请在 flow 启动时调用 setHitlBackend(...) 后再 notify')
+  }
+  return _hitlBackend.notify(message)
 }

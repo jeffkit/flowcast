@@ -47,6 +47,8 @@
 
 - import 任何非 `flowcast`（除 `util` 用于 parseArgs）。**禁止** `fs`/`child_process`/
   `net`/`http`/`os` 等——需要文件/进程/git 操作时只能通过 flowx 原语。
+- import `flowcast` 的子路径（如 `flowcast/dashboard`）。`flowcast` 必须作为整体被 import，
+  子路径视为「宿主 CLI/SDK 才用、不该被编排对象自循环」的能力（dashboard 等）。
 - 直接调 `process.exit` 之外的进程控制、动态 `require`/`import()` 任意模块。
 - 在 `main()` 外写副作用逻辑（骨架结构之外）。
 

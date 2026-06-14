@@ -62,10 +62,12 @@ test('resolveAgent: recursive + provider → RECURSIVE_* env', () => {
 })
 
 test('resolveAgent: claude + provider → ANTHROPIC_* env + model 透出', () => {
+  // Claude Code CLI 用 ANTHROPIC_AUTH_TOKEN（不是 ANTHROPIC_API_KEY）。
+  // 统一翻译器后这条路径走 agent.js 的 claudeProviderEnv，env 变量名以那里为准。
   const agents = { 'cl-ds': { executor: 'claude', provider: 'deepseek' } }
   const r = resolveAgent('cl-ds', agents, { providers: PROVIDERS, env: ENV })
   assert.equal(r.opts.env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/v1')
-  assert.equal(r.opts.env.ANTHROPIC_API_KEY, 'sk-xyz')
+  assert.equal(r.opts.env.ANTHROPIC_AUTH_TOKEN, 'sk-xyz')
   assert.equal(r.opts.model, 'deepseek-v4-pro')
 })
 

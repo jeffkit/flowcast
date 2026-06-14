@@ -2,6 +2,10 @@
 //
 // 三关：① node --check 语法；② import 白名单（挡任意 fs/进程/网络）；③ 假执行器 dry-run。
 // 本文件是 harness 受信代码，可用 child_process/fs；被校验的是「生成的 flow」，受白名单约束。
+//
+// 白名单对齐 FLOW_API.md：generated flow 只准 import `flowcast`（+ util 用于 parseArgs）。
+// 允许 surface 由 FLOW_API.md 列；本文件额外禁止 `flowcast/dashboard` 等「宿主观测」模块被
+// 生成 flow 自循环使用——dashboard 是给宿主看的，不是给被编排对象用的。
 
 import { execFileSync } from 'child_process'
 import { mkdtempSync, rmSync, readFileSync, copyFileSync } from 'fs'
@@ -12,13 +16,17 @@ import { join, dirname } from 'path'
 // 白名单同时包含 bare 形式和 node: 前缀形式，防止用 node:fs 绕过 fs 限制。
 const IMPORT_WHITELIST = new Set(['flowcast', 'util', 'node:util'])
 
+// 生成 flow 不准 import 的 flowcast 子路径（白名单子集反向）：
+// dashboard 是宿主观测，不该被编排对象自循环调用。
+const FORBIDDEN_FLOWCAST_SUBPATHS = ['flowcast/dashboard', 'flowcast/dashboard/index']
+
 // 把 specifier 规范化：'node:util' → 'util'，其他不变。
 // Node 20 对内置模块 bare 和 node: 前缀完全等价，白名单检查必须一致。
 function normalizeSpecifier(s) {
   return s.startsWith('node:') ? s.slice(5) : s
 }
 
-/** 扫描源码里所有 import/require 目标，返回非白名单的去重列表。 */
+/** 扫描源码里所有 import/require 目标，返回非白名单 + 禁止子路径的去重列表。 */
 export function scanImports(source) {
   const violations = []
   const patterns = [
@@ -31,6 +39,11 @@ export function scanImports(source) {
     while ((m = re.exec(source))) {
       const raw = m[1]
       const normalized = normalizeSpecifier(raw)
+      // 禁止子路径（如 flowcast/dashboard）：即使白名单允许 flowcast，子路径也不行
+      if (FORBIDDEN_FLOWCAST_SUBPATHS.some(p => raw === p || raw.startsWith(p + '/'))) {
+        violations.push(raw)
+        continue
+      }
       if (!IMPORT_WHITELIST.has(raw) && !IMPORT_WHITELIST.has(normalized)) {
         violations.push(raw)
       }
