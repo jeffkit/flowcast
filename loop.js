@@ -1,6 +1,7 @@
 import { Checkpoint } from './checkpoint.js'
 import { runGates } from './quality-gate.js'
 import { buildMemorySection, recordLearning } from './memory.js'
+import { flowcastDir } from './dirs.js'
 
 // ── loop：goal-driven 循环原语 ⭐ ─────────────────────────────────────
 //
@@ -32,7 +33,7 @@ import { buildMemorySection, recordLearning } from './memory.js'
  *   - maxTurns     {number}   轮数封顶（默认 20，呼应 cursor /loop max-turns）
  *   - maxRuntimeMs {number}   可选 wall-clock 封顶
  *   - runId        {string}   Checkpoint run id（默认时间戳）
- *   - stateDir     {string}   Checkpoint 根目录（默认 .flowx/runs）
+ *   - stateDir     {string}   Checkpoint 根目录（默认 <flowcastDir>/runs，自动识别 .flowcast/ 或 .flowx/）
  *   - checkpoint   {Checkpoint} 复用外部 Checkpoint（优先于 runId/stateDir）
  *   - onEvent      {function} 观测埋点 (evt) => void
  * @returns {Promise<{status, turns, lastResult, runId}>}
@@ -50,7 +51,7 @@ export async function loop(iterate, opts = {}) {
     maxTurns = 20,
     maxRuntimeMs,
     runId = `loop-${Date.now()}`,
-    stateDir = '.flowx/runs',
+    stateDir,
     checkpoint,
     onEvent,
   } = opts
@@ -58,7 +59,8 @@ export async function loop(iterate, opts = {}) {
   if (typeof iterate !== 'function') throw new TypeError('loop: iterate must be a function')
   if (typeof isDone !== 'function') throw new TypeError('loop: isDone must be a function')
 
-  const cp = checkpoint ?? new Checkpoint(runId, stateDir)
+  const resolvedStateDir = stateDir ?? (flowcastDir(process.cwd()) + '/runs')
+  const cp = checkpoint ?? new Checkpoint(runId, resolvedStateDir)
   const emit = (evt) => {
     cp.event('loop', evt)
     if (onEvent) { try { onEvent({ event: 'loop', ...evt }) } catch { /* 观测不影响主流程 */ } }

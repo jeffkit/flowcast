@@ -1,5 +1,5 @@
 // flowcast 公共 API
-export { Checkpoint } from './checkpoint.js'
+export { Checkpoint, PauseSignal } from './checkpoint.js'
 export {
   runAgent, runAgentChain, setWorkdir, setAgentEventSink,
   claude, cursor, gemini, codex, aider, recursive, agy,

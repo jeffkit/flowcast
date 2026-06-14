@@ -7,7 +7,7 @@
  */
 import { parseArgs } from 'util'
 import {
-  Checkpoint, setWorkdir,
+  Checkpoint, PauseSignal, setWorkdir,
   loadAgents, loadProviders, resolveAgent,
   runGate, runGates,
   withSelfModGuard, captureBaseline,
@@ -41,7 +41,13 @@ setHitlBackend(opts.hitl === 'wecom' ? 'wecom' : 'terminal', { projectName: opts
 const cp = new Checkpoint(runId, flowcastDir(repo) + '/runs')
 const [agents, providers] = await Promise.all([loadAgents({ repo }), loadProviders({ repo })])
 
-await main()
+// PauseSignal 是 HITL pause() 抛出的信号：状态已落盘，进程应干净退出等待续跑。
+try {
+  await main()
+} catch (e) {
+  if (e instanceof PauseSignal) process.exit(0)
+  throw e
+}
 
 async function main() {
   // <<ORCHESTRATION>>  ← LLM 只填这里

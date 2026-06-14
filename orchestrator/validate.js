@@ -9,7 +9,14 @@ import { tmpdir } from 'os'
 import { join, dirname } from 'path'
 
 // 生成的 flow 只准 import flowx 包本身 + util（parseArgs）。
+// 白名单同时包含 bare 形式和 node: 前缀形式，防止用 node:fs 绕过 fs 限制。
 const IMPORT_WHITELIST = new Set(['flowcast', 'util', 'node:util'])
+
+// 把 specifier 规范化：'node:util' → 'util'，其他不变。
+// Node 20 对内置模块 bare 和 node: 前缀完全等价，白名单检查必须一致。
+function normalizeSpecifier(s) {
+  return s.startsWith('node:') ? s.slice(5) : s
+}
 
 /** 扫描源码里所有 import/require 目标，返回非白名单的去重列表。 */
 export function scanImports(source) {
@@ -22,7 +29,11 @@ export function scanImports(source) {
   for (const re of patterns) {
     let m
     while ((m = re.exec(source))) {
-      if (!IMPORT_WHITELIST.has(m[1])) violations.push(m[1])
+      const raw = m[1]
+      const normalized = normalizeSpecifier(raw)
+      if (!IMPORT_WHITELIST.has(raw) && !IMPORT_WHITELIST.has(normalized)) {
+        violations.push(raw)
+      }
     }
   }
   return [...new Set(violations)]

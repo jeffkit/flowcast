@@ -25,7 +25,9 @@ function recursiveApply(bundle) {
 }
 
 function claudeApply(bundle) {
-  // claude CLI 读 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY；model 走 --model
+  // claude CLI 通过 provider profile 接受任意兼容端点（openai/anthropic 均可），
+  // 不检查 type——type 是调用方 provider 的协议声明，不限制 claude 网关的转发能力。
+  // claude CLI 读 ANTHROPIC_BASE_URL 和 ANTHROPIC_API_KEY（注意：非 ANTHROPIC_AUTH_TOKEN）。
   const env = {}
   if (bundle.apiBase) env.ANTHROPIC_BASE_URL = bundle.apiBase
   if (bundle.apiKey) env.ANTHROPIC_API_KEY = bundle.apiKey

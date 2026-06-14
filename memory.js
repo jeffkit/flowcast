@@ -71,10 +71,14 @@ export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), max
   mkdirSync(baseDir, { recursive: true })
   const p = scopePath(baseDir, scope)
   appendFileSync(p, JSON.stringify(rec) + '\n')
-  // 容量守卫：超限时（包含刚写入的那条）保留最新一半，避免无限膨胀。
-  // 读全量只在真正超限时做，正常路径只有一次 appendFileSync。
-  const entries = readEntries(baseDir, scope)
-  if (entries.length > maxEntries) {
+  // 容量守卫：用行计数估算是否超限（统计换行符，O(size) 但无 JSON 解析开销），
+  // 只在真正超限时才做一次全量读 + 重写，正常路径不触发额外 I/O。
+  const raw = readFileSync(p, 'utf8')
+  const lineCount = raw.split('\n').filter(l => l.trim()).length
+  if (lineCount > maxEntries) {
+    const entries = raw.split('\n').filter(l => l.trim())
+      .map(l => { try { return JSON.parse(l) } catch { return null } })
+      .filter(Boolean)
     // 保留最新的 ceil(maxEntries/2) 条，下次再触发前还有半箱余量
     writeFileSync(p, entries.slice(-Math.ceil(maxEntries / 2)).map(e => JSON.stringify(e)).join('\n') + '\n')
   }

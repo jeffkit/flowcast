@@ -36,9 +36,14 @@ function spawnCli(cli, args, cwd, timeout, env) {
 // ── CLI 封装：各 Agent ────────────────────────────────────────────
 
 /**
- * 把通用 provider bundle（见 provider.js resolveProvider）翻译成 claude Code 读取的
- * ANTHROPIC_* 环境变量，让 claude 走自定义网关（deepseek/minimax 等 anthropic 兼容端点）。
+ * 把 provider 配置翻译成 claude CLI（Claude Code）读取的 ANTHROPIC_* 环境变量。
+ * 用于直接调用 claude() adapter 时注入自定义网关（deepseek/minimax 等 anthropic 兼容端点）。
  * 只接受 anthropic 协议族 provider；apiKey 已由上层从 ${VAR} 插值好（明文不入仓）。
+ *
+ * 注意：此函数设置 ANTHROPIC_AUTH_TOKEN（Claude Code CLI 的 token 字段）。
+ * executor.js 的 claudeApply 设置 ANTHROPIC_API_KEY（claude CLI 网关代理的 key）——
+ * 两者用途不同，分开维护。
+ *
  * @param {{type?,apiBase?,apiKey?,model?}} [provider]
  * @returns {Record<string,string>|undefined}
  */
@@ -78,6 +83,9 @@ async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
     data = JSON.parse(stdout)
   } catch {
     if (exitCode !== 0) throw new Error(`[claude] exit ${exitCode}\n${stdout.trim()}`)
+    // JSON 解析失败但 exit 0：输出非预期格式（claude 版本不兼容 / 旧版本无 --output-format json）。
+    // 警告而非静默降级，避免 token 指标无声消失，方便排查 claude CLI 版本问题。
+    console.warn(`[claude] warn: output is not JSON (exit 0), falling back to raw stdout — check claude CLI version`)
     return stdout.trim()
   }
   const item = Array.isArray(data) ? data.find(x => x.type === 'result') : data
@@ -310,8 +318,9 @@ export async function recursive(goal, {
   if (pricingFile) args.push('--pricing-file', pricingFile)
   if (provider) args.push('--provider', provider)   // openai | anthropic（协议类型）
   if (model) args.push('--model', model)
-  if (apiKey) args.push('--api-key', apiKey)
-  if (apiBase) args.push('--api-base', apiBase)
+  // apiKey 和 apiBase 通过环境变量注入（RECURSIVE_API_KEY / RECURSIVE_API_BASE），
+  // 避免明文出现在进程表的 argv 中（ps aux 可见）。
+  if (apiKey || apiBase) env = { ...recursiveProviderEnv({ apiBase, apiKey }), ...env }
   if (maxSteps) args.push('--max-steps', String(maxSteps))
   if (log) args.push('--log', log)
   if (allowTools) args.push('--allow-tools', allowTools)
