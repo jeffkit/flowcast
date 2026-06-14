@@ -1,8 +1,8 @@
 name: Publish to npm
 
-# 打 tag（v*）即发布到 npm。发布前先跑全量单测。
-# 前置（仓库管理员一次性）：在 Settings → Secrets → Actions 配置 NPM_TOKEN
-# （一个对 @force-lab scope 有发布权限的 npm automation token）。
+# 打 tag（v*）即发布到 npm。发布前先跑全量单测，并校验 tag 与 package.json 版本一致。
+# 前置（仓库管理员一次性）：在 Settings → Secrets and variables → Actions
+# 新增 Secret，名称 NPM_TOKEN，值为 npm Automation Token（见下方说明）。
 on:
   push:
     tags:
@@ -28,6 +28,18 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package.json version: $PKG_VERSION"
+          echo "tag version:          $TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "❌ tag ($TAG_VERSION) 与 package.json version ($PKG_VERSION) 不一致，请先 npm version 更新版本号再打 tag"
+            exit 1
+          fi
+          echo "✅ 版本一致，继续发布"
 
       - name: Publish
         run: npm publish --provenance --access public

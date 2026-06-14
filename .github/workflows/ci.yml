@@ -1,0 +1,29 @@
+name: CI
+
+# 每次 push 或 PR 跑全量单测。
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['v*']  # tag push 由 publish.yml 处理，不重复跑
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Run tests
+        run: npm test
