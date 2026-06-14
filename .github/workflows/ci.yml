@@ -12,15 +12,23 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # v0.2.0 macOS realpath / tmpdir 行为需要 macOS runner 覆盖
+    # （cf3b415 dirs.js mtime 守护 + git.js realpathSync 兜底）
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         node-version: [20, 22]
+        exclude:
+          # 资源节省：macOS × 20 已被 macOS × 22 覆盖；ubuntu 双向矩阵跑
+          - os: macos-latest
+            node-version: 20
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node ${{ matrix.node-version }}
+      - name: Setup Node ${{ matrix.node-version }} on ${{ matrix.os }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
