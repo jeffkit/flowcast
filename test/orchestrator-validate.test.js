@@ -30,6 +30,20 @@ test('scanImports: 抓非白名单 import（fs / child_process / 动态）', () 
   assert.ok(bad.includes('os'))
 })
 
+test('scanImports: 抓 flowcast 子路径违规（dashboard 是宿主观测，不给生成 flow）', () => {
+  // dashboard 是宿主 CLI/SDK 用的，不是给被编排对象自循环的。
+  // 即使 `flowcast` 在白名单里，`flowcast/dashboard` 子路径仍被禁止。
+  const src = `
+    import { collectRuns } from 'flowcast/dashboard'
+    import { renderHtml } from 'flowcast/dashboard/index'
+    import { ok } from 'flowcast/dashboard/something/deep'
+  `
+  const bad = scanImports(src)
+  assert.ok(bad.includes('flowcast/dashboard'), '顶层子路径必须被抓')
+  assert.ok(bad.includes('flowcast/dashboard/index'), '显式 /index 子路径必须被抓')
+  assert.ok(bad.includes('flowcast/dashboard/something/deep'), '深层子路径必须被抓')
+})
+
 // ── validateFlow ─────────────────────────────────────────────────
 
 test('validateFlow: 黄金样例三关全过', async () => {

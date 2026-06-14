@@ -110,6 +110,47 @@ test('collectRuns：僵尸推断 —— status=running 且超阈值 → stale', 
   } finally { rmSync(repo, { recursive: true, force: true }) }
 })
 
+test('collectRuns：state.expectMaxMs 延长僵尸阈值（loop 长跑不误判）', () => {
+  const repo = tempRepo()
+  try {
+    const mainRuns = join(repo, '.flowx', 'runs')
+    // 模拟一个声明了 expectMaxMs=1h 的 loop run（recursive 等长跑场景）
+    writeRun(mainRuns, 'long-loop', {
+      runId: 'long-loop', status: 'running', completed: {},
+      steps: [{ key: 'turn-1', status: 'done', durationMs: 1000 }],
+      currentStep: 'turn-2', startedAt: '2026-01-01T00:00:00.000Z',
+      expectMaxMs: 60 * 60 * 1000,  // 1h 期望
+    })
+    // 阈值用默认 10min，但 expectMaxMs=1h 拉长 → 30min 不活动不判 stale
+    const now = Date.now() + 30 * 60 * 1000
+    const model = collectRuns(repo, { now, staleMs: 10 * 60 * 1000 })
+    const r = model.runs.find(x => x.runId === 'long-loop')
+    assert.equal(r.stale, false, 'expectMaxMs 拉长阈值，30min 不活动不判 stale')
+    // 但超过 expectMaxMs 后仍判 stale
+    const now2 = Date.now() + 90 * 60 * 1000
+    const model2 = collectRuns(repo, { now: now2, staleMs: 10 * 60 * 1000 })
+    const r2 = model2.runs.find(x => x.runId === 'long-loop')
+    assert.equal(r2.stale, true, '超过 expectMaxMs 后判 stale')
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
+test('collectRuns：state.parentRunId 显式父子优先于 prefix 启发式', () => {
+  const repo = tempRepo()
+  try {
+    const mainRuns = join(repo, '.flowx', 'runs')
+    // 两个 run 名字不构成 prefix 关系，但通过 parentRunId 显式关联
+    writeRun(mainRuns, 'parent', { runId: 'parent', status: 'completed', completed: {}, steps: [] })
+    writeRun(mainRuns, 'unrelated-name', {
+      runId: 'unrelated-name', status: 'completed', completed: {}, steps: [],
+      parentRunId: 'parent',
+    })
+    const model = collectRuns(repo)
+    const child = model.runs.find(r => r.runId === 'unrelated-name')
+    assert.equal(child.parentId, 'parent', '显式 parentRunId 应被识别')
+    assert.equal(child.parentIdSource, 'explicit')
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
 test('collectRuns：同名 run 去重，保留完成步骤更多的那份', () => {
   const repo = tempRepo()
   try {

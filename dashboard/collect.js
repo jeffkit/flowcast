@@ -112,7 +112,11 @@ export function readRun(dir, runId, {
 
   const lastActivityMs = Math.max(mtimeMs(statePath), mtimeMs(logPath))
   const status = state.status ?? 'unknown'
-  const stale = status === 'running' && lastActivityMs > 0 && (now - lastActivityMs) > staleMs
+  // 自适应僵尸阈值：state.expectMaxMs 字段声明当前 run 期望最长跑多久（loop.js 自动算 maxTurns*stepAvg）。
+  // 有声明 → 用 max(staleMs, expectMaxMs)；没声明 → 用 staleMs 兜底（默认 10min）。
+  const expectMaxMs = Number.isFinite(state.expectMaxMs) ? state.expectMaxMs : 0
+  const effectiveStaleMs = Math.max(staleMs, expectMaxMs)
+  const stale = status === 'running' && lastActivityMs > 0 && (now - lastActivityMs) > effectiveStaleMs
 
   // 从 jsonl 建 start 时间戳索引（onStep 钩子写入），用于计算步骤等待时间。
   const startTsMap = new Map()
@@ -188,6 +192,7 @@ export function readRun(dir, runId, {
   return {
     runId,
     dir,
+    state,  // 完整 state.json（dashboard render 用 + 父子关系 parentRunId 字段）
     status,
     stale,
     displayStatus: stale ? 'stale' : status,
@@ -275,7 +280,18 @@ export function collectRuns(repo, {
 
   const runs = [...byId.values()]
   const allIds = runs.map(r => r.runId)
-  for (const r of runs) r.parentId = findParent(r.runId, allIds)
+  // 父子关系：优先用 state.parentRunId 显式字段（subflow/orchestrator 写入），
+  // 没有该字段时 fallback 到 prefix 启发式（向后兼容旧 run）。两种来源在 r.parentIdSource 标记。
+  for (const r of runs) {
+    const explicit = r.state?.parentRunId
+    if (explicit && allIds.includes(explicit) && explicit !== r.runId) {
+      r.parentId = explicit
+      r.parentIdSource = 'explicit'
+    } else {
+      r.parentId = findParent(r.runId, allIds)
+      r.parentIdSource = r.parentId ? 'heuristic' : null
+    }
+  }
   const childrenOf = new Map()
   for (const r of runs) {
     if (!r.parentId) continue
