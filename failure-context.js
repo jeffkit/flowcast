@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, existsSync } from 'fs'
+import { mkdirSync, writeFileSync, readFileSync, renameSync, rmSync } from 'fs'
 import { join } from 'path'
 import { assertSafeIdent } from './helpers.js'
 
@@ -65,15 +65,10 @@ export function readAndConsumeFailureContext(dir, tag) {
   }
   // 写 PID sidecar：声明这是本进程消费的内容（供未来做 owner 校验扩展）。
   // 写失败不影响读——正文已经 rename 到 tmp 是本进程的，sidecar 只是元数据。
+  // writeFileSync 是同步的，落盘后 existsSync 立即返回 true，无需 busy-wait 循环。
   try {
     writeFileSync(ownerSidecar, String(process.pid))
   } catch { /* best-effort sidecar */ }
-  // 短暂等待 owner sidecar 落盘：跨进程消费方能据此区分「本进程正在消费」vs「已被抢」。
-  // 50ms 内若 fsync 还没完成，正常 fsync 早完成；只是兜底，不是严格保证。
-  const deadline = Date.now() + 50
-  while (!existsSync(ownerSidecar) && Date.now() < deadline) {
-    // busy-wait is acceptable for ≤ 50ms
-  }
   try {
     return readFileSync(tmp, 'utf8')
   } finally {
