@@ -9,10 +9,10 @@
     "./internal": "./internal.js"
   },
   "bin": {
-    "flowcast": "./bin/flowx.js",
-    "flowc": "./bin/flowx.js",
-    "fc": "./bin/flowx.js",
-    "flowx": "./bin/flowx.js"
+    "flowcast": "./bin/flowcast.js",
+    "flowc": "./bin/flowcast.js",
+    "fc": "./bin/flowcast.js",
+    "flowx": "./bin/flowcast.js"
   },
   "scripts": {
     "test": "node --test test/*.test.js"
@@ -44,10 +44,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jeffkit/flowx.git"
+    "url": "https://github.com/jeffkit/flowcast.git"
   },
-  "bugs": { "url": "https://github.com/jeffkit/flowx/issues" },
-  "homepage": "https://jeffkit.github.io/flowx/",
+  "bugs": { "url": "https://github.com/jeffkit/flowcast/issues" },
+  "homepage": "https://jeffkit.github.io/flowcast/",
   "publishConfig": { "access": "public", "provenance": true },
   "engines": { "node": ">=20" }
 }

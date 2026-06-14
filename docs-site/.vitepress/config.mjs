@@ -1,11 +1,11 @@
 import { defineConfig } from 'vitepress'
 
-// 项目站点部署在 https://jeffkit.github.io/flowx/，base 必须是 /flowx/
+// 项目站点部署在 https://jeffkit.github.io/flowcast/，base 必须是 /flowcast/
 export default defineConfig({
   lang: 'zh-CN',
   title: 'flowcast',
   description: '轻量 workflow 编排框架：断点续跑 · HITL · 多 CLI/agent 调度 · 自改沙箱 · 质量门 · L3 codegen 编排',
-  base: '/flowx/',
+  base: '/flowcast/',
   lastUpdated: true,
   cleanUrls: true,
   ignoreDeadLinks: true,
@@ -26,8 +26,8 @@ export default defineConfig({
       {
         text: 'v0.1.0',
         items: [
-          { text: 'GitHub', link: 'https://github.com/jeffkit/flowx' },
-          { text: '更新日志', link: 'https://github.com/jeffkit/flowx/commits/main' },
+          { text: 'GitHub', link: 'https://github.com/jeffkit/flowcast' },
+          { text: '更新日志', link: 'https://github.com/jeffkit/flowcast/commits/main' },
         ],
       },
     ],
@@ -90,11 +90,11 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/jeffkit/flowx' },
+      { icon: 'github', link: 'https://github.com/jeffkit/flowcast' },
     ],
 
     editLink: {
-      pattern: 'https://github.com/jeffkit/flowx/edit/main/docs-site/:path',
+      pattern: 'https://github.com/jeffkit/flowcast/edit/main/docs-site/:path',
       text: '在 GitHub 上编辑此页',
     },
 

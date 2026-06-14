@@ -1,4 +1,4 @@
-# implement.md — flowx 升级为「自我迭代流程引擎」（Step 1 执行日志）
+# implement.md — flowcast 升级为「自我迭代流程引擎」（Step 1 执行日志）
 
 > 执行日志，按里程碑追加。AI 恢复上下文请先读 status.md。
 
@@ -32,7 +32,7 @@
 
 ## M6 flows/recursive-self-improve.js ✅
 
-- 编排：`ensureGitExclude(.flowx/)`（worktree 用 `--git-common-dir`）→ `preflight.baseline`（持久化续跑复用）→ `preflight.system-prompt`（注入 AGENTS.md/CLAUDE.md + 最近 journal + failure-context）→ `withSelfModGuard` 包裹整个 attempt：
+- 编排：`ensureGitExclude(.flowcast/)`（worktree 用 `--git-common-dir`）→ `preflight.baseline`（持久化续跑复用）→ `preflight.system-prompt`（注入 AGENTS.md/CLAUDE.md + 最近 journal + failure-context）→ `withSelfModGuard` 包裹整个 attempt：
   - `run.recursive` → panic 则 panic-preserved；BudgetExceeded 自动 resume 一次（独立 transcript）。
   - 无改动 → skip-commit。
   - 质量门 test/clippy/fmt（clippy 用 `--all-targets --all-features`；fmt 走 autofix）。

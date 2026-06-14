@@ -32,7 +32,7 @@ const result = await loop(
     gates: [{ name: 'test', cmd: 'npm test', onFail: 'resume-fix' }],
     maxTurns: 10,
     runId: `coverage-${Date.now()}`,
-    stateDir: `${repo}/.flowx/runs`,
+    stateDir: `${repo}/.flowcast/runs`,
   },
 )
 
@@ -66,10 +66,10 @@ console.log(result.status, result.turns)
 
 ```js
 // 首次跑
-await loop(iterate, { goal, isDone, runId: 'my-loop-001', stateDir: '.flowx/runs' })
+await loop(iterate, { goal, isDone, runId: 'my-loop-001', stateDir: '.flowcast/runs' })
 
 // 续跑（传同一 runId）
-await loop(iterate, { goal, isDone, runId: 'my-loop-001', stateDir: '.flowx/runs' })
+await loop(iterate, { goal, isDone, runId: 'my-loop-001', stateDir: '.flowcast/runs' })
 ```
 
 ---
@@ -111,10 +111,10 @@ const prompt = `${memorySection}\n\n任务：...`
 ### 存储位置
 
 ```
-<repo>/.flowx/memory/<scope>.jsonl
+<repo>/.flowcast/memory/<scope>.jsonl
 ```
 
-默认在 `.flowx/memory/`（可用 `baseDir` 覆盖）。每行一条 JSON 记录：
+默认在 `.flowcast/memory/`（可用 `baseDir` 覆盖）。每行一条 JSON 记录：
 
 ```json
 {"ts":"2026-01-01T00:00:00.000Z","topic":"...","rootCause":"...","fix":"...","tags":["test"],"runId":"run-123"}

@@ -13,7 +13,7 @@ import {
 
 ### loadProviders({ repo?, dirs? })
 
-加载并合并多层 provider 配置：`~/.flowx` → `<repo>/.flowx`（后者覆盖前者）。返回 `Record<name, providerCfg>`。
+加载并合并多层 provider 配置：`~/.flowcast` → `<repo>/.flowcast`（后者覆盖前者）。返回 `Record<name, providerCfg>`。
 
 ### resolveProvider(name, providers, env?)
 

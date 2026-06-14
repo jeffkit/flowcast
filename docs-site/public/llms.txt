@@ -1,9 +1,9 @@
-# flowx — 给 AI 使用者的单页速查
+# flowcast — 给 AI 使用者的单页速查
 
-> @force-lab/flowx：轻量 workflow 编排框架（零运行时依赖 · 纯 ESM · Node ≥ 20）。
+> @force-lab/flowcast：轻量 workflow 编排框架（零运行时依赖 · 纯 ESM · Node ≥ 20）。
 > 把会多步骤、可能中断、需人工确认或质量门把关的编码任务，固化成可断点续跑的受控 flow；
 > 或用 L3 一行需求自动生成并执行 flow。本页可整页塞进 context。
-> 文档站：https://jeffkit.github.io/flowx/
+> 文档站：https://jeffkit.github.io/flowcast/
 
 ## 何时用
 满足任意一条就用：多步骤且可能中断（要断点续跑）/ 需 HITL / 需质量门或让 agent 安全改代码（失败回滚）/ 统一调度多个 coding agent / 并发跑子任务 / 一行需求端到端自动生成执行。
@@ -11,22 +11,22 @@
 
 ## Bootstrap（最小可用）
 1. Node ≥ 20。
-2. 目标仓能解析 @force-lab/flowx（生成的 flow 会 import 它）：`npm install @force-lab/flowx`；未发布时用源码：`git clone https://github.com/jeffkit/flowx.git && cd <repo> && npm install <flowx路径>`。
-3. ~/.flowx/providers.json：{ "providers": { "deepseek": { "type":"openai","apiBase":"https://api.deepseek.com/v1","model":"deepseek-v4-pro","apiKey":"${DEEPSEEK_API_KEY}" } } }
-4. ~/.flowx/agents.json：{ "agents": { "claude-sonnet": {"executor":"claude","model":"claude-sonnet-4"}, "cursor-default": {"executor":"cursor","model":"auto"} } }
+2. 目标仓能解析 @force-lab/flowcast（生成的 flow 会 import 它）：`npm install @force-lab/flowcast`；未发布时用源码：`git clone https://github.com/jeffkit/flowcast.git && cd <repo> && npm install <flowx路径>`。
+3. ~/.flowcast/providers.json：{ "providers": { "deepseek": { "type":"openai","apiBase":"https://api.deepseek.com/v1","model":"deepseek-v4-pro","apiKey":"${DEEPSEEK_API_KEY}" } } }
+4. ~/.flowcast/agents.json：{ "agents": { "claude-sonnet": {"executor":"claude","model":"claude-sonnet-4"}, "cursor-default": {"executor":"cursor","model":"auto"} } }
 5. export 对应 API key（缺变量 fail-fast）。
-6. 先 dry-run 冒烟：`FLOWX_DRY_RUN=1 npx flowx orchestrate "测试" --repo .`
+6. 先 dry-run 冒烟：`FLOWX_DRY_RUN=1 npx flowcast orchestrate "测试" --repo .`
 
 ## 入口决策
-- 一行需求、单目标 → `flowx orchestrate "<目标>" --repo . --agent <name>`
-- 大目标可拆 → `flowx orchestrate "<大目标>" --split --concurrency 3`
-- 流程固定要精控 → 手写 flow，`flowx run ./flows/x.js`
-- 标准开发流（分支→码→审查→PR）→ `flowx force-dev --feature <name> --repo .`
-- 看所有 run → `flowx dashboard --repo . --open`
+- 一行需求、单目标 → `flowcast orchestrate "<目标>" --repo . --agent <name>`
+- 大目标可拆 → `flowcast orchestrate "<大目标>" --split --concurrency 3`
+- 流程固定要精控 → 手写 flow，`flowcast run ./flows/x.js`
+- 标准开发流（分支→码→审查→PR）→ `flowcast force-dev --feature <name> --repo .`
+- 看所有 run → `flowcast dashboard --repo . --open`
 - 续跑：用同一个 `--run-id` 再跑（已完成步骤 [skip]）。
 - 选 agent：BYO-LLM（recursive/aider/claude，可注入 provider）vs 锁定型（cursor/gemini/codex，给 provider 会 fail-fast）。
 
-## 允许的 flow 原语（手写 flow 只用这些；只能 import @force-lab/flowx + util）
+## 允许的 flow 原语（手写 flow 只用这些；只能 import @force-lab/flowcast + util）
 - Checkpoint：`new Checkpoint(runId)`、`cp.step(key,fn)`、`cp.done()`、`cp.pause(reason,ctx)`、`cp.has(key)`、`cp.record(key,res)`、`cp.event(type,data)`
 - Agent：`runAgent(prompt,{cli})`、`runAgentChain(prompt,chain)`、`resolveAgent(name,agents,{providers})`、`parallel(thunks,{concurrency})`、`pipeline(items,...stages)`、`setWorkdir(dir)`
 - 质量门/自改：`runGate(gate)`、`runGates([...])`、`withSelfModGuard(fn,{repo})`、`captureBaseline(repo)`
@@ -38,19 +38,19 @@
 - withSelfModGuard verdict：'committed'（不回滚）/'rolled-back'（回滚）/'skip-commit'/'panic-preserved'；抛错也回滚。
 
 ## 禁止（validateFlow 会拦）
-import fs/child_process/net/http/os；裸调进程；动态 import 任意模块；在 main() 外写副作用。需要文件/git → 走 flowx 原语。
+import fs/child_process/net/http/os；裸调进程；动态 import 任意模块；在 main() 外写副作用。需要文件/git → 走 flowcast 原语。
 
 ## flow CLI 约定（骨架处理）
 --repo / --run-id（续跑传同一个）/ --goal / --agent / --dry-run / --hitl(terminal|wecom) / --project-name
 
-## 产物（.flowx/runs/<run-id>/）
+## 产物（.flowcast/runs/<run-id>/）
 state.json（状态/完成步骤/暂停原因）、run.log.jsonl（逐行：每步耗时/输入输出/错误/event）、report.md（done 后摘要）。
 L3 额外：flow.mjs（续跑复用，不重生成）、request.txt；--split 还有 tasks.json、sub/<name>/flow.mjs。
 失败先看 run.log.jsonl 末尾 error 行定位 step/gate；用 --dry-run + 同 run-id 复现骨架。
 
 ## 常见报错 → 修法（都是 fail-fast）
-- "目标仓无法解析 @force-lab/flowx" → 目标仓装本包。
-- "未知 provider/agent 'x'" → 补 ~/.flowx/*.json 或用已定义名。
+- "目标仓无法解析 @force-lab/flowcast" → 目标仓装本包。
+- "未知 provider/agent 'x'" → 补 ~/.flowcast/*.json 或用已定义名。
 - "执行器 'cursor' 不接受外部 provider" → 去掉该 agent 的 provider，用自带 model。
 - "环境变量 X 未设置（插值失败）" → export X。
 - 生成 flow 校验失败（白名单/语法/dry-run）→ 看产物；重试/换 agent；只用上面词汇表。

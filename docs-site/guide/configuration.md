@@ -6,17 +6,17 @@ flowcast 的一条铁律：**provider / agent 配置绝不硬编码在代码里*
 
 | 内容 | 放哪 |
 |------|------|
-| 通用 flow 逻辑 + adapter + provider/agent schema | **flowx 库**（本仓） |
-| 项目特定配置（质量门命令、provider/agent 名） | **项目仓 `.flowx/`**（committed） |
-| 机器级状态 + 密钥（run checkpoints、API key） | **`~/.flowx/`** 或 gitignore 的 `.flowx/` |
+| 通用 flow 逻辑 + adapter + provider/agent schema | **flowcast 库**（本仓） |
+| 项目特定配置（质量门命令、provider/agent 名） | **项目仓 `.flowcast/`**（committed） |
+| 机器级状态 + 密钥（run checkpoints、API key） | **`~/.flowcast/`** 或 gitignore 的 `.flowcast/` |
 
 ## 多层加载与覆盖
 
 provider 与 agent 配置都按这个顺序加载，**后者覆盖前者**：
 
 ```
-1. ~/.flowx/providers.{json,yaml,yml,js,mjs}      ← 机器级
-2. <repo>/.flowx/providers.{json,yaml,yml,js,mjs} ← 项目级覆盖
+1. ~/.flowcast/providers.{json,yaml,yml,js,mjs}      ← 机器级
+2. <repo>/.flowcast/providers.{json,yaml,yml,js,mjs} ← 项目级覆盖
 ```
 
 每个目录只取第一个命中的文件（按 `json → yaml → yml → js → mjs` 优先级）。YAML 需要可选的 `yaml` 包（lazy import），不装则用 JSON。
@@ -25,7 +25,7 @@ provider 与 agent 配置都按这个顺序加载，**后者覆盖前者**：
 
 provider 描述"用哪个模型 / 端点 / 密钥"。执行器 adapter 只消费**解析后的通用 bundle**，不认识具体 provider 名。
 
-`~/.flowx/providers.json`：
+`~/.flowcast/providers.json`：
 
 ```json
 {
@@ -68,7 +68,7 @@ provider 描述"用哪个模型 / 端点 / 密钥"。执行器 adapter 只消费
 
 agent profile 把"执行器 + 可选 provider + 调用配置"打包成具名引用，flow / L3 按名字引用。
 
-`~/.flowx/agents.json`：
+`~/.flowcast/agents.json`：
 
 ```json
 {

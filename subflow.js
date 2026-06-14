@@ -1,7 +1,7 @@
 // subflow.js — 子 flow 调度原语：让一条 flow（或外层脚本）能并发编排多条隔离的子 flow。
 //
-// 为什么是 flowx 原语而不是裸 child_process：FLOW_API 契约禁止生成的 flow import child_process，
-// 所以「一条 flow 起另一条 flow」必须由 flowx 暴露受控原语来做（runFlow / fanOut），契约才不破。
+// 为什么是 flowcast 原语而不是裸 child_process：FLOW_API 契约禁止生成的 flow import child_process，
+// 所以「一条 flow 起另一条 flow」必须由 flowcast 暴露受控原语来做（runFlow / fanOut），契约才不破。
 //
 // 三层进程链：外层（脚本/flow）→ runFlow spawn 出子 flow（独立 node 进程）→ 子 flow 内部再派 agent CLI。
 // 续跑由子 flow 自身的 --run-id + Checkpoint 负责；worktree 隔离让并发子 flow 互不污染。
@@ -209,9 +209,9 @@ export function archiveChildRun(repo, worktree, childRunId) {
 
 // ── stale 临时文件清理（SIGKILL 兜底）────────────────────────────
 //
-// agent.js: codex 的 /tmp/flowx-codex-*.txt 和 failure-context 的 .consuming.* sidecar
+// agent.js: codex 的 /tmp/flowcast-codex-*.txt 和 failure-context 的 .consuming.* sidecar
 // 在 finally 之前 SIGKILL 会留盘。本函数扫 tmpdir 把超过 STALE_TMP_MS 没动的清理掉。
-// 暴露在 public API：flowcast 启动时（bin/flowx.js）调一次 sweeperStaleTmp。
+// 暴露在 public API：flowcast 启动时（bin/flowcast.js）调一次 sweeperStaleTmp。
 // 失败静默——清理失败不影响主流程。
 
 import { readdirSync, statSync, unlinkSync } from 'fs'
@@ -220,12 +220,12 @@ import { tmpdir } from 'os'
 const STALE_TMP_MS = 60 * 60 * 1000  // 1h 没动 → 视为 stale
 // 名字前缀：必须严格匹配（防止误删其他工具的 tmp 文件）
 const STALE_TMP_PREFIXES = [
-  'flowx-codex-',           // codex adapter 临时输出
-  'flowcast-codex-',         // 备选名（防御）
+  'flowcast-codex-',  // codex adapter 临时输出
+  'flowx-codex-',     // legacy（FlowX 时代遗留）
 ]
 
 /**
- * 扫描 tmpdir 清理 stale 的 flowx-* 临时文件。
+ * 扫描 tmpdir 清理 stale 的 flowcast-* 临时文件。
  * 每次 flowcast 启动时调一次；失败静默。
  */
 export function sweepStaleTmp({ olderThanMs = STALE_TMP_MS, baseDir = tmpdir() } = {}) {

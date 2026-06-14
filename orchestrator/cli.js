@@ -1,4 +1,4 @@
-// orchestrator/cli.js — `flowx orchestrate` 命令：把 L3 端到端编排接到命令行。
+// orchestrator/cli.js — `flowcast orchestrate` 命令：把 L3 端到端编排接到命令行。
 //
 // 一行需求 → 受控生成 flow → 跑前校验 → 子进程隔离执行（续跑锁定）。
 // 这是 L3 codegen harness 的命令行入口：把库里的 orchestrate() 接通成可 dogfood 的命令。
@@ -13,7 +13,7 @@ import { loadProviders } from '../provider.js'
 import { orchestrate, orchestrateMulti } from './run.js'
 
 /**
- * 处理 `flowx orchestrate` 命令。
+ * 处理 `flowcast orchestrate` 命令。
  * @param {string[]} argv  命令名之后的原始参数（不含 node/script）
  * @param {object} [o]
  * @param {Function} [o.generate]  可注入的生成函数（测试用，省去真实 LLM）
@@ -32,7 +32,7 @@ export async function runOrchestrate(argv, { generate, onData = (d) => process.s
       'dry-run':      { type: 'boolean', default: false },
       timeout:        { type: 'string' },
       hitl:           { type: 'string', default: 'terminal' },
-      'project-name': { type: 'string', default: 'flowx' },
+      'project-name': { type: 'string', default: 'flowcast' },
       // 接单分拆模式：先把大目标拆成多个子任务，各自生成 flow，再并发执行
       split:          { type: 'boolean', default: false },
       concurrency:    { type: 'string' },
@@ -43,7 +43,7 @@ export async function runOrchestrate(argv, { generate, onData = (d) => process.s
   // goal 可来自位置参数或 --goal
   const goal = (opts.goal ?? positionals.join(' ')).trim()
   if (!goal) {
-    console.error('用法: flowx orchestrate "<目标描述>" [--repo .] [--agent <name>] [--run-id <id>] [--dry-run]')
+    console.error('用法: flowcast orchestrate "<目标描述>" [--repo .] [--agent <name>] [--run-id <id>] [--dry-run]')
     return 1
   }
 

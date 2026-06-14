@@ -314,7 +314,7 @@ test('默认后端是 terminal', () => {
 test('wecom 后端（注入函数）：waitForInput 走 sendAndWait 并带 project_name', async () => {
   const calls = []
   setHitlBackend('wecom', {
-    projectName: 'flowx',
+    projectName: 'flowcast',
     sendAndWait: async (msg, ctx) => { calls.push(['wait', msg, ctx]); return 'human says yes' },
     send: async (msg, ctx) => { calls.push(['notify', msg, ctx]) },
   })
@@ -323,7 +323,7 @@ test('wecom 后端（注入函数）：waitForInput 走 sendAndWait 并带 proje
   await notify('done')
   assert.equal(calls[0][0], 'wait')
   assert.equal(calls[0][1], 'approve?')
-  assert.equal(calls[0][2].projectName, 'flowx')
+  assert.equal(calls[0][2].projectName, 'flowcast')
   assert.equal(calls[1][0], 'notify')
   assert.equal(calls[1][1], 'done')
   setHitlBackend('terminal')

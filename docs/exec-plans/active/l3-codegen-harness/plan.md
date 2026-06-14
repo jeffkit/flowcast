@@ -2,11 +2,11 @@
 
 > 目标冻结见 prompt.md。本文件列里程碑与验收点。
 
-## 模块布局（flowx 仓）
+## 模块布局（flowcast 仓）
 
 ```
 orchestrator/
-  FLOW_API.md            # 生成的 flow 能用的 flowx 词汇表 + 调用约定（契约）
+  FLOW_API.md            # 生成的 flow 能用的 flowcast 词汇表 + 调用约定（契约）
   templates/
     flow-skeleton.js     # 固定骨架：imports + parseArgs(标准 args) + main() 占位
   examples/
@@ -17,7 +17,7 @@ orchestrator/
   index.js               # 对外 API
 ```
 
-dry-run 能力落在 flowx 核心（executor.js / quality-gate.js），非 orchestrator 私有。
+dry-run 能力落在 flowcast 核心（executor.js / quality-gate.js），非 orchestrator 私有。
 
 ## 里程碑
 
@@ -31,13 +31,13 @@ dry-run 能力落在 flowx 核心（executor.js / quality-gate.js），非 orche
 - 验收：黄金样例 `node --check` 通过；结构符合骨架约定。
 
 ### M2 — dry-run 能力 + validateFlow
-- flowx 核心加 dry-run（`FLOWX_DRY_RUN=1`）：
+- flowcast 核心加 dry-run（`FLOWX_DRY_RUN=1`）：
   - `executor.js`：dry-run 时 `resolveAgent().run` 返回 fake 成功（带 `_meta`），不调真 CLI。
   - `quality-gate.js`：dry-run 时 `runGate` 直接判过，不 spawn。
   - 提供 `isDryRun()` helper。
 - `orchestrator/validate.js`：
   1. `node --check <file>`；
-  2. import 白名单扫描（只准相对 import flowx + 标准库白名单）；
+  2. import 白名单扫描（只准相对 import flowcast + 标准库白名单）；
   3. dry-run：临时 git repo 里 `node <file> --dry-run --repo <tmp> --goal <demo>`，断言 exit 0。
 - 单测：dry-run fake 行为；validateFlow 对黄金样例通过、对故意违规样例（import fs 写盘 / 语法错）拦截。
 - 验收：黄金样例过 validateFlow；违规样例被拦。

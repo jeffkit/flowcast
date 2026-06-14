@@ -23,7 +23,7 @@ const { values: opts } = parseArgs({ options: {
   gate:           { type: 'string' },
   'dry-run':      { type: 'boolean', default: false },
   hitl:           { type: 'string', default: 'terminal' },
-  'project-name': { type: 'string', default: 'flowx' },
+  'project-name': { type: 'string', default: 'flowcast' },
 } })
 
 if (opts['dry-run']) process.env.FLOWCAST_DRY_RUN = '1'

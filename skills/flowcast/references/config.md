@@ -1,6 +1,6 @@
-# flowx 项目配置参考
+# flowcast 项目配置参考
 
-## .flowx/config.json 各语言模板
+## .flowcast/config.json 各语言模板
 
 ### Rust
 
@@ -93,7 +93,7 @@
 ## .gitignore 必加
 
 ```
-.flowx/runs/
-.flowx/memory/
-.flowx/prompt-*.md
+.flowcast/runs/
+.flowcast/memory/
+.flowcast/prompt-*.md
 ```

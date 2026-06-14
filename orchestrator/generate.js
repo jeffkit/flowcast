@@ -1,6 +1,6 @@
 // orchestrator/generate.js — 受控 flow 代码生成（护栏①）
 //
-// 用 agent 在 flowx 词汇表内生成一个 flow 文件 → 校验 → 失败把错误回喂、重生成一次。
+// 用 agent 在 flowcast 词汇表内生成一个 flow 文件 → 校验 → 失败把错误回喂、重生成一次。
 // 生成产物落 .mjs（ESM 语义无歧义），写进 run 目录持久化。
 
 import { writeFileSync, readFileSync, mkdirSync } from 'fs'

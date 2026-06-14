@@ -9,7 +9,7 @@ import { decompose } from './decompose.js'
 import { runFlow, fanOut } from '../subflow.js'
 import { flowcastDir } from '../dirs.js'
 
-const FLOWX_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const FLOWCAST_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // 僵尸锁阈值：owner.json 记录 createdAt 超过此时长且 PID 已死则视为僵尸。
 // 1 小时够长：常驻 CI runner 也不会比这更久；又够短：真正 SIGKILL 的活进程不会被误删。
@@ -20,22 +20,22 @@ const LOCK_WAIT_MS = 100
 
 /**
  * 跑前预检：目标仓必须能解析到 flowcast，否则生成的 flow（import 本包）跑不起来。
- * 生成的 flow 住在 repo/.flowx/runs/.../flow.mjs，ESM 裸解析从该文件向上走 node_modules，
+ * 生成的 flow 住在 repo/.flowcast/runs/.../flow.mjs（或 legacy .flowx/runs/），ESM 裸解析从该文件向上走 node_modules，
  * 必经 repo/node_modules；用 repo 根的 require 解析做等价预检（向上能解析的它也能）。
  * 覆盖三种 OK 场景：repo 即本包（自引用）/ npm install / npm link（符号链接）。
  * @returns {{ok:true} | {ok:false, error:string}}
  */
-export function checkFlowxResolvable(repo) {
+export function checkFlowcastResolvable(repo) {
   try {
-    createRequire(join(repo, '__flowx_resolve_probe__.js')).resolve('flowcast')
+    createRequire(join(repo, '__flowcast_resolve_probe__.js')).resolve('flowcast')
     return { ok: true }
   } catch {
     return {
       ok: false,
       error: `目标仓无法解析 flowcast，生成的 flow 跑不起来。\n` +
         `请在目标仓安装本包后重试：\n` +
-        `  cd ${repo} && npm install ${FLOWX_ROOT}\n` +
-        `（或在其 package.json 加依赖 "flowcast": "file:${FLOWX_ROOT}"）`,
+        `  cd ${repo} && npm install ${FLOWCAST_ROOT}\n` +
+        `（或在其 package.json 加依赖 "flowcast": "file:${FLOWCAST_ROOT}"）`,
     }
   }
 }
@@ -68,7 +68,7 @@ export async function orchestrate(request, {
   agent, agents = {}, providers = {}, generate,
   dryRun = false, timeout, onData, extraArgs = [],
 } = {}) {
-  const dep = checkFlowxResolvable(repo)
+  const dep = checkFlowcastResolvable(repo)
   if (!dep.ok) return { ok: false, stage: 'precheck', error: dep.error }
 
   const runDir = join(flowcastDir(repo), 'runs', runId)
@@ -143,7 +143,7 @@ export async function orchestrateMulti(goal, {
   agent, agents = {}, providers = {}, generate, decomposeGen,
   concurrency = 2, isolate = 'worktree', dryRun = false, timeout, onData,
 } = {}) {
-  const dep = checkFlowxResolvable(repo)
+  const dep = checkFlowcastResolvable(repo)
   if (!dep.ok) return { ok: false, stage: 'precheck', runId, error: dep.error }
 
   const runDir = join(flowcastDir(repo), 'runs', runId)
@@ -202,8 +202,8 @@ export async function orchestrateMulti(goal, {
   }
 
   // ③ fanOut 并发执行（worktree 隔离 + per-task 日志 + 续跑由各子 flow 的 --run-id 负责）
-  //    onResult 自动调 archiveChildRun：worktree 隔离下子 run 落 worktree 内 .flowx/runs/，
-  //    归档到主仓 .flowx/runs/ 让 dashboard 看到子 run 完整数据（父子关系靠 state.parentRunId）。
+  //    onResult 自动调 archiveChildRun：worktree 隔离下子 run 落 worktree 内 .flowcast/runs/，
+  //    归档到主仓 .flowcast/runs/ 让 dashboard 看到子 run 完整数据（父子关系靠 state.parentRunId）。
   const { archiveChildRun } = await import('../subflow.js')
   const results = await fanOut(flowTasks, {
     repo, concurrency, isolate, dryRun, timeout, logDir: runDir, onData,

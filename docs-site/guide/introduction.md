@@ -4,13 +4,13 @@
 
 它的设计约束很简单也很硬：**零运行时依赖、纯 ESM、Node ≥ 20**。
 
-## 为什么会有 flowx
+## 为什么会有 flowcast
 
 flowcast 的演进起点，是对三个项目的共性观察：
 
 | 项目 | 是什么 | 核心机制 |
 |------|--------|----------|
-| **flowx** | 轻量 workflow 编排框架 | Checkpoint 断点续跑、统一 `runAgent`、parallel/pipeline、HITL |
+| **flowcast** | 轻量 workflow 编排框架 | Checkpoint 断点续跑、统一 `runAgent`、parallel/pipeline、HITL |
 | **recursive** | 极简正交的 ReAct agent 内核（Rust） | 自改自身源码，靠 git worktree + 严格质量门（test/clippy/fmt）+ 回滚保安全 |
 | **revengers** | 多 agent 任务编排引擎 | 声明式 `MISSION.md` + SQLite 状态对账；Scout 自主发现 / Self-Mod Guard / Merge Gatekeeper / L3 Arbiter；learnings 长期记忆；HITL 升级 |
 
@@ -23,7 +23,7 @@ flowcast 的演进起点，是对三个项目的共性观察：
 5. **失败上下文 / learnings**：从失败中沉淀结构化知识，回喂给后续尝试。
 6. **HITL 升级**：多级人工介入兜底。
 
-结论：这些不该各写一遍。应当有一个**统一的自我迭代 flow 引擎**承载它们的共性——这就是 flowx。
+结论：这些不该各写一遍。应当有一个**统一的自我迭代 flow 引擎**承载它们的共性——这就是 flowcast。
 
 ## 核心理念
 
@@ -45,9 +45,9 @@ L3 动态编排**直接生成 flow 代码**（与人手写的 flow 同构），*
 
 ### 零业务泄露
 
-- **flowx 仓 = 通用库**：L1 adapter + L2 引擎原语 + provider/agent schema + L3 orchestrator。仓内**不含任何端点、密钥、业务质量门**。
-- **项目特定 flow + 配置**（质量门命令、provider 名）→ 放各自项目仓，通过 `file:` 依赖把 flowx 当库消费。
-- **机器级状态/密钥**（run checkpoints、API key）→ `~/.flowx/` 或 gitignore 的 `.flowx/`。
+- **flowcast 仓 = 通用库**：L1 adapter + L2 引擎原语 + provider/agent schema + L3 orchestrator。仓内**不含任何端点、密钥、业务质量门**。
+- **项目特定 flow + 配置**（质量门命令、provider 名）→ 放各自项目仓，通过 `file:` 依赖把 flowcast 当库消费。
+- **机器级状态/密钥**（run checkpoints、API key）→ `~/.flowcast/` 或 gitignore 的 `.flowcast/`。
 
 详见 [配置分层](/guide/configuration)。
 
@@ -60,6 +60,6 @@ L3 动态编排**直接生成 flow 代码**（与人手写的 flow 同构），*
 
 ## 不做什么
 
-flowcast 是**进程定义/编排层**，不是运行时治理框架。它刻意**不吸收** revengers 那样的运行时能力（SQLite 状态机、daemon、锁、常驻 dashboard 服务）。运行时治理仍归上层系统；flowx 只负责把"一个具体任务怎么跑"定义好、跑好、跑得可续跑。
+flowcast 是**进程定义/编排层**，不是运行时治理框架。它刻意**不吸收** revengers 那样的运行时能力（SQLite 状态机、daemon、锁、常驻 dashboard 服务）。运行时治理仍归上层系统；flowcast 只负责把"一个具体任务怎么跑"定义好、跑好、跑得可续跑。
 
 下一步：[快速上手](/guide/getting-started)。

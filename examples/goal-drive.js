@@ -3,10 +3,10 @@
  * goal-drive.js — 用 loop 原语「反复跑 agent 直到目标达成」的活样例
  *
  * 用法：
- *   flowx run goal-drive --goal "<目标>" --gate "npm test" --repo . --cli claude
- *   flowx run goal-drive --prompt-file ./goal.md --gate "npm test" --max-turns 8
- *   flowx run goal-drive --run-id <id>            # 断点续跑（同 run）
- *   flowx run goal-drive --dry-run                # 假执行器 + 假质量门，空跑骨架
+ *   flowcast run goal-drive --goal "<目标>" --gate "npm test" --repo . --cli claude
+ *   flowcast run goal-drive --prompt-file ./goal.md --gate "npm test" --max-turns 8
+ *   flowcast run goal-drive --run-id <id>            # 断点续跑（同 run）
+ *   flowcast run goal-drive --dry-run                # 假执行器 + 假质量门，空跑骨架
  *
  * 流程（对应 Ralph Loop / cursor-goal 的 goal-driven 模式）：
  *   loop 每轮 →

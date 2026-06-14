@@ -1,6 +1,6 @@
 # API · Checkpoint
 
-断点续跑的步骤记录器。把一条 flow 拆成可记录、可跳过的步骤，状态落盘在 `.flowx/runs/<run-id>/`。
+断点续跑的步骤记录器。把一条 flow 拆成可记录、可跳过的步骤，状态落盘在 `.flowcast/runs/<run-id>/`。
 
 ```js
 import { Checkpoint } from 'flowcast'
@@ -9,11 +9,11 @@ import { Checkpoint } from 'flowcast'
 ## 构造
 
 ```js
-new Checkpoint(runId, stateDir = '.flowx/runs')
+new Checkpoint(runId, stateDir = '.flowcast/runs')
 ```
 
 - `runId` — run 标识；续跑必须传同一个。
-- `stateDir` — 状态根目录（默认 `.flowx/runs`）。
+- `stateDir` — 状态根目录（默认 `.flowcast/runs`）。
 
 构造时会创建 `<stateDir>/<runId>/`，已有 `state.json` 则加载（实现续跑）。
 
@@ -60,7 +60,7 @@ new Checkpoint(runId, stateDir = '.flowx/runs')
 ## 落盘产物
 
 ```
-.flowx/runs/<run-id>/
+.flowcast/runs/<run-id>/
 ├── state.json       # { runId, status, completed, steps, pauseReason?, summary? }
 ├── run.log.jsonl    # 每行一条：步骤记录 / 错误 / event 事件
 └── report.md        # done() 后生成的可读摘要

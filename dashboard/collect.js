@@ -1,10 +1,11 @@
 // dashboard/collect.js — L1 采集器：把散落的 run 状态读成一个纯数据模型。
 //
-// flowx 的「可观测原料」全是文件、零 DB：
-//   <repo>/.flowx/runs/<runId>/state.json      状态机快照（status/completed/steps/...）
-//   <repo>/.flowx/runs/<runId>/run.log.jsonl    逐步审计日志 + cp.event 结构化事件
-//   <repo>/.flowx/runs/<runId>/*.log            fanOut 各子任务的纯文本输出（根因常在这）
-//   <repo>/.worktrees/<task>/.flowx/runs/...     worktree 隔离的子 run 落这里
+// flowcast 的「可观测原料」全是文件、零 DB：
+//   <repo>/.flowcast/runs/<runId>/state.json      状态机快照（status/completed/steps/...）
+//   <repo>/.flowcast/runs/<runId>/run.log.jsonl    逐步审计日志 + cp.event 结构化事件
+//   <repo>/.flowcast/runs/<runId>/*.log            fanOut 各子任务的纯文本输出（根因常在这）
+//   <repo>/.worktrees/<task>/.flowcast/runs/...     worktree 隔离的子 run 落这里
+//   （向后兼容：flowcastDir 也可能解析到 .flowx/）
 //
 // 采集器做三件事，且全部是纯函数 + 可注入 now（便于测试、不烧 API）：
 //   1. 跨主仓 + 所有 worktree 扫描，按 runId 去重（取信息更全的那份）

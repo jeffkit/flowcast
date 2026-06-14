@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { generateFlow, extractCode, runGeneratedFlow, orchestrate, checkFlowxResolvable } from '../orchestrator/index.js'
+import { generateFlow, extractCode, runGeneratedFlow, orchestrate, checkFlowcastResolvable } from '../orchestrator/index.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
 import { flowcastDir } from '../dirs.js'
 
@@ -68,14 +68,14 @@ test('runGeneratedFlow: 子进程 dry-run 跑黄金样例 exit 0', async () => {
 
 // ── 跑前预检：目标仓必须能解析 flowcast ──────────────────
 
-test('checkFlowxResolvable: 本包仓自引用可解析', () => {
-  assert.equal(checkFlowxResolvable(REPO).ok, true)
+test('checkFlowcastResolvable: 本包仓自引用可解析', () => {
+  assert.equal(checkFlowcastResolvable(REPO).ok, true)
 })
 
-test('checkFlowxResolvable: 无依赖的临时仓 → 友好报错', () => {
+test('checkFlowcastResolvable: 无依赖的临时仓 → 友好报错', () => {
   const dir = mkdtempSync(join(tmpdir(), 'flowcast-noresolve-'))
   try {
-    const r = checkFlowxResolvable(dir)
+    const r = checkFlowcastResolvable(dir)
     assert.equal(r.ok, false)
     assert.match(r.error, /flowcast/)
     assert.match(r.error, /npm install/)

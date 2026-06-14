@@ -7,9 +7,9 @@ import { flowcastDir } from './dirs.js'
 //
 // 抽象当下流行的 agent loop 模式（Cursor /loop · Ralph Loop · cursor-goal）：
 //   每轮 fresh context 迭代 → 读上轮持久状态 → 跑硬验证门 → 写记忆 → 判达成。
-// 与「一条 flow 跑完就退」相比，loop 让 flowx 能「反复跑到目标达成、且越跑越聪明」，
+// 与「一条 flow 跑完就退」相比，loop 让 flowcast 能「反复跑到目标达成、且越跑越聪明」，
 // 但仍是个【库/同步函数】：跑完即返、不常驻、不是 daemon。谁来周期性叫它
-// （cron / 人手 / 产品仓）是上层的事——这守住了 flowx 不变成 scheduler 的身位。
+// （cron / 人手 / 产品仓）是上层的事——这守住了 flowcast 不变成 scheduler 的身位。
 //
 // 不重造状态机：每轮用 Checkpoint 记为 step(turn-N)，天然续跑（重启跳过已完成轮）；
 // 硬验证复用 quality-gate 的 runGates；跨-run 经验用 memory.js。
@@ -29,7 +29,7 @@ import { flowcastDir } from './dirs.js'
  *   - gateDeps     {object}   runGates 的 deps（resumeFix/onEvent…）
  *   - memoryScope  {string}   可选，启用跨-run 记忆并按此 scope 读写
  *   - memoryQuery  {string}   召回 query（默认用 goal）
- *   - memoryBaseDir{string}   记忆存储根目录（默认 memory.js 的 .flowx/memory）
+ *   - memoryBaseDir{string}   记忆存储根目录（默认 memory.js 的 .flowcast/memory）
  *   - maxTurns     {number}   轮数封顶（默认 20，呼应 cursor /loop max-turns）
  *   - maxRuntimeMs {number}   可选 wall-clock 封顶
  *   - runId        {string}   Checkpoint run id（默认时间戳）

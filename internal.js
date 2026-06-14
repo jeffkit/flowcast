@@ -1,6 +1,6 @@
 // flowcast/internal — 内部 helper 入口（测试 / 工具脚本用）
 //
-// 本文件是 flowx 库"内部 surface"的二次入口。下游 flow 应当从 'flowcast' 导入，
+// 本文件是 flowcast 库"内部 surface"的二次入口。下游 flow 应当从 'flowcast' 导入，
 // 不要从 'flowcast/internal' 导入——这些 API 没有稳定性承诺、可能随时改。
 //
 // 当前含：

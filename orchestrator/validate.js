@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync, readFileSync, copyFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, dirname } from 'path'
 
-// 生成的 flow 只准 import flowx 包本身 + util（parseArgs）。
+// 生成的 flow 只准 import flowcast 包本身 + util（parseArgs）。
 // 白名单同时包含 bare 形式和 node: 前缀形式，防止用 node:fs 绕过 fs 限制。
 const IMPORT_WHITELIST = new Set(['flowcast', 'util', 'node:util'])
 
@@ -58,7 +58,7 @@ export function scanImports(source) {
  * @param {object} [o]
  * @param {number} [o.timeout]  dry-run 子进程超时 ms（默认 60s）
  * @param {string} [o.repo]     指定 dry-run 用的 repo（默认临时 git repo，校验后清理）
- * @param {string} [o.cwd]      node 进程 cwd（决定 flowcast 解析；默认 flowx 仓）
+ * @param {string} [o.cwd]      node 进程 cwd（决定 flowcast 解析；默认 flowcast 仓）
  * @returns {Promise<{ok:boolean, checks:string[], error?:string}>}
  */
 export async function validateFlow(file, { timeout = 60_000, repo, cwd } = {}) {

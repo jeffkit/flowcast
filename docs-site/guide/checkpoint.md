@@ -4,7 +4,7 @@
 
 ## 工作原理
 
-`Checkpoint` 在 `.flowx/runs/<run-id>/` 下维护三个文件：
+`Checkpoint` 在 `.flowcast/runs/<run-id>/` 下维护三个文件：
 
 ```
 state.json       → status、各步骤完成情况（completed）、暂停原因
@@ -89,7 +89,7 @@ cp.event('fallback', { from: 'claude/minimax', to: 'agy', reason: 'timeout' })
 
 | 方法 | 作用 |
 |------|------|
-| `new Checkpoint(runId, stateDir?)` | 初始化（默认 `stateDir = '.flowx/runs'`） |
+| `new Checkpoint(runId, stateDir?)` | 初始化（默认 `stateDir = '.flowcast/runs'`） |
 | `await cp.step(key, fn, { meta? })` | 纳入 checkpoint 的步骤；有缓存就跳过 |
 | `cp.pause(reason, context?)` | 暂停并干净退出（`exit 0`） |
 | `cp.done(summary?)` | 标记完成，生成 `report.md` |

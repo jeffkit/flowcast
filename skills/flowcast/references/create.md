@@ -1,4 +1,4 @@
-# flowx flow 编写参考
+# flowcast flow 编写参考
 
 ## 澄清维度（生成代码前必须确认）
 
@@ -18,8 +18,8 @@
  * {flow-name} — {一句话描述}
  *
  * 用法：
- *   flowx run .flowx/flows/{flow-name}.js --repo . [--参数 值]
- *   flowx run .flowx/flows/{flow-name}.js --run-id <id>  # 续跑
+ *   flowcast run .flowcast/flows/{flow-name}.js --repo . [--参数 值]
+ *   flowcast run .flowcast/flows/{flow-name}.js --run-id <id>  # 续跑
  */
 import { parseArgs } from 'util'
 import { Checkpoint, runAgent, setWorkdir, parallel, waitForInput } from 'flowcast'
@@ -34,7 +34,7 @@ const { values: opts } = parseArgs({
 
 const runId = opts['run-id'] ?? `run-${Date.now()}`
 const repo  = opts.repo
-const cp    = new Checkpoint(runId, `${repo}/.flowx/runs`)
+const cp    = new Checkpoint(runId, `${repo}/.flowcast/runs`)
 setWorkdir(repo)
 
 console.log(`\n▶ {flow-name}  run=${runId}  repo=${repo}\n`)

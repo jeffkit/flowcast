@@ -11,7 +11,7 @@ import { dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 const hooksFile = pathToFileURL(
-  dirname(fileURLToPath(import.meta.url)) + '/flowx-resolver-hooks.mjs'
+  dirname(fileURLToPath(import.meta.url)) + '/flowcast-resolver-hooks.mjs'
 ).href
 
 register(hooksFile, { data: { pkgIndex: process.env.FLOWCAST_PKG_INDEX ?? process.env.FLOWX_PKG_INDEX } })

@@ -1,5 +1,5 @@
 /**
- * flowx ESM resolve hooks（worker thread 侧，由 register() 加载）。
+ * flowcast ESM resolve hooks（worker thread 侧，由 register() 加载）。
  * 仅重写 `flowcast` → 本包绝对路径，其余 specifier 走默认解析。
  */
 

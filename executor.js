@@ -70,7 +70,7 @@ export function registerExecutor(name, run, { applyProvider } = {}) {
   EXECUTORS[name] = applyProvider ? { run, applyProvider } : { run }
 }
 
-/** 加载并合并多层 agent profile 配置（~/.flowx + <repo>/.flowx）。 */
+/** 加载并合并多层 agent profile 配置（~/.flowcast + <repo>/.flowcast，向后兼容 .flowx/）。 */
 export async function loadAgents({ repo, dirs } = {}) {
   return loadMergedConfig(basenamesFor('agents'), { repo, dirs, key: 'agents' })
 }
@@ -148,7 +148,7 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
     // dry-run 是结构冒烟，不校验 agent 配置是否齐全 → 给个 fake runner 让 flow 跑下去
     if (isDryRun()) return { executor: name, run: makeFakeRun(name), opts: {} }
     const known = Object.keys(agents)
-    const hint = known.length ? `已定义：${known.join(' / ')}` : '当前无任何 agent 配置，请创建 ~/.flowx/agents.json'
+    const hint = known.length ? `已定义：${known.join(' / ')}` : '当前无任何 agent 配置，请创建 ~/.flowcast/agents.json'
     throw new Error(`未知 agent '${name}'（${hint}）`)
   }
   if (!profile.executor) throw new Error(`agent '${name}' 缺少 executor 字段`)

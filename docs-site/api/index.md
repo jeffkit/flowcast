@@ -53,7 +53,7 @@ L3 的 API 从 `flowcast/orchestrator`（`orchestrator/index.js`）导出：
 | `orchestrateMulti(goal, opts)` | 接单分拆 → 每任务生成 flow → fanOut 并发 |
 | `generateFlow` / `validateFlow` | 受控生成 / 跑前校验 |
 | `decompose` | LLM 受控分拆大目标为子任务清单 |
-| `checkFlowxResolvable(repo)` | 预检：目标仓能否解析 `flowcast` |
+| `checkFlowcastResolvable(repo)` | 预检：目标仓能否解析 `flowcast` |
 
 用法见 [L3 编排指南](/guide/orchestration)。
 

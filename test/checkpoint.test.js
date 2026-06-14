@@ -381,7 +381,7 @@ test('Checkpoint.countCompletedTurns: 只数 ^turn-N$ 形式的 key', () => {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
-test('dry-run 下 dirs.js 把 flowcastDir 指向 ~/.flowx/dryrun/', async () => {
+test('dry-run 下 dirs.js 把 flowcastDir 指向 ~/.flowcast/dryrun/', async () => {
   // dirs.js 在 FLOWCAST_DRY_RUN=1 时把 flowcastDir() 重定向到 dryrun 根。
   // Checkpoint/memory/failure-context/orchestrator 等都通过 flowcastDir 派生路径，
   // 因此它们自动跟随 dry-run 隔离，不需要每个原语单独判断。
@@ -392,8 +392,8 @@ test('dry-run 下 dirs.js 把 flowcastDir 指向 ~/.flowx/dryrun/', async () => 
   try {
     const result = flowcastDir('/some/repo')
     assert.ok(
-      result.endsWith('/.flowx/dryrun') || result.endsWith('flowcast-dryrun'),
-      `dry-run 下应指向 ~/.flowx/dryrun 或 tmp，got: ${result}`,
+      result.endsWith('/.flowcast/dryrun') || result.endsWith('flowcast-dryrun'),
+      `dry-run 下应指向 ~/.flowcast/dryrun 或 tmp，got: ${result}`,
     )
     // 显式 dryRun=false 强制走真盘路径
     const real = flowcastDir('/some/repo', { dryRun: false })

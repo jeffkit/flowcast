@@ -58,4 +58,4 @@
 - `node --check` 对无 `package.json` 的 `.js` 按 CJS 判定，语法错误漏过 → 改用 `.mjs` 副本校验。
 - dry-run 需容忍「未配置的 agent」否则结构冒烟在 loadAgents 为空时即崩 → resolveAgent dry-run 分支返回 fake。
 - `flowcast` 自引用按「文件所在包作用域」解析（与 cwd 无关）→ 生成的 flow 文件必须落在装了
-  flowx 的项目内（或仓内）才能 import 到。
+  flowcast 的项目内（或仓内）才能 import 到。

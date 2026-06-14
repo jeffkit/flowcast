@@ -1,22 +1,22 @@
 ---
-name: flowx
+name: flowcast
 description: >
-  使用 flowx 在任何业务项目里驱动 agent 自动完成任务——包括写 flow 文件、运行任务、
-  排查失败、配置项目质量门。flowx 全局安装，业务项目无需 package.json。
-  Trigger when user mentions flowx, wants to automate a dev task with agents, says things like:
-  "用 flowx 做 xxx", "帮我写一个 flow", "启动 force-dev", "flowx 跑失败了",
-  "配置质量门", "怎么续跑", "flowx run", "flowx orchestrate", "配置 flowx",
-  "/flowx", "/flowx-run", "/flowx-create", "/flowx-debug", "/flowx-config".
+  使用 flowcast 在任何业务项目里驱动 agent 自动完成任务——包括写 flow 文件、运行任务、
+  排查失败、配置项目质量门。flowcast 全局安装，业务项目无需 package.json。
+  Trigger when user mentions flowcast, wants to automate a dev task with agents, says things like:
+  "用 flowcast 做 xxx", "帮我写一个 flow", "启动 force-dev", "flowcast 跑失败了",
+  "配置质量门", "怎么续跑", "flowcast run", "flowcast orchestrate", "配置 flowcast",
+  "/flowcast", "/flowcast-run", "/flowcast-create", "/flowcast-debug", "/flowcast-config".
 ---
 
-# flowx
+# flowcast
 
 > 详细参考文档在 `references/` 目录，本文件只做路由和快速参考。
 
 ## 0. 环境确认（每次先做）
 
 ```bash
-which flowx || npm install -g flowcast
+which flowcast || npm install -g flowcast
 ```
 
 业务项目**无需 package.json**，全局安装后直接可用。
@@ -28,7 +28,7 @@ which flowx || npm install -g flowcast
 | 用户说 | 走哪个场景 |
 |--------|-----------|
 | "帮我写一个 flow" / "自动化 xxx 流程" | → [写 flow](#write) |
-| "用 flowx 做 xxx" / "跑这个任务" | → [运行任务](#run) |
+| "用 flowcast 做 xxx" / "跑这个任务" | → [运行任务](#run) |
 | "flow 报错了" / "怎么续跑" | → [排查失败](#debug) |
 | "配置质量门" / "设置 model" | → [配置项目](#config) |
 
@@ -38,17 +38,17 @@ which flowx || npm install -g flowcast
 
 > 详细模板和步骤见 [references/create.md](references/create.md)
 
-**flow 文件放在项目的 `.flowx/flows/` 目录**，直接 import 包名：
+**flow 文件放在项目的 `.flowcast/flows/` 目录**，直接 import 包名：
 
 ```js
-// .flowx/flows/my-flow.js
+// .flowcast/flows/my-flow.js
 import { Checkpoint, runAgent, fanOut, waitForInput } from 'flowcast'
 
 const { values: opts } = parseArgs({ options: {
   'run-id': { type: 'string' },
   repo:     { type: 'string', default: process.cwd() },
 }})
-const cp = new Checkpoint(opts['run-id'] ?? `run-${Date.now()}`, `${opts.repo}/.flowx/runs`)
+const cp = new Checkpoint(opts['run-id'] ?? `run-${Date.now()}`, `${opts.repo}/.flowcast/runs`)
 
 await cp.step('p1.do-something', () => runAgent('...', { cli: 'claude' }))
 cp.done({})
@@ -66,14 +66,14 @@ cp.done({})
 
 | 场景 | 命令 |
 |------|------|
-| 开发 feature / 修 bug（完整闭环） | `flowx force-dev --feature <name> --repo .` |
-| 一句话需求，自动生成并执行 | `flowx orchestrate "<需求>" --repo .` |
-| 跑已有 flow 文件 | `flowx run .flowx/flows/xxx.js --repo .` |
+| 开发 feature / 修 bug（完整闭环） | `flowcast force-dev --feature <name> --repo .` |
+| 一句话需求，自动生成并执行 | `flowcast orchestrate "<需求>" --repo .` |
+| 跑已有 flow 文件 | `flowcast run .flowcast/flows/xxx.js --repo .` |
 
 **断点续跑**（HITL 暂停或进程中断后）：
 ```bash
-flowx force-dev --run-id <上次的 run-id> --repo .
-flowx run .flowx/flows/xxx.js --run-id <上次的 run-id> --repo .
+flowcast force-dev --run-id <上次的 run-id> --repo .
+flowcast run .flowcast/flows/xxx.js --run-id <上次的 run-id> --repo .
 ```
 
 **解读输出**：
@@ -90,14 +90,14 @@ flowx run .flowx/flows/xxx.js --run-id <上次的 run-id> --repo .
 
 ```bash
 # 1. 看 run 状态
-cat .flowx/runs/<run-id>/state.json | jq '{status, currentStep, pauseReason}'
+cat .flowcast/runs/<run-id>/state.json | jq '{status, currentStep, pauseReason}'
 
 # 2. 看失败步骤的输出
-cat .flowx/runs/<run-id>/run.log.jsonl | jq 'select(.status == "error")'
+cat .flowcast/runs/<run-id>/run.log.jsonl | jq 'select(.status == "error")'
 ```
 
 **最常见错误**：`[claude] exit 1` → claude CLI 在项目目录绑定了不可用的 model，
-在 `.flowx/config.json` 里加 `"agents": {"default": {"model": "claude-sonnet-4-6"}}` 解决。
+在 `.flowcast/config.json` 里加 `"agents": {"default": {"model": "claude-sonnet-4-6"}}` 解决。
 
 **续跑 vs 重跑**：
 - 续跑：传同一个 `--run-id`，已完成步骤自动跳过
@@ -110,7 +110,7 @@ cat .flowx/runs/<run-id>/run.log.jsonl | jq 'select(.status == "error")'
 
 > 各语言模板见 [references/config.md](references/config.md)
 
-在项目根创建 `.flowx/config.json`：
+在项目根创建 `.flowcast/config.json`：
 
 ```json
 {
@@ -131,7 +131,7 @@ cat .flowx/runs/<run-id>/run.log.jsonl | jq 'select(.status == "error")'
 
 **.gitignore 必加**：
 ```
-.flowx/runs/
-.flowx/memory/
-.flowx/prompt-*.md
+.flowcast/runs/
+.flowcast/memory/
+.flowcast/prompt-*.md
 ```

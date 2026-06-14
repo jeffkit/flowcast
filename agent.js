@@ -183,7 +183,7 @@ export async function gemini(prompt, { cwd = process.cwd(), model, timeout = 300
  * 把最终回复写到临时文件，读出干净结果（拿不到则回退 stdout）。
  */
 export async function codex(prompt, { cwd = process.cwd(), model, timeout = 300_000, extraArgs = [] } = {}) {
-  const outFile = join(tmpdir(), `flowx-codex-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
+  const outFile = join(tmpdir(), `flowcast-codex-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
   const args = ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-o', outFile]
   if (model) args.push('--model', model)
   args.push(...extraArgs, prompt)
@@ -249,7 +249,7 @@ export async function cursor(prompt, { cwd = process.cwd(), timeout = 300_000, e
 // ── recursive 执行器 adapter ──────────────────────────────────────
 //
 // recursive（github.com/jeffkit/recursive）是一个极简的 Rust coding agent
-// kernel，自身能在 worktree 里改自己的源码。在 flowx 里它只是一个「执行器」：
+// kernel，自身能在 worktree 里改自己的源码。在 flowcast 里它只是一个「执行器」：
 // 把它当子进程 spawn，run/replay 一个 goal。
 //
 // 与 claude/cursor adapter 的关键区别：
@@ -706,7 +706,7 @@ const MCP2CLI_ALLOWED_DIRS = [
   '/opt/local/bin',
   // 用户层安装路径
   join(process.env.HOME ?? '', '.local', 'bin'),
-  // 显式白名单子目录（项目仓/flowx 仓内）
+  // 显式白名单子目录（项目仓/flowcast 仓内）
 ]
 
 /**

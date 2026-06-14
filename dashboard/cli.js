@@ -1,11 +1,11 @@
-// dashboard/cli.js — `flowx dashboard` 的参数解析与执行。
+// dashboard/cli.js — `flowcast dashboard` 的参数解析与执行。
 import { parseArgs } from 'util'
 import { spawn } from 'child_process'
 import { resolve } from 'path'
 import { generateDashboard } from './index.js'
 
 /**
- * @param {string[]} argv  bin/flowx.js 透传的剩余参数
+ * @param {string[]} argv  bin/flowcast.js 透传的剩余参数
  * @returns {Promise<number>} 退出码
  */
 export async function runDashboard(argv) {

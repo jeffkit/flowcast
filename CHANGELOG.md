@@ -4,9 +4,13 @@
 
 ## [Unreleased]
 
+### 变更
+- **品牌与仓库重命名 FlowX → FlowCast**：GitHub 仓库 `jeffkit/flowx` → `jeffkit/flowcast`；文档站 base `/flowcast/`；CLI 入口 `bin/flowcast.js`；`skills/flowcast/`；`checkFlowcastResolvable`（原 `checkFlowxResolvable`）；dry-run 根目录 `~/.flowcast/dryrun/`；codex 临时文件前缀 `flowcast-codex-*`。
+- **向后兼容保留**：CLI 别名 `flowx`；数据目录 `.flowx/` fallback；环境变量 `FLOWX_DRY_RUN` / `FLOWX_AGENT_COOLDOWN_*` / `FLOWX_PKG_INDEX`；legacy tmp 前缀 `flowx-codex-*` 仍会被 sweep。
+
 ### 破坏性变更
 
-> **本节面向**通过 `file:` 依赖或 npm 安装消费 flowx 的下游仓（如 recursive / ilink-hub）。
+> **本节面向**通过 `file:` 依赖或 npm 安装消费 flowcast 的下游仓（如 recursive / ilink-hub）。
 > 升级前请通读本节并相应更新代码。
 
 - **`executor.js` 删除 `claudeApply` / `recursiveApply` 翻译器函数**。
@@ -29,12 +33,12 @@
 ### 新增
 - 文档站（VitePress）：首页、快速上手、核心概念、L3 编排、配置分层、示例、API 参考，
   以及《从零到第一次跑通》《排错 / FAQ》《给 AI 使用》页与 `/llms.txt` 单页速查。
-- `skills/flowx/SKILL.md`：随仓发布的 flowx skill，给"使用 flowx 的 AI"一份触发词 +
+- `skills/flowcast/SKILL.md`：随仓发布的 flowcast skill，给"使用 flowcast 的 AI"一份触发词 +
   最小 bootstrap + 能力词汇表 + 排错对照 + 决策树。
 - 发布脚手架：`.github/workflows/publish.yml`（打 `v*` tag → `npm publish --provenance`）。
 - `Checkpoint.setLoopState / getLoopState / countCompletedTurns / setExpectMaxMs`：loop 原语协作的窄接口。`loop.js` 不再直接读写 `cp.state.loopXxx`。
-- `subflow.sweepStaleTmp(baseDir)`：扫 tmpdir 清理 1h+ 前的 `flowx-codex-*` 与 failure-context sidecar，给 `bin/flowx.js` 启动时调用。
-- `orchestrator/run` 在 `orchestrateMulti` 调 `fanOut` 时自动传 `onResult` 调 `archiveChildRun`，worktree 隔离下子 run 自动归档到主仓 `.flowx/runs/`（dashboard 父子链显式接通）。
+- `subflow.sweepStaleTmp(baseDir)`：扫 tmpdir 清理 1h+ 前的 `flowcast-codex-*` 与 failure-context sidecar，给 `bin/flowcast.js` 启动时调用。
+- `orchestrator/run` 在 `orchestrateMulti` 调 `fanOut` 时自动传 `onResult` 调 `archiveChildRun`，worktree 隔离下子 run 自动归档到主仓 `.flowcast/runs/`（dashboard 父子链显式接通）。
 
 ### 变更
 - **数据安全批**：
@@ -48,13 +52,13 @@
   - `dashboard/collect` 父子关系优先读 `state.parentRunId` 显式字段，无字段时 fallback 到 prefix 启发式（兼容旧 run），结果带 `parentIdSource` 标记。
   - `dashboard/collect` zombie 阈值改自适应：读 `state.expectMaxMs` 拉长阈值（loop 长跑场景），超过才判 stale。
   - `validate.js` 新增 `flowcast/dashboard` 子路径黑名单（dashboard 是宿主观测，不该被编排对象自循环）。
-  - `dirs.js` 在 `FLOWCAST_DRY_RUN=1` 时把 `flowcastDir()` 重定向到 `~/.flowx/dryrun/`，所有原语自动跟随。
+  - `dirs.js` 在 `FLOWCAST_DRY_RUN=1` 时把 `flowcastDir()` 重定向到 `~/.flowcast/dryrun/`，所有原语自动跟随。
 - **subflow 资源批**：
   - `runFlow` 收 SIGINT / SIGTERM 时主动转发给子进程，避免父死子变孤儿。
   - `spawnCapture` / `spawnCli` 超时改 SIGTERM + 5s 后 SIGKILL 兜底。
   - `spawnCli` 加 `proc.on('error')` reject（ENOENT / EACCES 不再 hang）。
   - `Checkpoint.error` 分支不再静默丢 `cli / model / inputTokens / outputTokens` 元数据（保留供看板汇总）。
-- **dry-run 清洁**：`FLOWCAST_DRY_RUN=1` 时所有通过 `flowcastDir()` 派生的状态（memory / failure-context / orchestrator）写到 `~/.flowx/dryrun/`，与真盘隔离。
+- **dry-run 清洁**：`FLOWCAST_DRY_RUN=1` 时所有通过 `flowcastDir()` 派生的状态（memory / failure-context / orchestrator）写到 `~/.flowcast/dryrun/`，与真盘隔离。
 - **dashboard zombie 边界**：`state` 文件 `mtime` 拿不到（stat 异常）→ `orphanedStateFile=true` 显式判 zombie，区别于「超阈值才 stale」。
 - **failure-context 清洁**：删除 50ms busy-wait 死循环（owner sidecar 写盘是同步的，循环是 CPU 自旋零行为）；删除未使用的 `existsSync` import。
 
@@ -83,8 +87,8 @@
 - **受控 git 原语**：`gitStatus` / `gitDiff` / `gitCommitAll` / `gitCreateBranch` / `gitWorktreeAdd` / `gitWorktreeRemove` 等。
 - **子 flow 调度**：`runFlow`（隔离子进程）、`fanOut`（限并发 + worktree 隔离 + per-task 日志 + 汇总）。
 - **L3 codegen 编排**：`orchestrate` / `orchestrateMulti`、`generateFlow` / `validateFlow`、`decompose`，
-  CLI `flowx orchestrate [--split]`，护栏三件套（约束式生成 / 跑前校验 / 持久化+续跑锁定）。
-- **可观测看板**：`collectRuns` / `renderHtml` / `generateDashboard`，CLI `flowx dashboard`。
+  CLI `flowcast orchestrate [--split]`，护栏三件套（约束式生成 / 跑前校验 / 持久化+续跑锁定）。
+- **可观测看板**：`collectRuns` / `renderHtml` / `generateDashboard`，CLI `flowcast dashboard`。
 
-[Unreleased]: https://github.com/jeffkit/flowx/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/jeffkit/flowx/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jeffkit/flowcast/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jeffkit/flowcast/releases/tag/v0.1.0

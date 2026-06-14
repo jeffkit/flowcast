@@ -1,9 +1,9 @@
 {
-  "name": "flowx-docs-site",
+  "name": "flowcast-docs-site",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "flowx 文档站（VitePress）",
+  "description": "flowcast 文档站（VitePress）",
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",

@@ -1,6 +1,6 @@
 # Flow API 契约 — L3 codegen 的词汇表
 
-> 生成的 flow **只能**用本契约列出的 flowx 原语，**只能** import `flowcast`。
+> 生成的 flow **只能**用本契约列出的 flowcast 原语，**只能** import `flowcast`。
 > 这是 codegen 的受控表面：有代码的表达力，又可审计、可 dry-run、可断点续跑。
 
 ## 调用约定（骨架强制）
@@ -12,7 +12,7 @@
 | `--repo` | 目标仓路径（默认 cwd） |
 | `--run-id` | run 标识（缺省自动生成；**续跑必须传同一个**） |
 | `--goal` | 目标/需求文本 |
-| `--agent` | 默认 agent profile 名（见 ~/.flowx/agents.*） |
+| `--agent` | 默认 agent profile 名（见 ~/.flowcast/agents.*，向后兼容 ~/.flowx/agents.*） |
 | `--dry-run` | 结构冒烟：执行器/质量门被 fake，不烧 API、不跑构建 |
 | `--hitl` | `terminal`（默认）/ `wecom` |
 | `--project-name` | HITL 用的项目名 |
@@ -46,7 +46,7 @@
 ## 禁止项（validateFlow 会拦截）
 
 - import 任何非 `flowcast`（除 `util` 用于 parseArgs）。**禁止** `fs`/`child_process`/
-  `net`/`http`/`os` 等——需要文件/进程/git 操作时只能通过 flowx 原语。
+  `net`/`http`/`os` 等——需要文件/进程/git 操作时只能通过 flowcast 原语。
 - import `flowcast` 的子路径（如 `flowcast/dashboard`）。`flowcast` 必须作为整体被 import，
   子路径视为「宿主 CLI/SDK 才用、不该被编排对象自循环」的能力（dashboard 等）。
 - 直接调 `process.exit` 之外的进程控制、动态 `require`/`import()` 任意模块。

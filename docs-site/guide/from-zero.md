@@ -1,11 +1,11 @@
 # 从零到第一次跑通
 
-本页是一条**端到端、可复制**的路径：从一台没装过 flowx 的机器，到第一次成功跑通 `flowcast orchestrate`。照着做即可，每步都给了"怎么确认成功"。
+本页是一条**端到端、可复制**的路径：从一台没装过 flowcast 的机器，到第一次成功跑通 `flowcast orchestrate`。照着做即可，每步都给了"怎么确认成功"。
 
 ## 前置条件
 
 - **Node ≥ 20**：`node --version` 确认。
-- 一个目标 git 仓库（你要让 flowx 在里面干活）。
+- 一个目标 git 仓库（你要让 flowcast 在里面干活）。
 - 至少一个可用的 LLM API key（如 DeepSeek / Anthropic）或一个已登录的 coding agent CLI（如 cursor-agent）。
 
 ## 第 1 步：让目标仓能解析 `flowcast`
@@ -18,9 +18,9 @@ cd <你的目标仓>
 npm install flowcast
 ```
 ```bash [尚未发布 / 想用源码]
-git clone https://github.com/jeffkit/flowx.git ~/projects/flowx
+git clone https://github.com/jeffkit/flowcast.git ~/projects/flowcast
 cd <你的目标仓>
-npm install ~/projects/flowx
+npm install ~/projects/flowcast
 ```
 :::
 
@@ -30,15 +30,15 @@ node -e "import('flowcast').then(m => console.log('ok:', Object.keys(m).length, 
 # 期望输出：ok: <数字> exports
 ```
 
-## 第 2 步：写最小 `~/.flowx` 配置
+## 第 2 步：写最小 `~/.flowcast` 配置
 
-provider / agent 配置放机器级 `~/.flowx/`，密钥用 `${ENV}` 运行时插值（**明文永不入仓**）。
+provider / agent 配置放机器级 `~/.flowcast/`，密钥用 `${ENV}` 运行时插值（**明文永不入仓**）。
 
 ```bash
-mkdir -p ~/.flowx
+mkdir -p ~/.flowcast
 ```
 
-`~/.flowx/providers.json`（BYO-LLM 执行器才需要；只用 cursor 等锁定型可跳过）：
+`~/.flowcast/providers.json`（BYO-LLM 执行器才需要；只用 cursor 等锁定型可跳过）：
 ```json
 {
   "providers": {
@@ -52,7 +52,7 @@ mkdir -p ~/.flowx
 }
 ```
 
-`~/.flowx/agents.json`：
+`~/.flowcast/agents.json`：
 ```json
 {
   "agents": {
@@ -82,7 +82,7 @@ export DEEPSEEK_API_KEY=sk-xxxx
 FLOWCAST_DRY_RUN=1 flowcast orchestrate "在 README 末尾加一行 hello" --repo . --agent cursor-default
 ```
 
-**确认成功**：看到生成 → 校验 → 执行（fake）走完，结尾 `✓ orchestrate 完成 exit=0`，并在 `.flowx/runs/<run-id>/` 下有 `flow.mjs`、`state.json`、`run.log.jsonl`。
+**确认成功**：看到生成 → 校验 → 执行（fake）走完，结尾 `✓ orchestrate 完成 exit=0`，并在 `.flowcast/runs/<run-id>/` 下有 `flow.mjs`、`state.json`、`run.log.jsonl`。
 
 ::: warning dry-run 验证的边界
 dry-run 只验证**结构 / 骨架 / 配置**（能不能生成合法 flow、配置是否齐全、流程能否走通）。
@@ -97,7 +97,7 @@ dry-run 只验证**结构 / 骨架 / 配置**（能不能生成合法 flow、配
 flowcast orchestrate "在 README 末尾加一行 hello" --repo . --agent cursor-default
 ```
 
-**确认成功**：`exit=0`，目标仓里 README 真的被改了；`.flowx/runs/<run-id>/report.md` 有可读摘要。
+**确认成功**：`exit=0`，目标仓里 README 真的被改了；`.flowcast/runs/<run-id>/report.md` 有可读摘要。
 
 ## 第 5 步（可选）：续跑与看板
 

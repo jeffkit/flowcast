@@ -1,15 +1,15 @@
 {
-  "name": "flowx-quickstart",
+  "name": "flowcast-quickstart",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "flowx 最小可跑模板：clone → install → dry-run → 真跑",
+  "description": "flowcast 最小可跑模板：clone → install → dry-run → 真跑",
   "scripts": {
     "dry": "FLOWCAST_DRY_RUN=1 node flow.mjs --repo .",
     "start": "node flow.mjs --repo ."
   },
   "dependencies": {
-    "flowcast": "github:jeffkit/flowx"
+    "flowcast": "github:jeffkit/flowcast"
   },
   "engines": { "node": ">=20" }
 }

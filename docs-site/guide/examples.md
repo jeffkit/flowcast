@@ -45,7 +45,7 @@ FLOWCAST_DRY_RUN=1 flowcast run ./orchestrator/examples/golden-sample.flow.js --
 
 ## force-dev：FORCE Lab 标准开发工作流
 
-`force-dev` 是 FORCE Lab 的标准开发 flow：**建分支 → 写码 → 审查 → PR**，全程断点续跑，关键节点 HITL 确认。它由 [force-lab 仓](https://github.com/jeffkit/force-lab) 维护，不随 flowx 包发布，需要单独安装。
+`force-dev` 是 FORCE Lab 的标准开发 flow：**建分支 → 写码 → 审查 → PR**，全程断点续跑，关键节点 HITL 确认。它由 [force-lab 仓](https://github.com/jeffkit/force-lab) 维护，不随 flowcast 包发布，需要单独安装。
 
 ```bash
 # 从 force-lab 仓安装（一次性）
@@ -70,7 +70,7 @@ flowcast run goal-drive --goal "让 npm test 全绿" --gate "npm test" --repo .
 flowcast run goal-drive --dry-run   # 假执行器，验证骨架
 ```
 
-设计要点：`loop / memory / quality-gate / runAgent` 都是 flowx 一等原语，本 flow 只做薄编排。「反复跑到达成、且越跑越聪明」是通用能力。
+设计要点：`loop / memory / quality-gate / runAgent` 都是 flowcast 一等原语，本 flow 只做薄编排。「反复跑到达成、且越跑越聪明」是通用能力。
 
 ## L3 一行需求
 
@@ -92,7 +92,7 @@ flowcast orchestrate "实现 README 的全部 TODO" --split --concurrency 3
 
 ```bash
 flowcast dashboard --repo . --open
-# → .flowx/dashboard.html
+# → .flowcast/dashboard.html
 ```
 
 详见 [API · Dashboard](/api/dashboard)。

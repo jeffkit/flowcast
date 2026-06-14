@@ -1,10 +1,10 @@
-# plan.md — flowx 自我迭代引擎（Step 1）里程碑
+# plan.md — flowcast 自我迭代引擎（Step 1）里程碑
 
 > 读 prompt.md 冻结目标后制定。每个里程碑有验证命令。E2E checkpoint 标在 M7。
 
-## 设计映射：self-improve.sh → flowx 原语
+## 设计映射：self-improve.sh → flowcast 原语
 
-| self-improve.sh 的机制 | 迁移到 flowx 的承载 |
+| self-improve.sh 的机制 | 迁移到 flowcast 的承载 |
 |---|---|
 | git baseline 预检 + clean 检查 + EXIT trap 回滚 | `withSelfModGuard`（M2） |
 | 跑 recursive 二进制（run / replay --resume-from） | `recursive` adapter（M1） |
@@ -15,7 +15,7 @@
 | provider 选择/轮转 + complexity hint | flow 内配置层（M6） |
 | metrics YAML + observation + READY TO LAND | flow + Checkpoint 报告扩展（M6/M7） |
 | READY TO LAND / 升级人工 | 可插拔 HITL backend（M4） |
-| parallel-self-improve.sh（worktree-per-run） | `withSelfModGuard` 的 worktree 选项 + flowx parallel（后续） |
+| parallel-self-improve.sh（worktree-per-run） | `withSelfModGuard` 的 worktree 选项 + flowcast parallel（后续） |
 
 ## 里程碑
 
@@ -50,8 +50,8 @@
 - **验证**：`node flows/recursive-self-improve.js --list` 正常；dry-run（mock recursive adapter）跑通完整状态机。
 
 ### M7 — 真实 parity 验证（E2E checkpoint）
-- 在 recursive 仓选一个 easy goal，跑 `flows/recursive-self-improve.js`，确认：verdict 与 `self-improve.sh` 一致、回滚干净、commit 形态一致、`.flowx/runs/<id>/` 审计齐全。
-- 在 flowx `EVALUATION.md` 追加一条运行记录。
+- 在 recursive 仓选一个 easy goal，跑 `flows/recursive-self-improve.js`，确认：verdict 与 `self-improve.sh` 一致、回滚干净、commit 形态一致、`.flowcast/runs/<id>/` 审计齐全。
+- 在 flowcast `EVALUATION.md` 追加一条运行记录。
 - **E2E checkpoint**：是。
 
 ## 风险与缓解

@@ -1,11 +1,11 @@
-// provider.js — flowx 标准 provider profile
+// provider.js — flowcast 标准 provider profile
 //
 // 把「用哪个模型/端点/密钥」从 flow 里抽出来，做成声明式、可多层覆盖、密钥不入仓的配置。
 // 执行器 adapter（recursive/claude/…）只消费解析后的通用 bundle，不认识具体 provider 名字。
 //
 // 配置来源（后者覆盖前者）：
-//   1. ~/.flowx/providers.{json,yaml,yml,js,mjs}     —— 机器级
-//   2. <repo>/.flowx/providers.{json,yaml,yml,js,mjs} —— 项目级覆盖
+//   1. ~/.flowcast/providers.{json,yaml,yml,js,mjs}     —— 机器级（向后兼容 ~/.flowx/）
+//   2. <repo>/.flowcast/providers.{json,yaml,yml,js,mjs} —— 项目级覆盖（向后兼容 .flowx/）
 //
 // 配置形态（canonical）：
 //   { "providers": { "deepseek": {
@@ -36,7 +36,7 @@ export function basenamesFor(stem) {
  */
 export function interpolateEnv(template, env = process.env) {
   if (typeof template !== 'string') return template
-  const ESCAPE = '\u0000FLOWX_DOLLAR\u0000'
+  const ESCAPE = '\u0000FLOWCAST_DOLLAR\u0000'
   const withEscapes = template.split('$$').join(ESCAPE)
   const expanded = withEscapes.replace(/\$\{([^}]*)\}/g, (m, ident) => {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(ident)) {
@@ -76,10 +76,10 @@ async function loadConfigFile(file) {
 }
 
 /**
- * 通用多层配置加载：~/.flowx → <repo>/.flowx，后者覆盖前者。
+ * 通用多层配置加载：~/.flowcast → <repo>/.flowcast，后者覆盖前者（向后兼容 .flowx/）。
  * @param {string[]} basenames  候选文件名（见 basenamesFor）
  * @param {object} [o]
- * @param {string} [o.repo]   项目根（查找 <repo>/.flowx/*）
+ * @param {string} [o.repo]   项目根（查找 <repo>/.flowcast/*，向后兼容 .flowx/）
  * @param {string[]} [o.dirs] 完全覆盖默认搜索目录（测试用）
  * @param {string} [o.key]    顶层 section key（如 'providers' / 'agents'）；文件可写 {key:{...}} 或裸 {...}
  * @returns {Promise<Record<string, object>>}
@@ -123,7 +123,7 @@ export function resolveProvider(name, providers = {}, env = process.env) {
     const known = Object.keys(providers)
     const hint = known.length
       ? `已定义：${known.join(' / ')}`
-      : '当前无任何 provider 配置，请创建 ~/.flowx/providers.json'
+      : '当前无任何 provider 配置，请创建 ~/.flowcast/providers.json'
     throw new Error(`未知 provider '${name}'（${hint}）`)
   }
   const bundle = {

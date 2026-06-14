@@ -3,7 +3,7 @@
  * flowcast 最小可跑 flow 模板。
  *
  * - dry-run（npm run dry）：零配置即可跑通骨架（执行器被 fake，不烧 API）。
- * - 真跑（npm run start）：需要 ~/.flowx/agents.json 里有 --agent 指定的 profile。
+ * - 真跑（npm run start）：需要 ~/.flowcast/agents.json 里有 --agent 指定的 profile。
  *
  * 只 import flowcast（+ util），只用 FLOW_API 词汇表的原语——
  * 这与 L3 生成的 flow 同构，可被 dry-run 校验。
@@ -49,7 +49,7 @@ async function main() {
 
   cp.done({ goal: opts.goal })
   await notify('quickstart flow 完成')
-  console.log('\n✓ done. 产物见 .flowx/runs/' + runId + '/report.md')
+  console.log('\n✓ done. 产物见 .flowcast/runs/' + runId + '/report.md')
   console.log(String(result).slice(0, 400))
 }
 

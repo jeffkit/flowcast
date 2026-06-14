@@ -102,6 +102,6 @@ agent 改代码 → runGates 把关
    全绿 → commit      红灯 → rolled-back → 硬回滚到 baseline
 ```
 
-这套组合就是 flowx「让 agent 安全自改」的标准姿势：**生成 → 验证 → 要么提交、要么干净回到原点**，永远不会留下半成品的脏状态。
+这套组合就是 flowcast「让 agent 安全自改」的标准姿势：**生成 → 验证 → 要么提交、要么干净回到原点**，永远不会留下半成品的脏状态。
 
 完整签名见 [API · 质量门 / 自改沙箱](/api/quality-gate)。

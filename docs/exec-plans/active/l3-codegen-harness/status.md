@@ -3,12 +3,12 @@
 > 先读本文件，再读 implement.md / plan.md / prompt.md。
 
 **最后更新**：2026-06-11
-**分支**：`feat/self-iteration-engine`（flowx 仓）
+**分支**：`feat/self-iteration-engine`（flowcast 仓）
 **整体状态**：🟢 M1-M5 全部完成；L3 codegen harness MVP 闭环
 
 ## 方向（kongjie 已拍板）
 
-- L3 放 flowx 内（`orchestrator/`）。
+- L3 放 flowcast 内（`orchestrator/`）。
 - **codegen 为唯一主路径**，生成 flow 代码（与人手写同构）。
 - **不做 DAG**：真实 flow 是命令式控制流；多任务扇出调度是另一个靠后的独立问题。
 - 三护栏：约束式 codegen（词汇表+骨架）／跑前校验（语法+import白名单+dry-run）／持久化+续跑锁定。
@@ -25,7 +25,7 @@
 
 - 全量测试 76 全绿。
 
-## 新增文件（flowx 仓）
+## 新增文件（flowcast 仓）
 
 - `dry-run.js`、`git.js`
 - `orchestrator/{FLOW_API.md,index.js,paths.js,validate.js,generate.js,run.js}`、
