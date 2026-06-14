@@ -94,6 +94,29 @@ test('fanOut: 空任务列表 → 空结果，不报错', async () => {
   assert.deepEqual(results, [])
 })
 
+test('fanOut: task.name 含路径穿越字符 → 抛错', async () => {
+  await assert.rejects(
+    fanOut([{ name: '../evil', flow: 'x.mjs' }], { repo: REPO, dryRun: true }),
+    /unsafe characters/,
+  )
+})
+
+test('fanOut: cleanWorktrees=true 时 fanOut 返回后 worktree 已被清理', async () => {
+  const repo = tempRepo()
+  const flowFile = join(repo, 'noop.mjs')
+  writeFileSync(flowFile, `// noop\n`)
+  try {
+    const results = await fanOut(
+      [{ name: 'w1', flow: flowFile }],
+      { repo, isolate: 'worktree', cleanWorktrees: true, dryRun: false, timeout: 30_000 },
+    )
+    assert.equal(results.length, 1)
+    const wt = results[0].worktree
+    assert.ok(wt, '应有 worktree 路径')
+    assert.equal(existsSync(wt), false, 'cleanWorktrees=true 时 worktree 应已清理')
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
 test('fanOut: isolate=worktree 为每个任务建隔离工作树并在其中跑 flow', async () => {
   const repo = tempRepo()
   // 极简 flow：把 cwd 写进一个文件，证明它跑在 worktree 里

@@ -1,6 +1,6 @@
 // orchestrator/run.js — 执行生成的 flow（护栏③：子进程隔离 + 续跑锁定）
 
-import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'fs'
+import { existsSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } from 'fs'
 import { join, dirname } from 'path'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
@@ -69,13 +69,17 @@ export async function orchestrate(request, {
   let reused = false
   let attempts = 0
 
-  if (existsSync(file)) {
-    reused = true // 续跑锁定
+  // 续跑锁定：用 O_EXCL 原子创建占位文件，避免并发调用（相同 runId）同时进入生成阶段相互覆盖。
+  // 若 flow.mjs 已存在（上次完整生成）则 tryCreate 会抛 EEXIST → 走续跑分支。
+  mkdirSync(runDir, { recursive: true })
+  const claimed = tryCreateExclusive(file)
+  if (!claimed) {
+    reused = true // 文件已存在（完整续跑）或已被其他进程创建（并发）
   } else {
     const g = await generateFlow(request, { repo, runDir, agent, agents, providers, generate })
     attempts = g.attempts
     if (!g.validation.ok) return { ok: false, stage: 'generate', error: g.validation.error, file, attempts }
-    writeFileSync(join(runDir, 'request.txt'), request, 'utf8')  // runDir 已由 generateFlow 创建
+    writeFileSync(join(runDir, 'request.txt'), request, 'utf8')
   }
 
   const res = await runGeneratedFlow(file, { repo, runId, goal: request, agent, dryRun, timeout, cwd: repo, onData, extraArgs })
@@ -109,10 +113,12 @@ export async function orchestrateMulti(goal, {
   const runDir = join(flowcastDir(repo), 'runs', runId)
   mkdirSync(runDir, { recursive: true })
 
-  // ① 分拆（续跑锁定：tasks.json 已存在则复用，绝不重新分拆）
+  // ① 分拆（续跑锁定：O_EXCL 原子创建 tasks.json，防并发双写覆盖）
   const tasksPath = join(runDir, 'tasks.json')
   let tasks
-  if (existsSync(tasksPath)) {
+  const tasksOwned = tryCreateExclusive(tasksPath)
+  if (!tasksOwned) {
+    // 其他进程已拥有或上次已生成 → 读取
     tasks = JSON.parse(readFileSync(tasksPath, 'utf8'))
   } else {
     let d
@@ -147,4 +153,18 @@ export async function orchestrateMulti(goal, {
   })
 
   return { ok: results.every(r => r.result.ok), stage: 'run', runId, tasks: tasks.length, results }
+}
+
+/**
+ * 原子创建文件（O_EXCL）：文件不存在则创建并返回 true；已存在则返回 false。
+ * 用于续跑锁定：防止并发相同 runId 的调用同时进入生成阶段互相覆盖。
+ */
+function tryCreateExclusive(path) {
+  try {
+    closeSync(openSync(path, 'wx'))
+    return true
+  } catch (e) {
+    if (e.code === 'EEXIST') return false
+    throw e
+  }
 }

@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Checkpoint } from '../checkpoint.js'
+import { Checkpoint, PauseSignal } from '../checkpoint.js'
 
 function tempDir() { return mkdtempSync(join(tmpdir(), 'flowcast-cp-')) }
 
@@ -238,6 +238,54 @@ test('Checkpoint.step: 续跑时 _meta 从步骤记录里还原', async () => {
     assert.equal(cached._meta?.model, 'claude-sonnet')
     assert.equal(cached._meta?.inputTokens, 500)
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint.pause: 抛出 PauseSignal，状态落盘为 paused', () => {
+  const dir = tempDir()
+  try {
+    const cp = new Checkpoint('r-pause', dir)
+    assert.throws(
+      () => cp.pause('等待人工审批', { ticket: 'T-123' }),
+      (err) => {
+        assert.ok(err instanceof PauseSignal, '应抛 PauseSignal')
+        assert.equal(err.pauseReason, '等待人工审批')
+        assert.deepEqual(err.pauseContext, { ticket: 'T-123' })
+        return true
+      },
+    )
+    // 状态落盘
+    const saved = JSON.parse(readFileSync(join(dir, 'r-pause', 'state.json'), 'utf8'))
+    assert.equal(saved.status, 'paused')
+    assert.equal(saved.pauseReason, '等待人工审批')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint._loadState: state.json 损坏时从 .bak 恢复（上一次 flush 快照）', () => {
+  const dir = tempDir()
+  const warns = []
+  const origWarn = console.warn
+  console.warn = (...args) => warns.push(args.join(' '))
+  try {
+    // 第一次 flush：构造器里 _flush() 产生初始 state.json（无 completed），此时还没有 .bak
+    const cp = new Checkpoint('r-bak', dir)
+    // record step1 → _flush() 把旧 state.json 写进 .bak，再写含 step1 的新 state.json
+    cp.record('step1', 'result1')
+    const stPath = join(dir, 'r-bak', 'state.json')
+    const bakPath = stPath + '.bak'
+    assert.ok(existsSync(bakPath), '.bak 应在 record 之后存在')
+    // 再 record step2 → _flush() 把含 step1 的 state.json 写进 .bak，再写含 step1+step2 的新版
+    cp.record('step2', 'result2')
+    // 损坏 state.json（但 .bak 里是只含 step1 的版本）
+    writeFileSync(stPath, '{ CORRUPTED JSON }')
+    // 新实例应从 .bak 恢复（step1 在 .bak 里，step2 在损坏的 state.json 里丢失）
+    const cp2 = new Checkpoint('r-bak', dir)
+    assert.ok(warns.some(w => w.includes('corrupted')), '应打出损坏警告')
+    assert.equal(cp2.has('step1'), true, '从 .bak 恢复后应能看到 step1')
+    assert.equal(cp2.has('step2'), false, 'step2 在损坏版本中，.bak 里没有，丢失属预期')
+  } finally {
+    console.warn = origWarn
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('Checkpoint.step: 循环里重复调用同一 key 触发 warn（但不报错）', async () => {

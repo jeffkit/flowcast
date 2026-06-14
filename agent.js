@@ -546,11 +546,18 @@ export async function parallel(thunks, { concurrency, strict = false } = {}) {
   return results
 }
 
-/** 把 items 依次流经多个 stage，每个 stage 是 async (item) => result */
+/** 把 items 依次流经多个 stage，每个 stage 是 async (item, index) => result */
 export async function pipeline(items, ...stages) {
   let current = items
-  for (const stage of stages) {
-    current = await Promise.all(current.map((item, i) => stage(item, i)))
+  for (let si = 0; si < stages.length; si++) {
+    const stage = stages[si]
+    try {
+      current = await Promise.all(current.map((item, i) => stage(item, i)))
+    } catch (e) {
+      // 附加 stage 序号，方便定位多阶段 pipeline 中哪一步失败
+      e.pipelineStage = si
+      throw e
+    }
   }
   return current
 }

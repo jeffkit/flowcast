@@ -52,7 +52,11 @@ export function interpolateEnv(template, env = process.env) {
 
 async function loadConfigFile(file) {
   if (file.endsWith('.json')) {
-    return JSON.parse(readFileSync(file, 'utf8'))
+    try {
+      return JSON.parse(readFileSync(file, 'utf8'))
+    } catch (e) {
+      throw new Error(`解析配置文件失败 ${file}：${e.message}`)
+    }
   }
   if (file.endsWith('.js') || file.endsWith('.mjs')) {
     const mod = await import(pathToFileURL(file).href)

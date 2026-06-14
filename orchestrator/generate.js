@@ -38,7 +38,8 @@ ${request}
 
 Output ONLY the flow code in a single \`\`\`js code block. No explanation.`
   if (priorError) {
-    p += `\n\n# Your previous attempt FAILED validation:\n${priorError}\nFix it and output ONLY the corrected flow code.`
+    // 用代码块包围错误，防止 LLM 输出或 subprocess stderr 携带的指令注入新 prompt。
+    p += `\n\n# Your previous attempt FAILED validation:\n\`\`\`text\n${priorError}\n\`\`\`\nFix it and output ONLY the corrected flow code.`
   }
   return p
 }
@@ -70,12 +71,13 @@ export async function generateFlow(request, {
   const gen = resolveGenerateFn({ agent, agents, providers, repo, generate, context: 'orchestrate' })
 
   let validation
+  let code
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const prompt = buildGenPrompt(request, { agentsList, priorError: validation?.error })
-    const code = extractCode(await gen(prompt))
+    code = extractCode(await gen(prompt))
     writeFileSync(file, code, 'utf8')
     validation = await validateFlow(file, { cwd: repo })
     if (validation.ok) return { file, code, attempts: attempt, validation }
   }
-  return { file, code: readFileSync(file, 'utf8'), attempts: maxAttempts, validation }
+  return { file, code, attempts: maxAttempts, validation }
 }

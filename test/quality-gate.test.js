@@ -96,6 +96,17 @@ test('onEvent：绿灯 emit gate/pass，红灯 emit gate/fail（埋点）', asyn
   assert.deepEqual(events.at(-1), { event: 'gate', name: 'bad', status: 'fail', exitCode: 7 })
 })
 
+test('红灯 + onFail=autofix 但无 autofixCmd → 直接抛错，不重跑检查', async () => {
+  await assert.rejects(
+    runGate({ name: 'fmt', cmd: 'exit 1', onFail: 'autofix' /* 无 autofixCmd */ }),
+    (err) => {
+      assert.match(err.message, /no autofixCmd provided/)
+      assert.equal(err.gate, 'fmt')
+      return true
+    },
+  )
+})
+
 test('runGates 顺序执行，遇红灯即抛', async () => {
   await assert.rejects(
     runGates([

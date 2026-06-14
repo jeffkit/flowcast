@@ -29,7 +29,8 @@ ${goal}
 
 Output ONLY the JSON array.`
   if (priorError) {
-    p += `\n\n# Your previous attempt was REJECTED:\n${priorError}\nFix it and output ONLY the corrected JSON array.`
+    // 用代码块包围错误，防止 LLM 输出携带的内容注入新 prompt。
+    p += `\n\n# Your previous attempt was REJECTED:\n\`\`\`text\n${priorError}\n\`\`\`\nFix it and output ONLY the corrected JSON array.`
   }
   return p
 }

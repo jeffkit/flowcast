@@ -19,9 +19,9 @@ export function resolveGenerateFn({ agent, agents = {}, providers = {}, repo, ge
   if (!agent && !agents.default && !agents['claude-sonnet']) {
     const known = Object.keys(agents)
     const hint = known.length
-      ? `已定义：${known.join(' / ')}`
+      ? `请用 --agent <name> 选择以下之一：${known.join(' / ')}`
       : '请在 ~/.flowcast/agents.json 或 .flowx/agents.json 配置 default agent'
-    throw new Error(`${context} 需要一个 agent，但未指定 --agent 且无 default 配置（${hint}）`)
+    throw new Error(`${context} 需要一个 agent，但未指定 --agent 且无 default 配置。${hint}`)
   }
   return async (prompt) => {
     const a = resolveAgent(effectiveAgent, agents, { providers })

@@ -9,6 +9,9 @@ import { join } from 'path'
 // 每个 repo 路径只探一次磁盘，之后从缓存读（run 期间目录结构不会改变）。
 const _cache = new Map()
 
+/** 清除目录缓存（测试用：避免跨测试的缓存污染）。 */
+export function clearFlowcastDirCache() { _cache.clear() }
+
 /**
  * 返回项目的 flowcast 数据根目录。
  * 新项目：<repo>/.flowcast/
