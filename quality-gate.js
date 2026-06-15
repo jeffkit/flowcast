@@ -38,6 +38,13 @@ export async function runGate(gate, deps = {}) {
   const onEvent = gate.onEvent ?? deps.onEvent
   const emit = (data) => { if (onEvent) { try { onEvent({ event: 'gate', name, ...data }) } catch { /* 观测不影响主流程 */ } } }
 
+  // 配置校验：onFail=autofix 必须有 autofixCmd，进门前 fail-fast，不白跑检查命令
+  if (onFail === 'autofix' && !autofixCmd) {
+    const err = new Error(`quality gate '${name}' 配置错误：onFail=autofix 必须同时提供 autofixCmd`)
+    err.gate = name; err.configError = true
+    throw err
+  }
+
   // dry-run：不 spawn，直接判过（结构校验用，不烧构建时间）
   if (isDryRun()) return { name, passed: true, attempts: 1, dryRun: true, output: '[dry-run] gate skipped' }
 
@@ -45,13 +52,6 @@ export async function runGate(gate, deps = {}) {
   if (exitCode === 0) { emit({ status: 'pass', attempts: 1 }); return { name, passed: true, attempts: 1, output: stdout } }
 
   if (onFail === 'autofix') {
-    if (!autofixCmd) {
-      // onFail='autofix' 但没有 autofixCmd：等价于 rollback——直接抛错，不重跑检查、不误报"autofix 失败"
-      emit({ status: 'fail', exitCode })
-      const err = new Error(`quality gate '${name}' failed (exit ${exitCode}); onFail=autofix but no autofixCmd provided`)
-      err.gate = name; err.output = stdout; err.exitCode = exitCode
-      throw err
-    }
     const fix = await runShell(autofixCmd, cwd, timeout)
     if (fix.exitCode !== 0) {
       emit({ status: 'fail', exitCode: fix.exitCode, autofixFailed: true })

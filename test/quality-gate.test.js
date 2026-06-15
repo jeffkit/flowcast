@@ -100,8 +100,9 @@ test('红灯 + onFail=autofix 但无 autofixCmd → 直接抛错，不重跑检�
   await assert.rejects(
     runGate({ name: 'fmt', cmd: 'exit 1', onFail: 'autofix' /* 无 autofixCmd */ }),
     (err) => {
-      assert.match(err.message, /no autofixCmd provided/)
+      assert.match(err.message, /autofixCmd/)
       assert.equal(err.gate, 'fmt')
+      assert.equal(err.configError, true)
       return true
     },
   )
