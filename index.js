@@ -22,6 +22,6 @@ export { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor } fr
 export { isDryRun } from './dry-run.js'
 export { flowcastDir } from './dirs.js'  // 内部 helper 见 ./internal.js
 export { gitStatus, gitDiff, gitCommitAll, gitHead, gitCurrentBranch, gitCommitsAhead, gitCreateBranch, gitWorktreeAdd, gitWorktreeRemove } from './git.js'
-export { runFlow, fanOut, archiveChildRun } from './subflow.js'  // 内部 helper 见 ./internal.js
+export { runFlow, fanOut, archiveChildRun } from './subflow.js'  // sweepStaleTmp 是内部工具，从 flowcast/internal 导出
 export { collectRuns, renderHtml, generateDashboard } from './dashboard/index.js'
 export { assertSafeIdent } from './helpers.js'

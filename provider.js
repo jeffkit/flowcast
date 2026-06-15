@@ -99,7 +99,18 @@ export async function loadMergedConfig(basenames, { repo, dirs, key } = {}) {
       if (existsSync(file)) {
         const cfg = await loadConfigFile(file)
         const section = key ? (cfg?.[key] ?? cfg ?? {}) : (cfg ?? {})
-        merged = { ...merged, ...section } // 后者（项目级）覆盖前者（机器级）
+        // 深合并：对顶层每个 key 做对象级合并，而非整段 section 浅覆盖。
+        // 场景：~/.flowcast/providers.json 里 deepseek 含 apiKey，
+        //       <repo>/.flowcast/providers.json 只想覆盖 deepseek.model——
+        //       浅合并会丢失 apiKey，深合并保留机器级字段、只覆盖项目级写明的字段。
+        for (const [k, v] of Object.entries(section)) {
+          if (v !== null && typeof v === 'object' && !Array.isArray(v) &&
+              merged[k] !== null && typeof merged[k] === 'object' && !Array.isArray(merged[k])) {
+            merged[k] = { ...merged[k], ...v }  // 对象 → 深一层合并
+          } else {
+            merged[k] = v  // 非对象（字符串/数字/null/数组）→ 直接覆盖
+          }
+        }
         break // 每个目录只取第一个命中的文件
       }
     }

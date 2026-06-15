@@ -185,20 +185,30 @@ export async function orchestrateMulti(goal, {
     break
   }
 
-  // ② 每个子任务生成一条 flow（顺序生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
-  const flowTasks = []
-  for (const t of tasks) {
-    const subDir = join(runDir, 'sub', t.name)
-    const file = join(subDir, 'flow.mjs')
-    if (!existsSync(file)) {
-      const g = await generateFlow(t.goal, {
-        repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate,
-      })
-      if (!g.validation.ok) {
-        return { ok: false, stage: 'generate', runId, task: t.name, error: g.validation.error, tasks: tasks.length }
+  // ② 每个子任务生成一条 flow（并发生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
+  // 原先顺序生成：N 个子任务 × 平均 10s/个 = 50s 才开始执行（execution 阶段已是并发）。
+  // 改为并发生成：所有子任务 LLM 调用同时发出，总生成时间降到单个子任务的生成时间。
+  // 任意子任务生成失败时，Promise.all 会 reject，整体返回失败（与顺序版行为一致）。
+  let flowTasks
+  try {
+    flowTasks = await Promise.all(tasks.map(async (t) => {
+      const subDir = join(runDir, 'sub', t.name)
+      const file = join(subDir, 'flow.mjs')
+      if (!existsSync(file)) {
+        const g = await generateFlow(t.goal, {
+          repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate,
+        })
+        if (!g.validation.ok) {
+          const err = new Error(g.validation.error)
+          err.taskName = t.name
+          err.stage = 'generate'
+          throw err
+        }
       }
-    }
-    flowTasks.push({ name: t.name, flow: file, runId: `${runId}-${t.name}`, goal: t.goal, agent: t.agent ?? agent })
+      return { name: t.name, flow: file, runId: `${runId}-${t.name}`, goal: t.goal, agent: t.agent ?? agent }
+    }))
+  } catch (e) {
+    return { ok: false, stage: 'generate', runId, task: e.taskName ?? '?', error: e.message, tasks: tasks.length }
   }
 
   // ③ fanOut 并发执行（worktree 隔离 + per-task 日志 + 续跑由各子 flow 的 --run-id 负责）
@@ -315,7 +325,8 @@ function isPidAlive(pid) {
     process.kill(pid, 0)
     return true
   } catch (e) {
-    if (e.code === 'ESRCH' || e.code === 'EPERM') return false  // ESRCH=死, EPERM=无权（仍存在）
+    if (e.code === 'ESRCH') return false  // 进程不存在
+    if (e.code === 'EPERM') return true   // 无权发信号，但进程存在，不能清锁
     return false
   }
 }

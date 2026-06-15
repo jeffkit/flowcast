@@ -4,6 +4,11 @@ import { flowcastDir } from './dirs.js'
 
 const DEFAULT_MAX_ENTRIES = 500  // scope 文件超出此条数时，保留最新的一半（LRU 淘汰）
 
+// 进程内行计数缓存：key = scopePath，value = 行数。
+// 避免每次 recordLearning 都全量读文件计数——append 后只需 +1，
+// 仅在超限时才做一次全量读 + 重写。进程重启时从文件行数重新初始化。
+const _lineCountCache = new Map()
+
 // ── memory：轻量「跨-run」记忆（learnings 的持久累积）─────────────────
 //
 // failure-context.js 是热路径：单轮失败「写入即消费」，只注入一次。
@@ -71,16 +76,30 @@ export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), max
   mkdirSync(baseDir, { recursive: true })
   const p = scopePath(baseDir, scope)
   appendFileSync(p, JSON.stringify(rec) + '\n')
-  // 容量守卫：用行计数估算是否超限（统计换行符，O(size) 但无 JSON 解析开销），
-  // 只在真正超限时才做一次全量读 + 重写，正常路径不触发额外 I/O。
-  const raw = readFileSync(p, 'utf8')
-  const lineCount = raw.split('\n').filter(l => l.trim()).length
+
+  // 容量守卫：用进程内计数器避免每次写都全量读文件。
+  // 首次写该 scope 时从文件行数初始化计数（O(size) 但只做一次），
+  // 后续每次 append +1，仅超限时才全量读 + 重写（LRU 淘汰）。
+  let lineCount = _lineCountCache.get(p)
+  if (lineCount === undefined) {
+    // 初始化：统计当前文件行数（已包含刚 append 的那行）
+    try {
+      lineCount = readFileSync(p, 'utf8').split('\n').filter(l => l.trim()).length
+    } catch { lineCount = 1 }
+  } else {
+    lineCount += 1
+  }
+  _lineCountCache.set(p, lineCount)
+
   if (lineCount > maxEntries) {
+    const raw = readFileSync(p, 'utf8')
     const entries = raw.split('\n').filter(l => l.trim())
       .map(l => { try { return JSON.parse(l) } catch { return null } })
       .filter(Boolean)
     // 保留最新的 ceil(maxEntries/2) 条，下次再触发前还有半箱余量
-    writeFileSync(p, entries.slice(-Math.ceil(maxEntries / 2)).map(e => JSON.stringify(e)).join('\n') + '\n')
+    const kept = entries.slice(-Math.ceil(maxEntries / 2))
+    writeFileSync(p, kept.map(e => JSON.stringify(e)).join('\n') + '\n')
+    _lineCountCache.set(p, kept.length)
   }
   return rec
 }

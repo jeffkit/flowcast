@@ -104,7 +104,20 @@ export async function loop(iterate, opts = {}) {
 
         // 每轮硬验证：跑质量门（dry-run 下自动判过）。门红灯按其 onFail 策略处理，
         // rollback/resume-fix 仍失败会抛错——错误上抛、状态已落盘，下次可续跑。
-        const gateResults = gates.length ? await runGates(gates, gateDeps) : []
+        //
+        // 把 maxRuntimeMs 的剩余时间透传给每个 gate 作为兜底超时：
+        // 防止某个无 timeout 的 gate 意外挂死并完全无视外层预算约束。
+        // gate 自身已设 timeout 的保持不变（自身值更保守时不覆盖）。
+        let effectiveGates = gates
+        if (gates.length && maxRuntimeMs) {
+          const remaining = maxRuntimeMs - (Date.now() - startedAt)
+          if (remaining > 0) {
+            effectiveGates = gates.map(g =>
+              g.timeout == null ? { ...g, timeout: remaining } : g
+            )
+          }
+        }
+        const gateResults = effectiveGates.length ? await runGates(effectiveGates, gateDeps) : []
         return { result: r, gateResults }
       })
     } catch (e) {

@@ -207,44 +207,6 @@ export function archiveChildRun(repo, worktree, childRunId) {
   }
 }
 
-// ── stale 临时文件清理（SIGKILL 兜底）────────────────────────────
-//
-// agent.js: codex 的 /tmp/flowcast-codex-*.txt 和 failure-context 的 .consuming.* sidecar
-// 在 finally 之前 SIGKILL 会留盘。本函数扫 tmpdir 把超过 STALE_TMP_MS 没动的清理掉。
-// 暴露在 public API：flowcast 启动时（bin/flowcast.js）调一次 sweeperStaleTmp。
-// 失败静默——清理失败不影响主流程。
-
-import { readdirSync, statSync, unlinkSync } from 'fs'
-import { tmpdir } from 'os'
-
-const STALE_TMP_MS = 60 * 60 * 1000  // 1h 没动 → 视为 stale
-// 名字前缀：必须严格匹配（防止误删其他工具的 tmp 文件）
-const STALE_TMP_PREFIXES = [
-  'flowcast-codex-',  // codex adapter 临时输出
-  'flowx-codex-',     // legacy（FlowX 时代遗留）
-]
-
-/**
- * 扫描 tmpdir 清理 stale 的 flowcast-* 临时文件。
- * 每次 flowcast 启动时调一次；失败静默。
- */
-export function sweepStaleTmp({ olderThanMs = STALE_TMP_MS, baseDir = tmpdir() } = {}) {
-  const removed = []
-  try {
-    const now = Date.now()
-    for (const name of readdirSync(baseDir)) {
-      // 匹配我们认识的几种 stale 文件
-      const isOurs = STALE_TMP_PREFIXES.some(p => name.startsWith(p))
-        || /-failure-context\.md\.consuming\..*\.owner\..*/.test(name)  // failure-context sidecar
-      if (!isOurs) continue
-      try {
-        const st = statSync(join(baseDir, name))
-        if (now - st.mtimeMs > olderThanMs) {
-          unlinkSync(join(baseDir, name))
-          removed.push(name)
-        }
-      } catch { /* 单文件失败跳过 */ }
-    }
-  } catch { /* 扫不动就放弃 */ }
-  return removed
-}
+// sweepStaleTmp 已迁移到 spawn.js（进程管理职责归属更合理）。
+// 此处 re-export 保持向后兼容，防止已有调用方从 subflow.js 直接 import 的代码崩溃。
+export { sweepStaleTmp } from './spawn.js'
