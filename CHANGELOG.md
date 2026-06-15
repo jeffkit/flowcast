@@ -4,8 +4,18 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-15
+
 ### 新增
 - **`loadGates` / `mergeGates`：业务项目自定义质量门（外置配置）**。补齐配置分层里「项目特定质量门放项目仓」长期缺位的能力，与 `loadProviders`/`loadAgents` 对称。业务项目在 `<repo>/.flowcast/gates.json`（committed，map by name 形态）声明自己的门（如 E2E、自定义脚本门），经 `loadGates({repo})` 加载、`mergeGates(builtin, project)` 与内置默认门合并（按门名去重，项目同名覆盖、新增追加在后）。门字段与 `runGate` 一致（`cmd`/`onFail`/`autofixCmd`/`cwd`/`timeout`）；`cmd` 走 `sh -c`，由 shell 自身做变量展开（不在 flowcast 层做 `${VAR}` 插值）。已在 `index.js` 导出、`FLOW_API.md` 登记，生成 flow 可直接 `import { loadGates, mergeGates } from 'flowcast'`。
+- **`pipeline` 真流式无 barrier 语义**：每个 item 独立穿过所有 stage，无级间同步等待；支持 `{concurrency}` 并发限制（默认 CPU 核数）；stage 签名统一为 `(prev, item, index)`；per-item 容错（某 item 失败返回 null 不影响其他）。
+- **`runAgent` / `runProfile` 增加可选 `schema`**：传 JSON Schema 时强制结构化输出，内置 JSON 提取 + 校验 + 不匹配重试；`schema.js` 独立导出 `validateSchema` / `runStructured` / `stubFromSchema`。
+- **`verifyAdversarial` 对抗验证原语**（可选质量保证）：spawn 多个独立「怀疑者」agent 试图反驳 claim，按阈值表决；支持 `lenses`（多视角）、自定义 `threshold`、dry-run 短路。
+
+### 修复
+- **`cursor` / `agy` executor `extraArgs` 白名单**补充 `--trust`、`--force`、`--yolo`、`--dangerously-skip-permissions` 等运行时安全 flag，修复 Workspace Trust Required 导致 Cursor agent 无法启动的问题。
+- **`loadMergedConfig` 机器级配置路径**同时搜索 `~/.flowx` 和 `~/.flowcast`，修复仅存在 `~/.flowx` 时配置被忽略的问题。
+- **`runGate` 配置校验前置**：`onFail=autofix` 但缺少 `autofixCmd` 时在进门前立即 fail-fast（附 `configError=true`），不再等到检查命令失败后才报错。
 
 ## [0.2.0] - 2026-06-14
 
