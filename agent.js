@@ -263,18 +263,23 @@ export async function cursor(prompt, { cwd = process.cwd(), timeout = 300_000, e
  * 捕获式 spawn：不因非零退出码 reject。合并 stdout+stderr（对齐 self-improve.sh 的 2>&1）。
  * 返回 { stdout, exitCode, timedOut, spawnError? }。
  */
-export function spawnCapture(cmd, args, { cwd = process.cwd(), timeout, env, onData } = {}) {
+export function spawnCapture(cmd, args, { cwd = process.cwd(), timeout, env, onData, stdin } = {}) {
   return new Promise(resolve => {
     let proc
     try {
       proc = spawn(cmd, args, {
         cwd,
         env: env ? { ...process.env, ...env } : process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       })
     } catch (err) {
       resolve({ stdout: `[spawn error] ${err.message}`, exitCode: -1, timedOut: false, spawnError: err.message })
       return
+    }
+    // 若调用方提供 stdin 字符串，写入后立即关闭（EOF 信号给子进程）
+    if (stdin != null) {
+      proc.stdin.write(stdin)
+      proc.stdin.end()
     }
     let out = ''
     let timedOut = false
@@ -718,19 +723,23 @@ function makeWecomBackend(config = {}) {
     }
   }
 
-  // mcp2cli 真实实现：调用 wecom-hil MCP 工具。
+  // mcp2cli 真实实现：调用 wecom-hil / hitl MCP 工具。
   // 安全：mcp2cli 必须是 PATH 上的 mcp2cli（默认）或用户在白名单目录下的绝对路径。
-  // server 必须是 `@<namespace>` 形式的 mcp 命名空间。避免 LLM 注入任意 binary/shell 命令。
+  // server 必须是 `@<name>` 或 `@<namespace>/<name>` 形式。避免 LLM 注入任意 binary/shell 命令。
+  // 工具名用短横线格式（mcp2cli 3.x CLI 风格）；payload 经 --stdin 管道传入（兼容 3.x API）。
   const mcp2cli = resolveMcp2cliPath(config.mcp2cli ?? 'mcp2cli')
-  const server = resolveMcpServerName(config.server ?? '@wecom-hil')
+  const server = resolveMcpServerName(config.server ?? '@hitl')
   const waitTimeoutMs = config.waitTimeoutMs ?? 86_400_000  // 默认 24h，可通过 config 覆盖
   const callTool = async (tool, message, { wait }) => {
+    const toolCli = tool.replace(/_/g, '-')  // send_and_wait_reply → send-and-wait-reply
     const payload = JSON.stringify({ message, project_name: projectName, ...(chatId ? { chat_id: chatId } : {}) })
     const timeout = wait ? waitTimeoutMs : 60_000
-    const { stdout, exitCode, timedOut, spawnError } = await spawnCapture(mcp2cli, [server, tool, '--json', payload], { timeout })
+    const { stdout, exitCode, timedOut, spawnError } = await spawnCapture(
+      mcp2cli, [server, toolCli, '--stdin'], { timeout, stdin: payload }
+    )
     if (spawnError) throw new Error(`wecom: mcp2cli 未找到或无法启动（${spawnError}）——请确认 mcp2cli 已安装`)
     if (timedOut) throw new Error(`wecom: HITL 等待超时（${timeout}ms 内无回复）`)
-    if (exitCode !== 0) throw new Error(`wecom mcp2cli ${tool} exit ${exitCode}: ${stdout.slice(0, 200)}`)
+    if (exitCode !== 0) throw new Error(`wecom mcp2cli ${toolCli} exit ${exitCode}: ${stdout.slice(0, 200)}`)
     return stdout
   }
   return {
