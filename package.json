@@ -1,6 +1,6 @@
 {
   "name": "flowcast",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "轻量 workflow 编排框架：断点续跑、HITL、多 CLI 调度",
   "type": "module",
   "main": "index.js",

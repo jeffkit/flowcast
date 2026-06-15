@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { readFileSync, existsSync, unlinkSync, realpathSync } from 'fs'
-import { join } from 'path'
+import { join, basename } from 'path'
 import { tmpdir, cpus } from 'os'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
@@ -769,8 +769,10 @@ const MCP2CLI_ALLOWED_DIRS = [
 /**
  * 把 mcp2cli 输入规整成 spawn 第一个参数：
  *   - 默认值 'mcp2cli' → 直接返回 'mcp2cli'（让 spawn 走 PATH 解析）
- *   - 显式绝对路径 → 必须在白名单目录下；用 realpathSync 解析 symlink 后再校验
- *     （防恶意用户在 /usr/local/bin/myevil 软链到 /bin/sh）
+ *   - 显式绝对路径 → 必须在白名单目录下，且 basename 必须是 'mcp2cli'；
+ *     用 realpathSync 解析 symlink 后再校验
+ *     （防恶意用户在 /usr/local/bin/myevil 软链到 /bin/sh；
+ *      防 Ubuntu /bin→/usr/bin symlink 使 /bin/sh 通过目录白名单）
  *   - 其他情况 → 抛错
  */
 function resolveMcp2cliPath(input) {
@@ -782,7 +784,11 @@ function resolveMcp2cliPath(input) {
   try { resolved = realpathSync(input) } catch {
     throw new Error(`wecom backend: mcp2cli 路径不存在或无法解析: ${input}`)
   }
-  const allowed = MCP2CLI_ALLOWED_DIRS.some(d => d && resolved.startsWith(d + '/') || resolved === d)
+  // basename 必须是 'mcp2cli'，防止注入 /bin/sh、/usr/bin/sh 等系统工具
+  if (basename(resolved) !== 'mcp2cli') {
+    throw new Error(`wecom backend: mcp2cli 路径不在白名单目录（basename 必须是 mcp2cli）: ${input}（resolved: ${resolved}）`)
+  }
+  const allowed = MCP2CLI_ALLOWED_DIRS.some(d => d && (resolved.startsWith(d + '/') || resolved === d))
   if (!allowed) {
     throw new Error(`wecom backend: mcp2cli 路径不在白名单目录（${MCP2CLI_ALLOWED_DIRS.filter(Boolean).join(', ')}）: ${input}（resolved: ${resolved}）`)
   }
