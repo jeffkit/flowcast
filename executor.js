@@ -98,11 +98,11 @@ const EXTRA_ARGS_WHITELIST = {
   recursive: new Set([
     '--max-steps', '--model', '--workspace',
   ]),
-  // 锁定型执行器不接 extraArgs（用户不能往 cursor/gemini/codex 塞 flag）
-  cursor: new Set(),
+  // 锁定型执行器只允许运行时安全 flag（workspace 信任/宽松权限），不允许注入 LLM 配置 flag
+  cursor: new Set(['--trust', '--force', '--yolo', '--dangerously-skip-permissions']),
   gemini: new Set(),
-  codex: new Set(),
-  agy: new Set(),
+  codex:  new Set(),
+  agy:    new Set(['--dangerously-skip-permissions']),
 }
 
 /**
