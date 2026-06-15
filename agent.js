@@ -796,12 +796,12 @@ function resolveMcp2cliPath(input) {
 }
 
 /**
- * 校验 mcp server 命名空间：必须是 `@<namespace>/<name>` 形式。
- * 防止 LLM 注入 `-c`、`--exec` 等被 spawn 解释成 flag 的字符串。
+ * 校验 mcp server 名称：必须是 `@<name>` 或 `@<namespace>/<name>` 形式（mcp2cli 两种合法格式）。
+ * 防止 LLM 注入 `-c`、`--exec`、shell flag 等被 spawn 解释的字符串。
  */
 function resolveMcpServerName(input) {
-  if (typeof input !== 'string' || !/^@[\w.-]+\/[\w.-]+$/.test(input)) {
-    throw new Error(`wecom backend: server 必须是 @<namespace>/<name> 形式，收到: ${input}`)
+  if (typeof input !== 'string' || !/^@[\w.-]+(\/[\w.-]+)?$/.test(input)) {
+    throw new Error(`wecom backend: server 必须是 @<name> 或 @<namespace>/<name> 形式，收到: ${input}`)
   }
   return input
 }
