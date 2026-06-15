@@ -85,10 +85,13 @@ async function loadConfigFile(file) {
  * @returns {Promise<Record<string, object>>}
  */
 export async function loadMergedConfig(basenames, { repo, dirs, key } = {}) {
-  // 机器级：优先 ~/.flowcast，向后兼容 ~/.flowx（与项目级 flowcastDir 逻辑一致）
+  // 机器级：~/.flowx 在前（旧配置基准），~/.flowcast 在后（新配置覆盖），两者都搜索。
+  // 旧逻辑「目录存在就选 .flowcast 否则选 .flowx」有缺陷：~/.flowcast/dryrun/ 存在就会
+  // 完全跳过 ~/.flowx/ 里的真实配置。现在改为两个目录都纳入 merge 链，后者覆盖前者，
+  // 向后兼容：仅有 ~/.flowx/ 的老机器直接继续工作；同时有两者的机器 .flowcast 优先。
   const home = homedir()
-  const homeDir = existsSync(join(home, '.flowcast')) ? join(home, '.flowcast') : join(home, '.flowx')
-  const searchDirs = dirs ?? [homeDir, ...(repo ? [flowcastDir(repo)] : [])]
+  const homeDirs = [join(home, '.flowx'), join(home, '.flowcast')]
+  const searchDirs = dirs ?? [...homeDirs, ...(repo ? [flowcastDir(repo)] : [])]
   let merged = {}
   for (const dir of searchDirs) {
     for (const base of basenames) {
