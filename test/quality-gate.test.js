@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, rmSync } from 'fs'
+import { mkdtempSync, existsSync, rmSync, mkdirSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-import { runGate, runGates } from '../quality-gate.js'
+import { runGate, runGates, loadGates, mergeGates } from '../quality-gate.js'
 
 test('绿灯门 → passed', async () => {
   const r = await runGate({ name: 'ok', cmd: 'true' })
@@ -116,4 +116,84 @@ test('runGates 顺序执行，遇红灯即抛', async () => {
     ]),
     (err) => { assert.equal(err.gate, 'b'); return true },
   )
+})
+
+// ── loadGates / mergeGates：业务项目自定义质量门 ──────────────────
+
+test('loadGates：从 .flowcast/gates.json（map 形态）加载并注入 name', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-gates-'))
+  writeFileSync(join(dir, 'gates.json'), JSON.stringify({
+    gates: {
+      e2e: { cmd: 'sh ./e2e.sh', onFail: 'rollback', timeout: 600000 },
+    },
+  }))
+  const gates = await loadGates({ dirs: [dir] })
+  assert.equal(gates.length, 1)
+  assert.deepEqual(gates[0], { name: 'e2e', cmd: 'sh ./e2e.sh', onFail: 'rollback', timeout: 600000 })
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('loadGates：裸 map（无 gates 外层包裹）也支持', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-gates-bare-'))
+  writeFileSync(join(dir, 'gates.json'), JSON.stringify({
+    lint: { cmd: 'npm run lint', onFail: 'resume-fix' },
+  }))
+  const gates = await loadGates({ dirs: [dir] })
+  assert.equal(gates[0].name, 'lint')
+  assert.equal(gates[0].cmd, 'npm run lint')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('loadGates：多层覆盖——项目级同名门整体覆盖机器级', async () => {
+  const machine = mkdtempSync(join(tmpdir(), 'flowcast-gates-m-'))
+  const project = mkdtempSync(join(tmpdir(), 'flowcast-gates-p-'))
+  writeFileSync(join(machine, 'gates.json'), JSON.stringify({
+    gates: { e2e: { cmd: 'old', onFail: 'rollback' }, smoke: { cmd: 'smoke' } },
+  }))
+  writeFileSync(join(project, 'gates.json'), JSON.stringify({
+    gates: { e2e: { cmd: 'new', onFail: 'resume-fix' } },
+  }))
+  const gates = await loadGates({ dirs: [machine, project] })
+  const e2e = gates.find(g => g.name === 'e2e')
+  assert.equal(e2e.cmd, 'new', '项目级应覆盖机器级')
+  assert.equal(e2e.onFail, 'resume-fix')
+  assert.ok(gates.find(g => g.name === 'smoke'), '机器级独有门应保留')
+  rmSync(machine, { recursive: true, force: true })
+  rmSync(project, { recursive: true, force: true })
+})
+
+test('loadGates：缺 cmd → 友好报错', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-gates-bad-'))
+  writeFileSync(join(dir, 'gates.json'), JSON.stringify({ gates: { broken: { onFail: 'rollback' } } }))
+  await assert.rejects(loadGates({ dirs: [dir] }), /质量门 'broken' 缺少 cmd/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('loadGates：无配置文件 → 空数组', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-gates-empty-'))
+  const gates = await loadGates({ dirs: [dir] })
+  assert.deepEqual(gates, [])
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('mergeGates：项目门覆盖内置同名、新增追加在后、内置保序在前', () => {
+  const builtin = [
+    { name: 'test', cmd: 'cargo test' },
+    { name: 'clippy', cmd: 'cargo clippy' },
+    { name: 'fmt', cmd: 'cargo fmt --check' },
+  ]
+  const project = [
+    { name: 'clippy', cmd: 'cargo clippy -- -D warnings', onFail: 'resume-fix' }, // 覆盖
+    { name: 'e2e', cmd: 'sh e2e.sh', onFail: 'rollback' },                        // 新增
+  ]
+  const merged = mergeGates(builtin, project)
+  assert.deepEqual(merged.map(g => g.name), ['test', 'clippy', 'fmt', 'e2e'])
+  assert.equal(merged.find(g => g.name === 'clippy').cmd, 'cargo clippy -- -D warnings')
+  assert.equal(merged.find(g => g.name === 'clippy').onFail, 'resume-fix')
+})
+
+test('mergeGates：空项目门 → 原样返回内置', () => {
+  const builtin = [{ name: 'test', cmd: 't' }]
+  assert.deepEqual(mergeGates(builtin, []), builtin)
+  assert.deepEqual(mergeGates(builtin), builtin)
 })

@@ -11,7 +11,8 @@ import {
   loadAgents, loadProviders, resolveAgent,
   runGate, runGates,
   withSelfModGuard, captureBaseline,
-  parallel,
+  parallel, pipeline,
+  runStructured, verifyAdversarial,
   waitForInput, notify, setHitlBackend,
   writeFailureContext,
   isDryRun,
@@ -53,8 +54,12 @@ async function main() {
   // <<ORCHESTRATION>>  ← LLM 只填这里
 }
 
-/** 按 agent profile 名跑一次执行器；dry-run 下自动 fake。 */
+/** 按 agent profile 名跑一次执行器；dry-run 下自动 fake。
+ *  传 extra.schema 时强制结构化输出（经 runStructured 校验+回喂重试），返回解析后的对象。 */
 async function runProfile(agentName, taskGoal, extra = {}) {
   const a = resolveAgent(agentName, agents, { providers })
-  return a.run(taskGoal, { cwd: repo, ...a.opts, ...extra })
+  const { schema, schemaRetries, ...rest } = extra
+  const runner = (p) => a.run(p, { cwd: repo, ...a.opts, ...rest })
+  if (schema) return runStructured(runner, taskGoal, { schema, retries: schemaRetries })
+  return runner(taskGoal)
 }

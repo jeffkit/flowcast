@@ -1,8 +1,9 @@
 import { spawn } from 'child_process'
 import { readFileSync, existsSync, unlinkSync, realpathSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { tmpdir, cpus } from 'os'
 import { isDryRun } from './dry-run.js'
+import { runStructured, stubFromSchema } from './schema.js'
 
 // ── 底层 CLI 调用 ─────────────────────────────────────────────────
 
@@ -442,9 +443,24 @@ function emitAgentEvent(e) {
   try { _agentEventSink(e) } catch { /* 观测失败不影响主流程 */ }
 }
 
-export async function runAgent(prompt, { cli = 'claude', cwd, ...opts } = {}) {
+/**
+ * 跑一次 agent。
+ * @param {string} prompt
+ * @param {object} [o]
+ *   - cli           执行器名（默认 'claude'）
+ *   - cwd           工作目录
+ *   - schema        可选 JSON Schema：传了就强制 agent 返回校验过的结构化对象（不匹配回喂重试），
+ *                   返回**解析后的对象**而非文本；不传维持原样返回文本。鼓励在需要结构化产物时使用。
+ *   - schemaRetries 不匹配重试次数（默认 1）
+ *   - 其余透传给底层执行器 adapter
+ */
+export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetries = 1, ...opts } = {}) {
   // dry-run：不真实调用任何 CLI/API，返回假结果让 flow 骨架能空跑（写 flow/改原语时校验流程）。
-  if (isDryRun()) return Object.assign(`[dry-run] ${cli} 未真实执行`, { _meta: { cli, dryRun: true } })
+  // 带 schema 时返回按 schema 造的占位对象，保证结构化 flow 能空跑（下游解构不炸）。
+  if (isDryRun()) {
+    if (schema) return stubFromSchema(schema)
+    return Object.assign(`[dry-run] ${cli} 未真实执行`, { _meta: { cli, dryRun: true } })
+  }
   let fn = CLI_MAP[cli]
   if (!fn) {
     // CLI_MAP 未命中时回退查 EXECUTORS（registerExecutor 注册的自定义执行器）。
@@ -453,9 +469,11 @@ export async function runAgent(prompt, { cli = 'claude', cwd, ...opts } = {}) {
     fn = EXECUTORS[cli]?.run
   }
   if (!fn) throw new Error(`未知 CLI: ${cli}，支持：${Object.keys(CLI_MAP).join('/')}（或通过 registerExecutor 注册的自定义执行器）`)
-  const result = await fn(prompt, { cwd: cwd ?? _defaultCwd, ...opts })
+  const runner = (p) => fn(p, { cwd: cwd ?? _defaultCwd, ...opts })
+  // schema：经 runStructured 强制结构化输出（增强 prompt + 抽 JSON + 校验 + 回喂重试）。
+  if (schema) return runStructured(runner, prompt, { schema, retries: schemaRetries })
   // 把 _meta 暴露出来方便 checkpoint 记录，不影响 result 字符串本身
-  return result
+  return runner(prompt)
 }
 
 // 一个 agent spec 的可读标签（cli[/provider]），用于回退日志与冷却键。
@@ -590,20 +608,59 @@ export async function parallel(thunks, { concurrency, strict = false } = {}) {
   return results
 }
 
-/** 把 items 依次流经多个 stage，每个 stage 是 async (item, index) => result */
+// 流式 pipeline 的默认并发上限 = CPU 核数（env FLOWCAST_PIPELINE_CONCURRENCY 覆盖，无效时回退）。
+function defaultPipelineConcurrency() {
+  const v = parseInt(process.env.FLOWCAST_PIPELINE_CONCURRENCY ?? '', 10)
+  if (Number.isFinite(v) && v > 0) return v
+  try { return Math.max(1, cpus().length) } catch { return 4 }
+}
+
+/**
+ * 流式 pipeline：每个 item 独立穿过所有 stage，**stage 间无 barrier**——快的 item 先跑完，
+ * item A 可在 stage3 时 item B 还在 stage1（对齐 Claude /workflow 的 pipeline 流式语义，
+ * 避免「全部 item 等最慢的跑完某 stage 才进下一 stage」的空等）。并发上限默认 = CPU 核数。
+ *
+ * 与 parallel 的区别：parallel 是「一组 thunk 同时跑」的单层 barrier；pipeline 是「多 item 各自
+ * 串行穿过多 stage」的无 barrier 流水线。需要某 stage 看到全部上游结果时才用 parallel 收口。
+ *
+ * 容错：某 item 在任一 stage 抛错 → 该 item 结果置 null（不中断其余，对齐 parallel）。
+ *
+ * @param {Array} items
+ * @param {...(Function|object)} stages  每个 stage 是 async (prev, item, index) => next；
+ *   `prev` 为上一 stage 输出（首 stage 为 item 本身），`item` 为原始输入，`index` 为下标。
+ *   末位可传一个 options 对象 `{ concurrency }` 覆盖并发上限。
+ * @returns {Promise<Array>} 与 items 同序的结果数组；失败的 item 位置为 null。
+ */
 export async function pipeline(items, ...stages) {
-  let current = items
-  for (let si = 0; si < stages.length; si++) {
-    const stage = stages[si]
-    try {
-      current = await Promise.all(current.map((item, i) => stage(item, i)))
-    } catch (e) {
-      // 附加 stage 序号，方便定位多阶段 pipeline 中哪一步失败
-      e.pipelineStage = si
-      throw e
+  let opts = {}
+  if (stages.length && typeof stages[stages.length - 1] !== 'function') {
+    opts = stages.pop() || {}
+  }
+  const list = Array.isArray(items) ? items : []
+  if (!list.length || !stages.length) return list.slice()
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? defaultPipelineConcurrency(), list.length))
+  const results = new Array(list.length)
+  let next = 0
+  const runItem = async (item, index) => {
+    let prev = item
+    for (let si = 0; si < stages.length; si++) {
+      prev = await stages[si](prev, item, index)
+    }
+    return prev
+  }
+  const worker = async () => {
+    while (next < list.length) {
+      const i = next++
+      try {
+        results[i] = await runItem(list[i], i)
+      } catch (e) {
+        console.error(`  [pipeline error] item[${i}] ${e.message}`)
+        results[i] = null
+      }
     }
   }
-  return current
+  await Promise.all(Array.from({ length: concurrency }, worker))
+  return results
 }
 
 // ── HITL（可插拔后端：terminal / wecom / 自定义）──────────────────

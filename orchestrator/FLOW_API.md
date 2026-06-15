@@ -26,11 +26,16 @@
 |------|------|
 | `cp.step(name, fn)` | 把一个步骤纳入 checkpoint（断点续跑的最小单元）；name 唯一 |
 | `cp.done(meta)` | 收尾，记录 metrics |
-| `runProfile(agentName, goal, extra?)` | 按 agent profile 名跑一次执行器（dry-run 自动 fake） |
+| `runProfile(agentName, goal, extra?)` | 按 agent profile 名跑一次执行器（dry-run 自动 fake）。`extra.schema` 传 JSON Schema 时**强制结构化输出**（校验+回喂重试），返回解析后的对象——需要结构化产物时**鼓励使用** |
 | `resolveAgent(name, agents, {providers})` | 需要更细控制时直接解析 agent → `{run, opts}` |
-| `runGate(gate, deps?)` | 单个质量门（`{name, cmd, cwd, onFail}`；onFail: rollback/resume-fix/autofix） |
+| `runStructured(runner, prompt, {schema, retries?})` | 把任意 `(p)=>Promise<text>` runner 包成「强制返回校验过 JSON」的结构化调用；`runProfile` 的 schema 即基于它 |
+| `runGate(gate, deps?)` | 单个质量门（`{name, cmd, cwd, onFail}`；onFail: rollback/resume-fix/autofix）——**确定性命令**验证 |
 | `runGates(gates, deps?)` | 顺序跑多个质量门 |
-| `parallel(thunks, {concurrency?})` | 并行跑多个 `() => Promise`，某个失败返回 null 不中断；`concurrency` 限并发 |
+| `loadGates({repo})` | 加载业务项目自定义质量门（`<repo>/.flowcast/gates.json`，map by name；与 `loadProviders`/`loadAgents` 对称），返回有序门数组 |
+| `mergeGates(builtin, project)` | 合并内置默认门与项目门（按门名去重，项目同名覆盖，新增追加在后） |
+| `verifyAdversarial(claim, {voters?, lenses?, threshold?, context?, agent?})` | **可选**对抗式验证：多个怀疑者独立尝试反驳 claim，过阈值才判成立。用于审计/bug 猎杀/高风险评审等确信度关键场景，与 `runGate` 互补，**非强制环** |
+| `parallel(thunks, {concurrency?})` | 并行跑多个 `() => Promise`（单层 barrier，等齐全部），某个失败返回 null 不中断；`concurrency` 限并发 |
+| `pipeline(items, ...stages, {concurrency?}?)` | 流式流水线：每个 item 独立穿过所有 stage，**stage 间无 barrier**（快的先完成、零空等）。stage 签名 `(prev, item, index)`；末位可传 `{concurrency}`。需要某 stage 看到全部上游结果时改用 `parallel` 收口 |
 | `runFlow(flowRef, opts)` | 把另一条 flow 当独立子进程跑（隔离+超时+续跑由其 `--run-id` 负责） |
 | `fanOut(tasks, {concurrency?, isolate?, logDir?, onResult?})` | 并发编排多条子 flow：限并发 + 可选 worktree 隔离 + 每任务日志 + 结果汇总 |
 | `gitWorktreeAdd(repo, dir)` / `gitWorktreeRemove(repo, dir)` | 受控 git worktree（给 fanOut 做每任务隔离用） |

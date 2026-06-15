@@ -1,5 +1,6 @@
 import { spawnCapture } from './agent.js'
 import { isDryRun } from './dry-run.js'
+import { loadMergedConfig, basenamesFor } from './provider.js'
 
 // ── qualityGate：声明式质量门 ⭐ ───────────────────────────────────
 //
@@ -93,4 +94,59 @@ export async function runGates(gates, deps = {}) {
   const results = []
   for (const g of gates) results.push(await runGate(g, deps))
   return results
+}
+
+// ── loadGates：业务项目自定义质量门（外置配置，与 provider/agent 对称）⭐ ──
+//
+// 让「跑哪些门」从 flow 代码外移到项目仓 <repo>/.flowcast/gates.{json,yaml,…}（committed），
+// 补齐 CLAUDE.md 配置分层里「项目特定质量门放项目仓」这一长期缺位的能力。
+// 复用 provider.js 的通用多层加载（~/.flowcast → <repo>/.flowcast，后者覆盖前者）。
+//
+// 配置形态（map by name，便于多层按门名覆盖）：
+//   { "gates": {
+//       "e2e": { "cmd": "sh ./scripts/e2e.sh", "onFail": "rollback", "timeout": 600000 }
+//   } }
+// 也接受裸 map（省去外层 "gates" 包裹）。门名取自 key；门字段与 runGate 一致
+// （cmd / onFail / autofixCmd / cwd / timeout）。
+//
+// cmd 不在 flowcast 层做 ${VAR} 插值——门命令走 sh -c，shell 自身负责变量展开，
+// 这样项目门可以自由引用 $HOME 等而不触发 provider 那套缺变量 fail-fast。
+
+/**
+ * 加载并合并多层质量门配置，返回有序门数组（机器级在前，项目级新增门追加在后；
+ * 同名门项目级整体覆盖机器级）。每个门对象注入 name（取自 map 的 key）。
+ *
+ * @param {object} [o]
+ * @param {string}   [o.repo]  项目根（查 <repo>/.flowcast/gates.*，向后兼容 .flowx/）
+ * @param {string[]} [o.dirs]  完全覆盖默认搜索目录（测试用）
+ * @returns {Promise<Array<{name:string} & object>>}
+ */
+export async function loadGates({ repo, dirs } = {}) {
+  const map = await loadMergedConfig(basenamesFor('gates'), { repo, dirs, key: 'gates' })
+  return Object.entries(map).map(([name, gate]) => {
+    if (!gate || typeof gate !== 'object') {
+      throw new Error(`质量门 '${name}' 配置必须是对象（含 cmd 等字段）`)
+    }
+    if (!gate.cmd) throw new Error(`质量门 '${name}' 缺少 cmd`)
+    return { name, ...gate }
+  })
+}
+
+/**
+ * 合并「内置默认门」与「项目自定义门」，按门名去重（项目级同名覆盖内置），
+ * 内置门保持原序在前，项目新增门追加在后。flow 用它把硬编码的语言默认门
+ * （如 cargo test/clippy/fmt）与项目 .flowcast/gates.json 的门拼成最终门链。
+ *
+ * @param {object[]} builtin  内置默认门数组
+ * @param {object[]} project  项目自定义门数组（通常来自 loadGates）
+ * @returns {object[]}
+ */
+export function mergeGates(builtin = [], project = []) {
+  const byName = new Map(builtin.map((g) => [g.name, g]))
+  const order = builtin.map((g) => g.name)
+  for (const g of project) {
+    if (!byName.has(g.name)) order.push(g.name)
+    byName.set(g.name, g)
+  }
+  return order.map((name) => byName.get(name))
 }

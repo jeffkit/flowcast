@@ -2,6 +2,11 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+- **`loadGates` / `mergeGates`：业务项目自定义质量门（外置配置）**。补齐配置分层里「项目特定质量门放项目仓」长期缺位的能力，与 `loadProviders`/`loadAgents` 对称。业务项目在 `<repo>/.flowcast/gates.json`（committed，map by name 形态）声明自己的门（如 E2E、自定义脚本门），经 `loadGates({repo})` 加载、`mergeGates(builtin, project)` 与内置默认门合并（按门名去重，项目同名覆盖、新增追加在后）。门字段与 `runGate` 一致（`cmd`/`onFail`/`autofixCmd`/`cwd`/`timeout`）；`cmd` 走 `sh -c`，由 shell 自身做变量展开（不在 flowcast 层做 `${VAR}` 插值）。已在 `index.js` 导出、`FLOW_API.md` 登记，生成 flow 可直接 `import { loadGates, mergeGates } from 'flowcast'`。
+
 ## [0.2.0] - 2026-06-14
 
 ### 变更

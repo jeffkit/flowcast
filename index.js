@@ -11,7 +11,9 @@ export {
   waitForInput, notify, setHitlBackend, getHitlBackend,
 } from './agent.js'
 export { withSelfModGuard, captureBaseline } from './self-mod-guard.js'
-export { runGate, runGates } from './quality-gate.js'
+export { runGate, runGates, loadGates, mergeGates } from './quality-gate.js'
+export { validateSchema, runStructured } from './schema.js'
+export { verifyAdversarial } from './verify.js'
 export { writeFailureContext, readAndConsumeFailureContext } from './failure-context.js'
 export { recordLearning, recall, buildMemorySection, promoteFailureContext } from './memory.js'
 export { loop } from './loop.js'

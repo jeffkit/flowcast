@@ -9,6 +9,8 @@ import {
   setHitlBackend, getHitlBackend, waitForInput, notify, parallel, pipeline, setAgentEventSink,
 } from '../agent.js'
 
+const delay = (ms) => new Promise(res => setTimeout(res, ms))
+
 // 假的 recursive 二进制：按 FAKE_MODE 控制输出/退出码，并按 --transcript-out 写 transcript。
 const FAKE_BIN = `#!/bin/sh
 TRANSCRIPT=""
@@ -439,9 +441,9 @@ test('runAgentChain: 空 chain 等价于单次调用（[{}] 默认）', async ()
   assert.equal(r, 'ok-{}')
 })
 
-// ── pipeline ─────────────────────────────────────────────────────
+// ── pipeline（流式：stage 间无 barrier）──────────────────────────
 
-test('pipeline: 两阶段正常流转', async () => {
+test('pipeline: 两阶段正常流转，结果保持原序', async () => {
   const r = await pipeline([1, 2, 3],
     async (x) => x * 2,
     async (x) => x + 10,
@@ -449,23 +451,47 @@ test('pipeline: 两阶段正常流转', async () => {
   assert.deepEqual(r, [12, 14, 16])
 })
 
-test('pipeline: stage 失败时附加 pipelineStage 序号', async () => {
-  await assert.rejects(
-    () => pipeline([1, 2],
-      async (x) => x * 2,
-      async (_x) => { throw new Error('stage1 boom') },
-    ),
-    (err) => {
-      assert.match(err.message, /stage1 boom/)
-      assert.equal(err.pipelineStage, 1, 'pipelineStage 应为 1（第二个 stage）')
-      return true
-    },
+test('pipeline: stage 签名 (prev, item, index)', async () => {
+  const r = await pipeline([10, 20],
+    async (prev) => prev + 1,
+    async (prev, item, index) => `${prev}|item=${item}|i=${index}`,
   )
+  assert.deepEqual(r, ['11|item=10|i=0', '21|item=20|i=1'])
 })
 
-test('pipeline: 空 items 返回空数组', async () => {
-  const r = await pipeline([], async (x) => x + 1)
-  assert.deepEqual(r, [])
+test('pipeline: 某 item 中途失败 → 该位置 null，不中断其余', async () => {
+  const r = await pipeline([1, 2, 3],
+    async (x) => { if (x === 2) throw new Error('boom on 2'); return x },
+    async (x) => x * 100,
+  )
+  assert.deepEqual(r, [100, null, 300])
+})
+
+test('pipeline: 无 barrier —— 快 item 不必等慢 item 跑完前一 stage', async () => {
+  // item 0 在 stage1 故意慢；item 1 应能在 item 0 还卡 stage1 时就跑完自己的 stage2。
+  const order = []
+  await pipeline([0, 1],
+    async (x) => { if (x === 0) await delay(40); return x },
+    async (x) => { order.push(`s2:${x}`); return x },
+    { concurrency: 2 },
+  )
+  // 流式语义下 item 1（无延迟）的 stage2 先于 item 0 完成
+  assert.deepEqual(order, ['s2:1', 's2:0'])
+})
+
+test('pipeline: concurrency 限制在飞 item 数', async () => {
+  let inflight = 0
+  let peak = 0
+  await pipeline([1, 2, 3, 4, 5],
+    async (x) => { inflight++; peak = Math.max(peak, inflight); await delay(10); inflight--; return x },
+    { concurrency: 2 },
+  )
+  assert.ok(peak <= 2, `峰值并发应 <= 2，实际 ${peak}`)
+})
+
+test('pipeline: 空 items / 无 stage 返回空（或原样拷贝）', async () => {
+  assert.deepEqual(await pipeline([], async (x) => x + 1), [])
+  assert.deepEqual(await pipeline([1, 2]), [1, 2])
 })
 
 // ── spawn 错误处理（spawnCli/spawnCapture ENOENT/EACCES）────────────
