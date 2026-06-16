@@ -331,6 +331,32 @@ test('wecom 后端（注入函数）：waitForInput 走 sendAndWait 并带 proje
   setHitlBackend('terminal')
 })
 
+test('wecom 后端（注入函数）：notify 带 imagePaths 时透传给 send ctx', async () => {
+  const calls = []
+  setHitlBackend('wecom', {
+    projectName: 'test-proj',
+    sendAndWait: async () => '',
+    send: async (msg, ctx) => { calls.push({ msg, ctx }) },
+  })
+  await notify('请扫码登录', { imagePaths: ['/tmp/qr.png'] })
+  assert.equal(calls[0].msg, '请扫码登录')
+  assert.deepEqual(calls[0].ctx.imagePaths, ['/tmp/qr.png'])
+  setHitlBackend('terminal')
+})
+
+test('notify 不带 imagePaths 时 opts 默认为空对象（向后兼容）', async () => {
+  const calls = []
+  setHitlBackend('wecom', {
+    projectName: 'test-proj',
+    sendAndWait: async () => '',
+    send: async (msg, ctx) => { calls.push({ msg, ctx }) },
+  })
+  await notify('hello')
+  assert.equal(calls[0].msg, 'hello')
+  assert.equal(calls[0].ctx.imagePaths, undefined)
+  setHitlBackend('terminal')
+})
+
 test('自定义 backend 对象可直接注入', async () => {
   const seen = []
   setHitlBackend({

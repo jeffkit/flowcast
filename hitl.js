@@ -28,8 +28,11 @@ const terminalBackend = {
       })
     })
   },
-  async notify(message) {
+  async notify(message, opts = {}) {
     console.log(`\n[notify] ${message}\n`)
+    if (opts.imagePaths?.length) {
+      console.log(`[notify] 附件图片：${opts.imagePaths.join(', ')}`)
+    }
   },
 }
 
@@ -88,8 +91,8 @@ function makeWecomBackend(config = {}) {
         }
         return await config.sendAndWait(prompt, ctx)
       },
-      async notify(message) {
-        if (typeof config.send === 'function') return void await config.send(message, ctx)
+      async notify(message, opts = {}) {
+        if (typeof config.send === 'function') return void await config.send(message, { ...ctx, imagePaths: opts.imagePaths })
       },
     }
   }
@@ -98,9 +101,14 @@ function makeWecomBackend(config = {}) {
   const mcp2cli = resolveMcp2cliPath(config.mcp2cli ?? 'mcp2cli')
   const server = resolveMcpServerName(config.server ?? '@hitl')
   const waitTimeoutMs = config.waitTimeoutMs ?? 86_400_000  // 默认 24h
-  const callTool = async (tool, message, { wait }) => {
+  const callTool = async (tool, message, { wait, imagePaths }) => {
     const toolCli = tool.replace(/_/g, '-')
-    const payload = JSON.stringify({ message, project_name: projectName, ...(chatId ? { chat_id: chatId } : {}) })
+    const payload = JSON.stringify({
+      message,
+      project_name: projectName,
+      ...(chatId ? { chat_id: chatId } : {}),
+      ...(imagePaths?.length ? { image_paths: imagePaths } : {}),
+    })
     const timeout = wait ? waitTimeoutMs : 60_000
     const { stdout, exitCode, timedOut, spawnError } = await spawnCapture(
       mcp2cli, [server, toolCli, '--stdin'], { timeout, stdin: payload }
@@ -118,8 +126,8 @@ function makeWecomBackend(config = {}) {
         return data?.replies?.[0]?.content ?? out.trim()
       } catch { return out.trim() }
     },
-    async notify(message) {
-      await callTool('send_message_only', message, { wait: false }).catch(err => {
+    async notify(message, opts = {}) {
+      await callTool('send_message_only', message, { wait: false, imagePaths: opts.imagePaths }).catch(err => {
         console.warn(`[wecom notify] 失败（忽略）：${err.message}`)
       })
     },
@@ -152,10 +160,14 @@ export async function waitForInput(prompt) {
   return _hitlBackend.waitForInput(prompt)
 }
 
-/** 单向通知人类，不等待。 */
-export async function notify(message) {
+/**
+ * 单向通知人类，不等待。
+ * @param {string} message 文本消息
+ * @param {{ imagePaths?: string[] }} [opts] 可选项（WeCom 后端支持附带本地图片）
+ */
+export async function notify(message, opts = {}) {
   if (!_hitlBackend) {
     throw new Error('HITL 后端未配置：请在 flow 启动时调用 setHitlBackend(...) 后再 notify')
   }
-  return _hitlBackend.notify(message)
+  return _hitlBackend.notify(message, opts)
 }
