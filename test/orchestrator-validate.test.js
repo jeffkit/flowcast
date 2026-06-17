@@ -78,3 +78,27 @@ test('validateFlow: 违规 import 被拦（imports 关）', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('scanImports: 注释内的 import 不触发误报（行注释 + 块注释）', () => {
+  const src = `
+    // import { readFileSync } from 'fs'  ← 注释里的，不应被抓
+    /* import { execSync } from 'child_process' */
+    /**
+     * 示例：import x from 'net'
+     */
+    import { Checkpoint } from 'flowcast'
+  `
+  assert.deepEqual(scanImports(src), [], '注释内的 import 不应被误报为违规')
+})
+
+test('scanImports: JSDoc 块注释里的多行 import 示例不触发误报', () => {
+  const src = `
+    /**
+     * @example
+     * import { readFileSync } from 'fs'
+     * import cp from 'child_process'
+     */
+    import { Checkpoint } from 'flowcast'
+  `
+  assert.deepEqual(scanImports(src), [], 'JSDoc 示例 import 不应被误报为违规')
+})

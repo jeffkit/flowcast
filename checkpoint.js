@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, renameSync } from 'fs'
+import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
 
@@ -48,6 +49,9 @@ export class Checkpoint {
     this._seenKeys = new Set() // 当次进程中调用过的 key，用于检测循环里忘加下标的重复 key
     this._onStep = typeof onStep === 'function' ? onStep : null
     this._stepsDir = join(this.dir, 'steps')
+    // 日志写队列：将多次 _log() 的 appendFile 调用串行化，防止并发写乱序。
+    // run.log.jsonl 是审计日志，不需要同步保证；_flush() 仍同步以确保 state.json 不丢失。
+    this._logQueue = Promise.resolve()
     mkdirSync(this.dir, { recursive: true })
     this.state = this._loadState(runId)
     this._flush()
@@ -175,6 +179,13 @@ export class Checkpoint {
   /** 立即持久化当前内存状态（公开接口，供 loop 等外部原语在步骤间主动落盘）。 */
   flush() { this._flush() }
 
+  /**
+   * 等待所有异步日志写入完成（测试 / 进程退出前用）。
+   * run.log.jsonl 的写入是异步的；需要确保日志落盘后再读取时调用此方法。
+   * @returns {Promise<void>}
+   */
+  flushLog() { return this._logQueue }
+
   // ── loop 协作窄接口（替代 loop.js 直接读写 cp.state.* 的耦合）────
   //
   // loop 原语需要把循环状态（verdict/status/turns/reason）存进 Checkpoint 的 state，
@@ -290,7 +301,12 @@ export class Checkpoint {
   }
 
   _log(entry) {
-    appendFileSync(this.logPath, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n')
+    // 异步追加日志，通过 _logQueue 串行化（防止并发写乱序）。
+    // 吞掉写盘异常——观测日志失败不应影响主流程（与 event() 的 try-catch 原则一致）。
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n'
+    this._logQueue = this._logQueue
+      .then(() => appendFile(this.logPath, line))
+      .catch(() => { /* 观测日志写失败，静默忽略 */ })
   }
 
   _flush() {

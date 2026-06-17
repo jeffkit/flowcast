@@ -18,18 +18,18 @@ function defaultPipelineConcurrency() {
  * @param {Array<Function>} thunks
  * @param {object} [o]
  * @param {number}   [o.concurrency]  并发上限；缺省 = 全部一起跑。结果按原下标顺序返回。
- * @param {boolean}  [o.strict=false] 错误处理策略：
- *   - false（默认）：失败的 thunk 在对应位置返回 null，其余继续跑；控制台打 [parallel error]。
- *     调用方务必检查结果数组中的 null，否则失败会被静默丢失。
- *     适合「部分失败可接受」场景（如批量 agent 调用，结果可 fallback）。
- *     注意：无法区分「任务失败」和「任务本身返回 null」，如需区分请传 onError。
- *   - true：任一失败立即汇总并抛出含 failures 数组的 Error（仍等全部跑完）。
+ * @param {boolean}  [o.strict=true] 错误处理策略：
+ *   - true（默认）：任一失败立即汇总并抛出含 failures 数组的 Error（仍等全部跑完）。
  *     e.failures 是 [{index, error}] 数组，适合「任一失败则整体放弃」场景。
+ *   - false：失败的 thunk 在对应位置返回 null，其余继续跑；控制台打 [parallel error]。
+ *     适合「部分失败可接受」场景（如批量 agent 调用，结果可 fallback）；
+ *     调用方务必检查结果数组中的 null，否则失败会被静默丢失。
+ *     注意：无法区分「任务失败」和「任务本身返回 null」，如需区分请传 onError。
  * @param {Function} [o.onError]  strict=false 时额外的错误回调 ({index, error}) => void，
  *   用于在保持 null 语义的同时追踪失败（区分失败和任务返回 null 的唯一可靠手段）。
  * @returns {Promise<Array>}
  */
-export async function parallel(thunks, { concurrency, strict = false, onError } = {}) {
+export async function parallel(thunks, { concurrency, strict = true, onError } = {}) {
   const failures = []
   const guard = (fn, i) => fn().catch(err => {
     console.error(`  [parallel error] ${err.message}`)

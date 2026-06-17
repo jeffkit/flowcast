@@ -61,9 +61,21 @@ export function runFlow(flowRef, {
     const proc = spawn('node', argv, { cwd, env, stdio })
     let stdout = ''
     let stderr = ''
+    // 缓冲区上限 16 MB：与 spawn.js 保持一致，防止 verbose 子 flow 不指定 logFile 时
+    // stdout 无限累积导致宿主 OOM（fanOut 通常指定 logFile；直接调用 runFlow 时不受保护）。
+    const MAX_BUF = 16 * 1024 * 1024
     if (!logFile) {
-      proc.stdout.on('data', d => { stdout += d; onData?.(String(d)) })
-      proc.stderr.on('data', d => { stderr += d; onData?.(String(d)) })
+      proc.stdout.on('data', d => {
+        const s = String(d)
+        onData?.(s)
+        if (stdout.length < MAX_BUF) stdout += s
+        else if (!stdout.endsWith('\n[output truncated]')) stdout += '\n[output truncated]'
+      })
+      proc.stderr.on('data', d => {
+        const s = String(d)
+        if (stderr.length < MAX_BUF) stderr += s
+        else if (!stderr.endsWith('\n[output truncated]')) stderr += '\n[output truncated]'
+      })
     }
 
     let timer

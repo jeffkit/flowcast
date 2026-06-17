@@ -40,12 +40,13 @@ test('Checkpoint.record: 并发回调按 fan-out 方式写多个 key 都不丢',
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
-test('Checkpoint.event：结构化事件追加进 run.log.jsonl（不进 state.json）', () => {
+test('Checkpoint.event：结构化事件追加进 run.log.jsonl（不进 state.json）', async () => {
   const dir = tempDir()
   try {
     const cp = new Checkpoint('rev', dir)
     cp.event('fallback', { from: 'a', to: 'b', reason: '429' })
     cp.event('gate', { name: 'test', status: 'fail', exitCode: 101 })
+    await cp.flushLog()  // 日志写入是异步的，等待落盘后再读
     const lines = readFileSync(join(dir, 'rev', 'run.log.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l))
     assert.equal(lines.length, 2)
     assert.equal(lines[0].event, 'fallback')
@@ -199,9 +200,11 @@ test('onStep: start/skip/error 事件自动写进 run.log.jsonl', async () => {
   try {
     const cp = new Checkpoint('hook-log', dir)
     await cp.step('p1', async () => 'done')
+    await cp.flushLog()  // 等待 cp 的异步日志（start/done）落盘
     // 续跑 skip
     const cp2 = new Checkpoint('hook-log', dir)
     await cp2.step('p1', async () => 'fresh')
+    await cp2.flushLog()  // 等待 cp2 的异步日志（skip）落盘
 
     const lines = readFileSync(join(dir, 'hook-log', 'run.log.jsonl'), 'utf8')
       .trim().split('\n').map(l => JSON.parse(l))

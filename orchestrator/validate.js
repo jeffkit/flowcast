@@ -26,8 +26,47 @@ function normalizeSpecifier(s) {
   return s.startsWith('node:') ? s.slice(5) : s
 }
 
+/**
+ * 剥离 JS 注释和字符串字面量内容，只保留代码骨架，让 import 正则不会误匹配。
+ * - 行注释 `// ...`、块注释 `/* ... *\/` → 直接移除
+ * - 字符串引号保留（供正则定位 import 的模块名），但内容用空格占位（保留长度），
+ *   防止注释或说明文字里写的 import-like 文本被误判为违规 import。
+ *
+ * 注意：import 语句里的模块名本身也是字符串字面量，被占位后正则就抓不到了——
+ * 这里用「只清空非 import 位置字符串」会过于复杂；实际做法更简单：
+ * 只清注释，保留字符串内容，但对「模块路径」的误报在生成的 flow 里极罕见。
+ * 真正常见且需要修复的是：注释里写了 import 样例（如 JSDoc 示例），这里优先解决。
+ */
+function stripComments(src) {
+  let out = ''
+  let i = 0
+  while (i < src.length) {
+    const c = src[i]
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c
+      out += c; i++
+      while (i < src.length) {
+        const sc = src[i]
+        out += sc; i++
+        if (sc === '\\') { out += src[i] ?? ''; i++; continue }
+        if (sc === q) break
+      }
+    } else if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') i++
+    } else if (c === '/' && src[i + 1] === '*') {
+      i += 2
+      while (i < src.length - 1 && !(src[i] === '*' && src[i + 1] === '/')) i++
+      i += 2
+    } else {
+      out += c; i++
+    }
+  }
+  return out
+}
+
 /** 扫描源码里所有 import/require 目标，返回非白名单 + 禁止子路径的去重列表。 */
 export function scanImports(source) {
+  const code = stripComments(source)
   const violations = []
   const patterns = [
     /\bimport\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/g, // import x from 'm'
@@ -36,7 +75,7 @@ export function scanImports(source) {
   ]
   for (const re of patterns) {
     let m
-    while ((m = re.exec(source))) {
+    while ((m = re.exec(code))) {
       const raw = m[1]
       const normalized = normalizeSpecifier(raw)
       // 禁止子路径（如 flowcast/dashboard）：即使白名单允许 flowcast，子路径也不行

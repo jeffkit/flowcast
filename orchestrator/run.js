@@ -69,6 +69,7 @@ export async function runGeneratedFlow(file, {
 export async function orchestrate(request, {
   repo = process.cwd(), runId = `orch-${Date.now()}`,
   agent, agents = {}, providers = {}, generate,
+  maxAttempts,  // 透传给 generateFlow（默认 3，复杂需求可调高）
   dryRun = false, timeout, onData, extraArgs = [],
 } = {}) {
   const dep = checkFlowcastResolvable(repo)
@@ -113,7 +114,7 @@ export async function orchestrate(request, {
     }
     // 已独占锁，生成 flow
     try {
-      const g = await generateFlow(request, { repo, runDir, agent, agents, providers, generate })
+      const g = await generateFlow(request, { repo, runDir, agent, agents, providers, generate, maxAttempts })
       attempts = g.attempts
       if (!g.validation.ok) {
         releaseLock(lockDir)
@@ -156,6 +157,7 @@ export async function orchestrateMulti(goal, {
   repo = process.cwd(), runId = `orchm-${Date.now()}`,
   agent, agents = {}, providers = {}, generate, decomposeGen,
   concurrency = 2, genConcurrency = DEFAULT_GEN_CONCURRENCY,
+  maxAttempts,  // 透传给各子任务的 generateFlow（默认 3）
   isolate = 'worktree', dryRun = false, timeout, onData,
 } = {}) {
   const dep = checkFlowcastResolvable(repo)
@@ -220,7 +222,7 @@ export async function orchestrateMulti(goal, {
         const file = join(subDir, 'flow.mjs')
         if (!existsSync(file)) {
           const g = await generateFlow(t.goal, {
-            repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate,
+            repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate, maxAttempts,
           })
           if (!g.validation.ok) {
             const err = new Error(g.validation.error)

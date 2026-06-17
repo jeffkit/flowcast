@@ -223,3 +223,19 @@ test('sanitizeExtraArgs: --flag=value 形式正常处理', async () => {
   const out = sanitizeExtraArgs('claude', ['--model=sonnet', '--output-format=json', '--system-prompt-file=/etc/shadow'])
   assert.deepEqual(out, ['--model=sonnet', '--output-format=json'])
 })
+
+test('sanitizeExtraArgs: --workspace 路径遍历攻击被拦截', async () => {
+  const { sanitizeExtraArgs } = await import('../executor.js')
+  // 绝对路径 → 拒绝
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace', '/etc']), [], '绝对路径应被拒绝')
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace', '/tmp/evil']), [], '绝对路径应被拒绝')
+  // 路径遍历（含 ..）→ 拒绝
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace', '../../../etc']), [], '.. 路径应被拒绝')
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace', 'sub/../../..']), [], '规范化后逃逸的路径应被拒绝')
+  // 合法相对路径 → 放行
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace', '.']), ['--workspace', '.'], '. 应被放行')
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace', 'sub/dir']), ['--workspace', 'sub/dir'], '合法子路径应被放行')
+  // --flag=value 形式也应被校验
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace=/etc']), [], '= 形式绝对路径也应被拦截')
+  assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace=./sub']), ['--workspace=./sub'], '= 形式合法路径应被放行')
+})

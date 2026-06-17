@@ -314,3 +314,97 @@ test('dashboard: loop 事件被 summarizeEvents 统计（不再静默丢）', ()
     assert.equal(r.signals.loop.failed, 0)
   } finally { rmSync(repo, { recursive: true, force: true }) }
 })
+
+// ── renderHtml 单元测试（覆盖各数据场景）────────────────────────
+
+function makeModel(overrides = {}) {
+  return {
+    repo: '/proj/test',
+    generatedAt: '2026-06-17T00:00:00.000Z',
+    staleMs: DEFAULT_STALE_MS,
+    runs: [],
+    roots: [],
+    stats: { total: 0, running: 0, paused: 0, completed: 0, stale: 0, other: 0, fallback: 0, gateFail: 0, gatePass: 0 },
+    ...overrides,
+  }
+}
+
+function makeRun(overrides = {}) {
+  return {
+    runId: 'test-run-1',
+    dir: '/proj/test/.flowcast/runs/test-run-1',
+    status: 'completed',
+    stale: false,
+    displayStatus: 'completed',
+    feature: 'my-feature',
+    completedCount: 3,
+    stepCount: 3,
+    steps: [],
+    events: [],
+    errorSteps: [],
+    signals: { fallback: 0, gatePass: 1, gateFail: 0, group: { done: 1, failed: 0 }, fixRounds: 0 },
+    children: [],
+    logs: [],
+    lastActivity: '2026-06-17T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+test('renderHtml: 产出有效的 HTML 文档结构', () => {
+  const html = renderHtml(makeModel())
+  assert.ok(html.startsWith('<!DOCTYPE html>'), '应以 DOCTYPE 开头')
+  assert.ok(html.includes('<html'), '应包含 html 标签')
+  assert.ok(html.includes('</html>'), '应闭合 html 标签')
+  assert.ok(html.includes('<head>'), '应包含 head')
+  assert.ok(html.includes('<body>'), '应包含 body')
+})
+
+test('renderHtml: 嵌入数据可被 JSON.parse 反序列化', () => {
+  const model = makeModel({ runs: [makeRun()], roots: ['test-run-1'] })
+  const html = renderHtml(model)
+  const match = html.match(/const MODEL = (.+?);[\s\n]/)
+  assert.ok(match, 'HTML 中应包含 const MODEL = ...')
+  const parsed = JSON.parse(match[1].replace(/<\\\/script>/g, '</script>').replace(/<\\!--/g, '<!--'))
+  assert.equal(parsed.repo, '/proj/test')
+  assert.equal(parsed.runs.length, 1)
+})
+
+test('renderHtml: repo 名称在 title 中正确转义（XSS 防护）', () => {
+  const html = renderHtml(makeModel({ repo: '<script>alert(1)</script>' }))
+  assert.ok(!html.includes('<script>alert(1)</script>'), '恶意脚本不应出现在 title 中')
+  assert.ok(html.includes('&lt;script&gt;'), 'HTML 特殊字符应被转义')
+})
+
+test('renderHtml: 空 runs 列表仍能渲染不抛错', () => {
+  assert.doesNotThrow(() => renderHtml(makeModel()))
+})
+
+test('renderHtml: <!-- 注释注入被转义', () => {
+  const html = renderHtml(makeModel({ repo: '<!-- injected -->' }))
+  assert.ok(!html.includes('<!-- injected -->'), 'HTML 注释注入应被转义')
+})
+
+test('renderHtml: 嵌入 JSON 中 </script> 被安全转义', () => {
+  const run = makeRun({ runId: 'xss</script><img src=x>', feature: 'xss</script>' })
+  const model = makeModel({ runs: [run], roots: ['xss</script><img src=x>'] })
+  const html = renderHtml(model)
+  assert.ok(!html.match(/<\/script>\s*<img/), '原始 </script> 注入不应出现在 HTML 中')
+  assert.ok(html.includes('<\\/script>'), '应转义为 <\\/script>')
+})
+
+test('renderHtml: 多个 run 全部出现在内嵌 JSON 中', () => {
+  const runs = ['run-a', 'run-b', 'run-c'].map(id => makeRun({ runId: id }))
+  const model = makeModel({ runs, roots: runs.map(r => r.runId) })
+  const html = renderHtml(model)
+  for (const id of ['run-a', 'run-b', 'run-c']) {
+    assert.ok(html.includes(id), `run ${id} 应出现在输出 HTML 中`)
+  }
+})
+
+test('renderHtml: 有 stats 时 HTML 包含统计相关 DOM 结构', () => {
+  const model = makeModel({
+    stats: { total: 5, running: 1, paused: 0, completed: 3, stale: 1, other: 0, fallback: 0, gateFail: 0, gatePass: 2 },
+  })
+  const html = renderHtml(model)
+  assert.ok(html.includes('id="stats"'), '应有 stats 容器 DOM')
+})

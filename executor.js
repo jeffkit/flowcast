@@ -20,6 +20,7 @@ import { isProviderRetryable } from './spawn.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
+import { resolve, normalize } from 'path'
 
 // ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
 //
@@ -99,7 +100,8 @@ const EXTRA_ARGS_WHITELIST = {
     '--model', '--output-format', '--max-steps', '--allowedTools', '--system-prompt',
   ]),
   recursive: new Set([
-    '--max-steps', '--model', '--workspace',
+    '--max-steps', '--model',
+    '--workspace',  // 路径值由 sanitizeExtraArgs 校验：必须相对且不逃逸（见 PATH_FLAGS）
   ]),
   // aider 是 BYO-LLM 执行器，接受模型/编辑格式等配置 flag
   aider: new Set([
@@ -112,11 +114,26 @@ const EXTRA_ARGS_WHITELIST = {
   agy:    new Set(['--dangerously-skip-permissions']),
 }
 
+// path 型 flag：其值必须是相对路径且不能逃逸当前工作目录（防路径遍历）。
+const PATH_FLAGS = new Set(['--workspace'])
+
+/**
+ * 判断路径值是否安全：必须是相对路径（不以 / 开头），且规范化后不以 `..` 开头。
+ * @param {string} val
+ */
+function isSafePath(val) {
+  if (typeof val !== 'string') return false
+  if (val.startsWith('/')) return false  // 绝对路径拒绝
+  const norm = normalize(val)
+  return !norm.startsWith('..')  // 规范化后的相对路径不能逃逸
+}
+
 /**
  * 过滤 extraArgs 数组：只保留白名单内 flag 的元素，且校验 flag 后的 value 不带危险字符。
+ * 对 path 型 flag（如 --workspace），额外校验路径不含路径遍历（不允许绝对路径或 `..`）。
  * @param {string} executor  执行器名
  * @param {string[]} args
- * @returns {string[]} 过滤后的数组（白名单外的被丢弃）
+ * @returns {string[]} 过滤后的数组（白名单外的、路径遍历的均被丢弃）
  */
 export function sanitizeExtraArgs(executor, args) {
   if (!Array.isArray(args)) return []
@@ -130,12 +147,20 @@ export function sanitizeExtraArgs(executor, args) {
     const eq = a.indexOf('=')
     const flag = eq >= 0 ? a.slice(0, eq) : a
     if (!allowed.has(flag)) continue  // 丢弃非白名单 flag
-    out.push(a)
-    // 跟在这个 flag 后的非 flag 元素是 flag 的值
+
+    // 提取 value（两种形式：--flag=val 或 --flag val）
+    let value = eq >= 0 ? a.slice(eq + 1) : null
+    let nextConsumed = false
     if (eq < 0 && i + 1 < args.length && !args[i + 1].startsWith('--')) {
-      out.push(args[i + 1])
-      i++
+      value = args[i + 1]
+      nextConsumed = true
     }
+
+    // path 型 flag：校验值不逃逸工作目录
+    if (PATH_FLAGS.has(flag) && value !== null && !isSafePath(value)) continue
+
+    out.push(a)
+    if (nextConsumed) { out.push(value); i++ }
   }
   return out
 }

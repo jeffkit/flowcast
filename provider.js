@@ -22,6 +22,22 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { flowcastDir } from './dirs.js'
 
+// 进程内配置缓存：key = JSON.stringify({basenames, dirs})，value = {result, expiresAt}。
+// 每次 loadMergedConfig 都重读磁盘，在 orchestrateMulti 并发生成多个子 flow 时
+// 会对每个子任务重复触发文件系统遍历 + JSON.parse。配置文件在进程内几乎不变，
+// 加 TTL 缓存（默认 30s）可显著减少重复 IO，同时保证热更新时最终一致。
+const _configCache = new Map()
+const CONFIG_CACHE_TTL_MS = 30_000  // 30s TTL，满足短生命周期进程的会话复用
+
+/**
+ * 清除配置缓存（测试 / 强制重读时使用）。
+ * 传 key 只清该条目，不传则全清。
+ */
+export function clearConfigCache(key) {
+  if (key !== undefined) _configCache.delete(key)
+  else _configCache.clear()
+}
+
 /** 给定配置文件 stem，返回按优先级排列的候选文件名。 */
 export function basenamesFor(stem) {
   return [`${stem}.json`, `${stem}.yaml`, `${stem}.yml`, `${stem}.js`, `${stem}.mjs`]
@@ -84,14 +100,22 @@ async function loadConfigFile(file) {
  * @param {string} [o.key]    顶层 section key（如 'providers' / 'agents'）；文件可写 {key:{...}} 或裸 {...}
  * @returns {Promise<Record<string, object>>}
  */
-export async function loadMergedConfig(basenames, { repo, dirs, key } = {}) {
+export async function loadMergedConfig(basenames, { repo, dirs, key, ttl = CONFIG_CACHE_TTL_MS } = {}) {
+  // 进程内缓存命中：同一参数组合的请求在 TTL 内直接返回缓存结果。
+  // 缓存 key 由 basenames + 解析后的搜索目录列表决定（repo 会被转换为 flowcastDir(repo)）。
+  const home = homedir()
+  const homeDirs = [join(home, '.flowx'), join(home, '.flowcast')]
+  const resolvedDirs = dirs ?? [...homeDirs, ...(repo ? [flowcastDir(repo)] : [])]
+  const cacheKey = JSON.stringify({ basenames, dirs: resolvedDirs, key })
+  const now = Date.now()
+  const cached = _configCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) return cached.result
+
   // 机器级：~/.flowx 在前（旧配置基准），~/.flowcast 在后（新配置覆盖），两者都搜索。
   // 旧逻辑「目录存在就选 .flowcast 否则选 .flowx」有缺陷：~/.flowcast/dryrun/ 存在就会
   // 完全跳过 ~/.flowx/ 里的真实配置。现在改为两个目录都纳入 merge 链，后者覆盖前者，
   // 向后兼容：仅有 ~/.flowx/ 的老机器直接继续工作；同时有两者的机器 .flowcast 优先。
-  const home = homedir()
-  const homeDirs = [join(home, '.flowx'), join(home, '.flowcast')]
-  const searchDirs = dirs ?? [...homeDirs, ...(repo ? [flowcastDir(repo)] : [])]
+  const searchDirs = resolvedDirs  // 已在缓存 key 计算阶段解析
   let merged = {}
   for (const dir of searchDirs) {
     for (const base of basenames) {
@@ -115,6 +139,7 @@ export async function loadMergedConfig(basenames, { repo, dirs, key } = {}) {
       }
     }
   }
+  if (ttl > 0) _configCache.set(cacheKey, { result: merged, expiresAt: now + ttl })
   return merged
 }
 

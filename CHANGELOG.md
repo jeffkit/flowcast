@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-17
+
+### 破坏性变更
+- **`concurrency.js` `parallel()` 默认 `strict` 改为 `true`**：原默认 `strict=false` 会静默将失败任务替换为 `null` 返回，容易掩盖错误。新默认 `strict=true` 使任何一个任务失败都会抛出聚合错误（`err.failures` 含各失败任务的下标和原始 error），与 `Promise.all` 语义对齐。如需恢复旧行为，显式传 `{ strict: false }`。
+
+### 新增
+- **`test/concurrency.test.js` 独立测试文件**：将 `parallel` / `pipeline` 测试从 `test/agent.test.js` 迁出，新增 `parallel: strict=false + onError` 回调、`parallel: 空数组`、`pipeline: concurrency` 等补充用例，共 12 个测试。
+- **`orchestrator/validate.js` 注释误报修复**：新增 `stripComments()` 函数，在 import 白名单扫描前先剥离行注释（`// ...`）和块注释（`/* ... */`），消除 JSDoc 示例代码中写 `import ... from 'fs'` 时被误报为违规 import 的假阳性。
+- **`executor.js` `--workspace` 路径遍历防护**：`sanitizeExtraArgs` 新增 `PATH_FLAGS`（`--workspace`）和 `isSafePath()` 校验。通过 agent profile `extraArgs` 注入的 `--workspace` 值若含绝对路径（`/etc`）或路径遍历（`../../`），现在会被静默丢弃而不是透传给 recursive CLI，消除潜在的目录逃逸攻击面。
+
+### 优化
+- **`subflow.js` stdout/stderr 缓冲区上限 16MB**：`runFlow` 在不指定 `logFile` 时将无限累积子进程输出到内存，verbose 子 flow 可能导致宿主 OOM。现在与 `spawn.js` 对齐，超出 16MB 后截断并追加 `[output truncated]` 标记。
+- **`checkpoint.js` 日志写入异步化**：`_log()` 从同步 `appendFileSync` 改为异步 `appendFile` + 队列串行，消除频繁步骤日志对事件循环的阻塞。新增 `cp.flushLog()` 供测试和关键路径等待挂起写入完成。
+- **`memory.js` 进程内 entries 缓存**：`readEntries()` 不再每次调用都重新解析 `.jsonl` 文件。首次读取后缓存到 `_entriesCache`，`recordLearning` 写入时同步更新缓存，减少高频 `recall()` 的 I/O 开销。
+- **`provider.js` `loadMergedConfig` 30s TTL 缓存**：并发编排场景下多个子任务重复读同一配置文件；现在进程内缓存 30 秒（可通过 `ttl=0` 或 `clearConfigCache()` 跳过），减少冗余磁盘 I/O。
+- **`orchestrator/generate.js` `maxAttempts` 默认改为 3**：生成重试次数从 2（1 次重试）改为 3（2 次重试），对复杂 flow 生成更宽容；`orchestrate` / `orchestrateMulti` 支持透传 `maxAttempts` 选项供用户自定义。
+- **`dashboard/render.js` 新增 7 个单元测试**：覆盖空 runs 列表、XSS 防护（title 转义）、内嵌 JSON 可反序列化、`<!-- ...-->` 注入转义、多 run 场景等，补足此前仅靠集成测试覆盖的空白。
+
 ## [0.2.9] - 2026-06-17
 
 ### 修复

@@ -62,7 +62,7 @@ export async function generateFlow(request, {
   agents = {},
   providers = {},
   generate,
-  maxAttempts = 2,
+  maxAttempts = 3,  // 默认 3：生成 + 最多 2 次回喂纠错；复杂需求一次往往不够
 } = {}) {
   if (!runDir) throw new Error('generateFlow 需要 runDir')
   mkdirSync(runDir, { recursive: true })
