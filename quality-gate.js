@@ -1,6 +1,7 @@
 import { spawnCapture } from './spawn.js'
 import { isDryRun } from './dry-run.js'
 import { loadMergedConfig, basenamesFor } from './provider.js'
+import { parallel } from './concurrency.js'
 
 // ── qualityGate：声明式质量门 ⭐ ───────────────────────────────────
 //
@@ -38,9 +39,15 @@ export async function runGate(gate, deps = {}) {
   const onEvent = gate.onEvent ?? deps.onEvent
   const emit = (data) => { if (onEvent) { try { onEvent({ event: 'gate', name, ...data }) } catch { /* 观测不影响主流程 */ } } }
 
-  // 配置校验：onFail=autofix 必须有 autofixCmd，进门前 fail-fast，不白跑检查命令
+  // 配置校验：进门前 fail-fast，不白跑检查命令
   if (onFail === 'autofix' && !autofixCmd) {
     const err = new Error(`quality gate '${name}' 配置错误：onFail=autofix 必须同时提供 autofixCmd`)
+    err.gate = name; err.configError = true
+    throw err
+  }
+  if (onFail === 'resume-fix' && typeof resumeFix !== 'function') {
+    const err = new Error(`quality gate '${name}' 配置错误：onFail=resume-fix 必须同时提供 resumeFix 回调（函数），` +
+      `可通过 gate.resumeFix 或 deps.resumeFix 注入`)
     err.gate = name; err.configError = true
     throw err
   }
@@ -89,8 +96,21 @@ export async function runGate(gate, deps = {}) {
   throw err
 }
 
-/** 顺序跑多个门；任意门红灯（rollback / resume-fix 仍失败）即抛错。 */
+/**
+ * 顺序（默认）或并发跑多个门；任意门红灯（rollback / resume-fix 仍失败）即抛错。
+ *
+ * @param {object[]} gates
+ * @param {object} [deps]
+ *   - parallel  {boolean}  true = 并发跑所有门（适合独立门如 lint/type-check/unit-test）。
+ *               注意：resume-fix 门依赖 agent 修复上下文，并发时多个门同时修复可能冲突，
+ *               建议只对 rollback/autofix 策略的门开并发，resume-fix 门保持串行。
+ *               默认 false（保持向后兼容）。
+ * @returns {Promise<Array>}
+ */
 export async function runGates(gates, deps = {}) {
+  if (deps.parallel) {
+    return parallel(gates.map(g => () => runGate(g, deps)), { strict: true })
+  }
   const results = []
   for (const g of gates) results.push(await runGate(g, deps))
   return results

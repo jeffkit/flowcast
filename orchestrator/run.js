@@ -18,6 +18,8 @@ const STALE_LOCK_MS = 60 * 60 * 1000
 // lockDir 已存在但 owner.json 还没写的最长等待：10 次 × 100ms = 1s，给 owner 写盘留时间。
 const LOCK_WAIT_TRIES = 10
 const LOCK_WAIT_MS = 100
+// acquireLock 返回 null（stale 锁已清理）时的最大重试次数，防极端情况死循环。
+const MAX_LOCK_RETRIES = 20
 
 /**
  * 跑前预检：目标仓必须能解析到 flowcast，否则生成的 flow（import 本包）跑不起来。
@@ -82,16 +84,23 @@ export async function orchestrate(request, {
   // 新方案：lockDir 是锁的物理证据（不存在 = 空闲），owner.json 记 PID + 创建时间。
   // stale 判定：PID 已死 且 createdAt 超 STALE_LOCK_MS 才删（防误删刚 SIGKILL 活进程的锁）。
   mkdirSync(runDir, { recursive: true })
+  const lockDir = join(runDir, '.lock')
+  let lockRetries = 0
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const lockDir = join(runDir, '.lock')
     const claimed = await acquireLock(lockDir, runId, { allowReuse: true, producePath: file })
     if (claimed === 'reused') {
       reused = true
       break
     }
     if (claimed === null) {
-      // stale 锁已清理 → 重试
+      // stale 锁已清理 → 重试（加上限防极端情况死循环）
+      if (++lockRetries > MAX_LOCK_RETRIES) {
+        throw new Error(
+          `orchestrate: runId=${runId} 拿锁重试超过 ${MAX_LOCK_RETRIES} 次，` +
+          `请手动检查或删除锁目录：${lockDir}`,
+        )
+      }
       continue
     }
     if (claimed !== true) {
@@ -159,6 +168,7 @@ export async function orchestrateMulti(goal, {
   const tasksLockDir = join(runDir, '.lock-decompose')
   const tasksPath = join(runDir, 'tasks.json')
   let tasks
+  let decompLockRetries = 0
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const claimed = await acquireLock(tasksLockDir, runId, { allowReuse: true, producePath: tasksPath })
@@ -168,7 +178,13 @@ export async function orchestrateMulti(goal, {
       break
     }
     if (claimed === null) {
-      // stale 锁已清理 → 重试
+      // stale 锁已清理 → 重试（加上限防极端情况死循环）
+      if (++decompLockRetries > MAX_LOCK_RETRIES) {
+        throw new Error(
+          `orchestrateMulti: runId=${runId} 分拆锁重试超过 ${MAX_LOCK_RETRIES} 次，` +
+          `请手动检查或删除锁目录：${tasksLockDir}`,
+        )
+      }
       continue
     }
     if (claimed !== true) {

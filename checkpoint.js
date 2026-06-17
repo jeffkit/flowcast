@@ -262,16 +262,24 @@ export class Checkpoint {
   }
 
   // 读取步骤结果：识别占位标记则从旁路文件还原（含类型反序列化），否则直接返回内联值。
+  // 旁路文件在 SIGKILL 时可能写入不完整——JSON.parse 失败时清除损坏记录，让步骤重新执行。
   _loadResult(key, stored) {
     if (typeof stored === 'string' && stored.startsWith(RESULT_SIDECAR_MARKER)) {
       const safe = stored.slice(RESULT_SIDECAR_MARKER.length)
       const p = join(this._stepsDir, `${safe}.out`)
       if (!existsSync(p)) return stored
-      const raw = readFileSync(p, 'utf8')
-      const nl = raw.indexOf('\n')
-      const type = nl >= 0 ? raw.slice(0, nl) : 'string'
-      const body = nl >= 0 ? raw.slice(nl + 1) : raw
-      return type === 'json' ? JSON.parse(body) : body
+      try {
+        const raw = readFileSync(p, 'utf8')
+        const nl = raw.indexOf('\n')
+        const type = nl >= 0 ? raw.slice(0, nl) : 'string'
+        const body = nl >= 0 ? raw.slice(nl + 1) : raw
+        return type === 'json' ? JSON.parse(body) : body
+      } catch (e) {
+        console.warn(`[checkpoint] 旁路文件损坏，步骤 "${key}" 将重新执行：${e.message}`)
+        delete this.state.completed[key]
+        this._flush()
+        return undefined
+      }
     }
     return stored
   }

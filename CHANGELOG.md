@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-06-17
+
+### 修复
+- **`checkpoint.js` 旁路文件损坏不再崩溃**：步骤结果超过内联阈值时写入旁路文件（`steps/*.out`），SIGKILL 时可能写入不完整。续跑读取时 `JSON.parse` 失败现在会捕获异常、清除损坏记录并让该步骤重新执行，而不是向上抛出未捕获的 `SyntaxError` 导致整个 flow 崩溃。
+- **`quality-gate.js` `onFail=resume-fix` 配置错误提前 fail-fast**：与 `onFail=autofix` 对齐，声明 `onFail=resume-fix` 但未提供 `resumeFix` 回调时，进门前立即抛 `configError=true` 错误，而不是静默降级为 rollback 行为。
+- **`orchestrator/run.js` `acquireLock` 加重试上限**：stale 锁被清理后重试外层 `while(true)` 最多 `MAX_LOCK_RETRIES`（20 次）次，超过后抛出带提示的错误，消除极端情况下的死循环风险。
+
+### 新增
+- **`concurrency.js` `parallel()` 新增 `onError` 回调**：`strict=false` 模式下新增可选 `onError({index, error})` 参数，调用方可在保持 `null` 返回语义（向后兼容）的同时精确追踪失败任务，消除「任务失败」和「任务本身返回 null」无法区分的歧义。
+- **`quality-gate.js` `runGates` 支持并发执行**：新增 `deps.parallel` 选项（默认 `false` 保持向后兼容），设为 `true` 时用 `parallel({ strict: true })` 并发跑所有独立门（`rollback`/`autofix` 策略适合并发，`resume-fix` 策略建议继续串行）。
+- **`executor.js` `SAFE_OPTS_KEYS` 补入 `files`（aider 专用）**：agent profile 里现在可以声明 `files: ["src/main.rs"]` 并正确透传给 aider adapter，此前该字段被白名单过滤器静默丢弃。
+- **`subflow.js` `fanOut` 动态调整 `MaxListeners`**：每个并发子 flow 注册 2 个 `process.once` 监听器（SIGINT/SIGTERM），高并发时超过 Node.js 默认 10 个上限会触发 `MaxListenersExceededWarning`。现在 `fanOut` 执行期间动态提升至 `limit * 2 + 10`，结束后恢复原值。
+
 ## [0.2.8] - 2026-06-17
 
 ### 修复

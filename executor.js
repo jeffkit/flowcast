@@ -89,6 +89,7 @@ const SAFE_OPTS_KEYS = new Set([
   'cwd', 'timeout', 'model', 'maxSteps', 'allowTools',
   'extraArgs',  // 数组里每个 arg 仍要走 EXTRA_ARGS_WHITELIST 二次过滤
   'transcriptOut', 'pricingFile',  // recursive 专用，路径约束在 adapter 内部
+  'files',  // aider 专用：要操作的文件列表（string[]）；路径安全由 aider CLI 自身保证
 ])
 
 // extraArgs 元素级白名单：只允许 BYO-LLM adapter 已知安全的 flag。

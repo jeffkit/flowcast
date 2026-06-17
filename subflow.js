@@ -174,7 +174,18 @@ export async function fanOut(tasks, {
       await runOne(tasks[i], i)
     }
   }
-  await Promise.all(Array.from({ length: limit }, worker))
+
+  // 每个并发子 flow 在 runFlow 里会各添加 2 个 process.once 监听器（SIGINT/SIGTERM）。
+  // Node.js 默认 MaxListeners=10，高并发时会打 MaxListenersExceededWarning（不致命但噪音）。
+  // 在 fanOut 期间动态提升上限，结束后恢复原值。
+  const prevMaxListeners = process.getMaxListeners()
+  const needed = limit * 2 + 10  // 每个子 flow 2 个 + 10 缓冲
+  if (needed > prevMaxListeners) process.setMaxListeners(needed)
+  try {
+    await Promise.all(Array.from({ length: limit }, worker))
+  } finally {
+    process.setMaxListeners(prevMaxListeners)
+  }
   return results
 }
 
