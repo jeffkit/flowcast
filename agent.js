@@ -34,6 +34,9 @@ export function claudeProviderEnv(provider) {
   const env = {}
   if (provider.apiBase) env.ANTHROPIC_BASE_URL = provider.apiBase
   if (provider.apiKey) env.ANTHROPIC_AUTH_TOKEN = provider.apiKey
+  if (provider.extraEnv && typeof provider.extraEnv === 'object') {
+    Object.assign(env, provider.extraEnv)
+  }
   return Object.keys(env).length ? env : undefined
 }
 
