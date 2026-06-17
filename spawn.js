@@ -7,7 +7,7 @@
 // 同时收归 sweepStaleTmp（flowcast 临时文件清理），此前放在 subflow.js 是职责越界。
 
 import { spawn } from 'child_process'
-import { readdirSync, statSync, unlinkSync } from 'fs'
+import { readdirSync, statSync, unlinkSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -130,6 +130,8 @@ const STALE_TMP_MS = 60 * 60 * 1000  // 1h 没动 → 视为 stale
 const STALE_TMP_PREFIXES = [
   'flowcast-codex-',
   'flowx-codex-',       // legacy
+  'flowcast-check-',    // orchestrator/validate.js 语法校验临时目录
+  'flowcast-dryrun-',   // orchestrator/validate.js dry-run 校验临时 git repo
 ]
 
 /**
@@ -148,12 +150,17 @@ export function sweepStaleTmp({ olderThanMs = STALE_TMP_MS, baseDir = tmpdir() }
         || /-failure-context\.md\.consuming\..*\.owner\..*/.test(name)
       if (!isOurs) continue
       try {
-        const st = statSync(join(baseDir, name))
+        const full = join(baseDir, name)
+        const st = statSync(full)
         if (now - st.mtimeMs > olderThanMs) {
-          unlinkSync(join(baseDir, name))
+          if (st.isDirectory()) {
+            rmSync(full, { recursive: true, force: true })
+          } else {
+            unlinkSync(full)
+          }
           removed.push(name)
         }
-      } catch { /* 单文件失败跳过 */ }
+      } catch { /* 单条目失败跳过 */ }
     }
   } catch { /* 扫不动就放弃 */ }
   return removed

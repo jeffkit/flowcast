@@ -58,6 +58,24 @@ export function emitAgentEvent(e) {
   try { _agentEventSink(e) } catch { /* 观测失败不影响主流程 */ }
 }
 
+// ── 默认超时常量 ─────────────────────────────────────────────────────
+//
+// 各 adapter 的默认超时集中声明，便于全局调整（env 变量覆盖优先）。
+// env 覆盖：FLOWCAST_<ADAPTER>_TIMEOUT_MS（如 FLOWCAST_CLAUDE_TIMEOUT_MS=120000）。
+
+function envTimeoutMs(envKey, fallback) {
+  const v = parseInt(process.env[envKey] ?? '', 10)
+  return Number.isFinite(v) && v > 0 ? v : fallback
+}
+
+export const CLAUDE_DEFAULT_TIMEOUT   = envTimeoutMs('FLOWCAST_CLAUDE_TIMEOUT_MS',     300_000)   // 5 min
+export const GEMINI_DEFAULT_TIMEOUT   = envTimeoutMs('FLOWCAST_GEMINI_TIMEOUT_MS',     300_000)   // 5 min
+export const CODEX_DEFAULT_TIMEOUT    = envTimeoutMs('FLOWCAST_CODEX_TIMEOUT_MS',      300_000)   // 5 min
+export const AGY_DEFAULT_TIMEOUT      = envTimeoutMs('FLOWCAST_AGY_TIMEOUT_MS',        300_000)   // 5 min
+export const CURSOR_DEFAULT_TIMEOUT   = envTimeoutMs('FLOWCAST_CURSOR_TIMEOUT_MS',     300_000)   // 5 min
+export const AIDER_DEFAULT_TIMEOUT    = envTimeoutMs('FLOWCAST_AIDER_TIMEOUT_MS',      600_000)   // 10 min（aider 改文件更慢）
+export const RECURSIVE_DEFAULT_TIMEOUT = envTimeoutMs('FLOWCAST_RECURSIVE_TIMEOUT_MS', 1_800_000) // 30 min
+
 // ── CLI adapter：claude ──────────────────────────────────────────────
 
 async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
@@ -94,7 +112,7 @@ async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
  * providerFallbacks（可选）：主 provider 限额/超载时按序回退的 bundle 列表。
  */
 export async function claude(prompt, {
-  cwd = process.cwd(), model, timeout = 300_000, extraArgs = [], provider, providerFallbacks = [],
+  cwd = process.cwd(), model, timeout = CLAUDE_DEFAULT_TIMEOUT, extraArgs = [], provider, providerFallbacks = [],
 } = {}) {
   const chain = [provider, ...providerFallbacks].filter(p => p != null)
   if (chain.length === 0) chain.push(undefined)
@@ -122,7 +140,7 @@ export async function claude(prompt, {
 // ── CLI adapter：gemini ──────────────────────────────────────────────
 
 /** Gemini CLI  (gemini -p ...) */
-export async function gemini(prompt, { cwd = process.cwd(), model, timeout = 300_000, extraArgs = [] } = {}) {
+export async function gemini(prompt, { cwd = process.cwd(), model, timeout = GEMINI_DEFAULT_TIMEOUT, extraArgs = [] } = {}) {
   const args = ['-p', prompt]
   if (model) args.push('--model', model)
   args.push(...extraArgs)
@@ -133,26 +151,30 @@ export async function gemini(prompt, { cwd = process.cwd(), model, timeout = 300
 // ── CLI adapter：codex ───────────────────────────────────────────────
 
 /** Codex CLI  (codex exec ...) */
-export async function codex(prompt, { cwd = process.cwd(), model, timeout = 300_000, extraArgs = [] } = {}) {
+export async function codex(prompt, { cwd = process.cwd(), model, timeout = CODEX_DEFAULT_TIMEOUT, extraArgs = [] } = {}) {
   const outFile = join(tmpdir(), `flowcast-codex-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
   const args = ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-o', outFile]
   if (model) args.push('--model', model)
   args.push(...extraArgs, prompt)
-  const raw = await spawnCli('codex', args, cwd, timeout)
   try {
-    if (existsSync(outFile)) {
-      const msg = readFileSync(outFile, 'utf8').trim()
-      unlinkSync(outFile)
-      if (msg) return msg
-    }
-  } catch { /* 读临时文件失败则回退 stdout */ }
-  return raw.trim()
+    const raw = await spawnCli('codex', args, cwd, timeout)
+    try {
+      if (existsSync(outFile)) {
+        const msg = readFileSync(outFile, 'utf8').trim()
+        if (msg) return msg
+      }
+    } catch { /* 读临时文件失败则回退 stdout */ }
+    return raw.trim()
+  } finally {
+    // 无论成功/失败，保证清理临时文件（避免 spawnCli 抛错时 outFile 遗留磁盘）
+    try { if (existsSync(outFile)) unlinkSync(outFile) } catch { /* 清理失败忽略，sweepStaleTmp 兜底 */ }
+  }
 }
 
 // ── CLI adapter：agy ─────────────────────────────────────────────────
 
 /** agy CLI  (agy -p ...) */
-export async function agy(prompt, { cwd = process.cwd(), model, timeout = 300_000, extraArgs = [] } = {}) {
+export async function agy(prompt, { cwd = process.cwd(), model, timeout = AGY_DEFAULT_TIMEOUT, extraArgs = [] } = {}) {
   const args = ['-p', prompt]
   if (model) args.push('--model', model)
   args.push(...extraArgs)
@@ -163,7 +185,7 @@ export async function agy(prompt, { cwd = process.cwd(), model, timeout = 300_00
 // ── CLI adapter：aider ───────────────────────────────────────────────
 
 /** Aider  (aider --message ...) */
-export async function aider(prompt, { cwd = process.cwd(), model, files = [], timeout = 600_000, extraArgs = [] } = {}) {
+export async function aider(prompt, { cwd = process.cwd(), model, files = [], timeout = AIDER_DEFAULT_TIMEOUT, extraArgs = [] } = {}) {
   const args = ['--message', prompt, '--yes-always', '--no-pretty']
   if (model) args.push('--model', model)
   args.push(...files, ...extraArgs)
@@ -174,7 +196,7 @@ export async function aider(prompt, { cwd = process.cwd(), model, files = [], ti
 // ── CLI adapter：cursor ──────────────────────────────────────────────
 
 /** Cursor Agent CLI  (agent -p ...) */
-export async function cursor(prompt, { cwd = process.cwd(), timeout = 300_000, extraArgs = [] } = {}) {
+export async function cursor(prompt, { cwd = process.cwd(), timeout = CURSOR_DEFAULT_TIMEOUT, extraArgs = [] } = {}) {
   const args = ['-p', prompt, '--output-format', 'json', ...extraArgs]
   const raw = await spawnCli('agent', args, cwd, timeout)
   try {
@@ -223,7 +245,7 @@ export async function recursive(goal, {
   allowTools,
   replayFrom,
   env,
-  timeout = 1_800_000,
+  timeout = RECURSIVE_DEFAULT_TIMEOUT,
   onData,
 } = {}) {
   const resolvedBin = bin ?? resolveRecursiveBin(cwd)

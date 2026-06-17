@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, renameSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, renameSync, readdirSync, unlinkSync } from 'fs'
 import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
@@ -54,6 +54,7 @@ export class Checkpoint {
     this._logQueue = Promise.resolve()
     mkdirSync(this.dir, { recursive: true })
     this.state = this._loadState(runId)
+    this._sweepSidecarTmp()  // 清理前次 SIGKILL 遗留的 .out.tmp 孤儿
     this._flush()
   }
 
@@ -259,6 +260,8 @@ export class Checkpoint {
 
   // 存储步骤结果：短结果内联进 state.json；长结果写旁路文件，state.json 存占位标记。
   // 旁路文件格式：首行 "string" 或 "json" 标记类型，其余行为实际内容。
+  // 写入采用 write-rename 原子模式：先写 .out.tmp，rename 替换 .out。
+  // SIGKILL 截断时要么旧 .out 完整（续跑用），要么新 .out.tmp 不完整但 .out 不受影响。
   _storeResult(key, result) {
     const isStr = typeof result === 'string'
     const str = isStr ? result : (result == null ? '' : JSON.stringify(result))
@@ -268,7 +271,10 @@ export class Checkpoint {
     const safe = key.replace(/[^a-zA-Z0-9._-]/g, '_')
     const hash = key.split('').reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0)
     const filename = `${safe}_${(hash >>> 0).toString(36)}`
-    writeFileSync(join(this._stepsDir, `${filename}.out`), (isStr ? 'string\n' : 'json\n') + str, 'utf8')
+    const outPath = join(this._stepsDir, `${filename}.out`)
+    const tmpPath = `${outPath}.tmp`
+    writeFileSync(tmpPath, (isStr ? 'string\n' : 'json\n') + str, 'utf8')
+    renameSync(tmpPath, outPath)
     return RESULT_SIDECAR_MARKER + filename  // state.json 只存占位
   }
 
@@ -307,6 +313,19 @@ export class Checkpoint {
     this._logQueue = this._logQueue
       .then(() => appendFile(this.logPath, line))
       .catch(() => { /* 观测日志写失败，静默忽略 */ })
+  }
+
+  // 清理 steps/ 目录下 SIGKILL 遗留的 .out.tmp 孤儿文件（不完整，写到一半被杀）。
+  // 在构造时调用一次即可；失败时静默忽略（不影响主流程）。
+  _sweepSidecarTmp() {
+    try {
+      if (!existsSync(this._stepsDir)) return
+      for (const name of readdirSync(this._stepsDir)) {
+        if (name.endsWith('.out.tmp')) {
+          try { unlinkSync(join(this._stepsDir, name)) } catch { /* 单文件失败跳过 */ }
+        }
+      }
+    } catch { /* 扫不动就放弃 */ }
   }
 
   _flush() {

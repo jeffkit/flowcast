@@ -4,6 +4,7 @@ import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync, statSync } 
 import { join, dirname } from 'path'
 import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
+import { spawnSync } from 'child_process'
 import { generateFlow } from './generate.js'
 import { decompose } from './decompose.js'
 import { runFlow, fanOut } from '../subflow.js'
@@ -158,6 +159,7 @@ export async function orchestrateMulti(goal, {
   agent, agents = {}, providers = {}, generate, decomposeGen,
   concurrency = 2, genConcurrency = DEFAULT_GEN_CONCURRENCY,
   maxAttempts,  // 透传给各子任务的 generateFlow（默认 3）
+  failFast = true,  // true（默认）= 任意子任务生成失败则整体中止；false = 收集所有失败，尽量跑完
   isolate = 'worktree', dryRun = false, timeout, onData,
 } = {}) {
   const dep = checkFlowcastResolvable(repo)
@@ -214,9 +216,12 @@ export async function orchestrateMulti(goal, {
   // 并发生成可降低总耗时，但 Promise.all 无限并发会同时轰击 LLM API 触发 429。
   // 改用 parallel({concurrency: genConcurrency}) 限流：生成时间接近无限并发，同时避免限额。
   // strict=true：任意子任务失败立即向上传播（与旧 Promise.all 行为一致）。
-  let flowTasks
+  // ② 每个子任务生成一条 flow（限并发生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
+  // failFast=true（默认）：任一失败立即终止整批（strict=true），保持原有行为。
+  // failFast=false：收集所有失败，尽量跑完剩余子任务；执行阶段只跑生成成功的子任务。
+  let flowTaskResults
   try {
-    flowTasks = await parallel(
+    flowTaskResults = await parallel(
       tasks.map((t) => async () => {
         const subDir = join(runDir, 'sub', t.name)
         const file = join(subDir, 'flow.mjs')
@@ -233,13 +238,19 @@ export async function orchestrateMulti(goal, {
         }
         return { name: t.name, flow: file, runId: `${runId}-${t.name}`, goal: t.goal, agent: t.agent ?? agent }
       }),
-      { concurrency: genConcurrency, strict: true },
+      { concurrency: genConcurrency, strict: failFast },
     )
   } catch (e) {
-    // strict=true 时 parallel 把所有失败打包进 e.failures；取第一个的原始错误保持原有返回形状。
+    // failFast=true 时 parallel（strict=true）把所有失败打包进 e.failures；取第一个的原始错误保持原有返回形状。
     const cause = e.failures?.[0]?.error ?? e
     return { ok: false, stage: 'generate', runId, task: cause.taskName ?? '?', error: cause.message, tasks: tasks.length }
   }
+
+  // failFast=false 时 parallel 返回含 null 的数组（失败项为 null），收集失败信息并继续跑成功项。
+  const generateFailures = flowTaskResults
+    .map((r, i) => r === null ? { task: tasks[i]?.name ?? String(i) } : null)
+    .filter(Boolean)
+  const flowTasks = flowTaskResults.filter(Boolean)
 
   // ③ fanOut 并发执行（worktree 隔离 + per-task 日志 + 续跑由各子 flow 的 --run-id 负责）
   //    onResult 自动调 archiveChildRun：worktree 隔离下子 run 落 worktree 内 .flowcast/runs/，
@@ -254,7 +265,15 @@ export async function orchestrateMulti(goal, {
     },
   })
 
-  return { ok: results.every(r => r.result.ok), stage: 'run', runId, tasks: tasks.length, results }
+  const allOk = results.every(r => r.result.ok) && generateFailures.length === 0
+  return {
+    ok: allOk,
+    stage: 'run',
+    runId,
+    tasks: tasks.length,
+    results,
+    ...(generateFailures.length > 0 ? { generateFailures } : {}),
+  }
 }
 
 /**
@@ -307,8 +326,8 @@ async function acquireLock(lockDir, runId, { allowReuse = false, producePath } =
       let owner
       try { owner = JSON.parse(readFileSync(ownerPath, 'utf8')) } catch { owner = null }
       if (owner?.pid) {
-        // PID 活着 → 真的忙
-        if (isPidAlive(owner.pid)) {
+        // PID 活着 → 真的忙（需额外排除 PID 复用竞态：进程比锁新则必是复用的新进程）
+        if (isPidAlive(owner.pid) && isPidLockOwner(owner.pid, owner.startedAt)) {
           return { pid: owner.pid, startedAt: owner.startedAt, runId: owner.runId }
         }
         // PID 已死 → 看是否够 stale
@@ -359,4 +378,41 @@ function isPidAlive(pid) {
     if (e.code === 'EPERM') return true   // 无权发信号，但进程存在，不能清锁
     return false
   }
+}
+
+/**
+ * 防 PID 复用竞态：通过 `ps -o etime=` 获取进程已运行秒数，
+ * 与 lockCreatedAt 对比——若进程实际启动时间晚于锁创建时间，必然是复用了 PID 的新进程。
+ * 失败（ps 不可用 / 进程不存在）时保守返回 true（不误删活锁）。
+ * @param {number} pid
+ * @param {number} lockCreatedAt  owner.json 里 startedAt（ms since epoch）
+ * @returns {boolean}  true = 进程确实是锁持有者（或无法判断），false = 确认是复用 PID 的新进程
+ */
+function isPidLockOwner(pid, lockCreatedAt) {
+  if (!Number.isFinite(pid) || pid <= 0 || !lockCreatedAt) return true
+  try {
+    // 同步调用 ps（macOS/Linux），获取进程已运行秒数 etime = [[DD-]HH:]MM:SS
+    const res = spawnSync('ps', ['-o', 'etime=', '-p', String(pid)], { timeout: 2000, encoding: 'utf8' })
+    if (res.status !== 0 || res.error) return true  // ps 失败 → 保守认为是本锁持有者
+    const etime = (res.stdout ?? '').trim()
+    if (!etime) return true  // 进程不存在（ps 空输出）→ isPidAlive 会返回 false，此处不纠结
+    const elapsedSec = parseEtimeSec(etime)
+    if (elapsedSec === null) return true  // 解析失败 → 保守
+    // 进程实际运行了 elapsedSec 秒，锁创建了 lockAgeMs 毫秒
+    // 若 elapsedSec < lockAgeMs/1000 - 5（5 秒容忍时钟偏差），进程比锁还新 → 必然是复用 PID 的新进程
+    const lockAgeSec = (Date.now() - lockCreatedAt) / 1000
+    if (lockAgeSec > 5 && elapsedSec < lockAgeSec - 5) return false
+    return true
+  } catch {
+    return true  // 任何异常保守处理
+  }
+}
+
+/** 解析 ps etime 格式 [[DD-]HH:]MM:SS → 秒数；解析失败返回 null */
+function parseEtimeSec(etime) {
+  // 可能包含 DD- 前缀：如 "2-03:15:42" 或 "03:15:42" 或 "15:42"
+  const m = etime.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/)
+  if (!m) return null
+  const [, days, hours, minutes, seconds] = m
+  return (Number(days ?? 0) * 86400) + (Number(hours ?? 0) * 3600) + (Number(minutes) * 60) + Number(seconds)
 }

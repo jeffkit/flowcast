@@ -39,14 +39,20 @@ function resolveFlowFile(nameOrPath, cwd = process.cwd()) {
   if (nameOrPath.startsWith('/') || nameOrPath.startsWith('./') || nameOrPath.startsWith('../')) {
     return resolve(cwd, nameOrPath)
   }
-  const name = nameOrPath.endsWith('.js') ? nameOrPath : `${nameOrPath}.js`
-  // 项目级：优先 .flowcast/flows，向后兼容 .flowx/flows
-  const projectFlowCast = join(cwd, '.flowcast', 'flows', name)
-  const projectFlowX = join(cwd, '.flowx', 'flows', name)
-  const projectFlow = existsSync(projectFlowCast) ? projectFlowCast : projectFlowX
-  if (existsSync(projectFlow)) return projectFlow
-  const userFlow = join(USER_FLOWS_DIR, name)
-  if (existsSync(userFlow)) return userFlow
+  // 名字可以带扩展名（.js 或 .mjs）也可以不带；不带时按优先级 .js → .mjs 依次查找
+  const candidates = (nameOrPath.endsWith('.js') || nameOrPath.endsWith('.mjs'))
+    ? [nameOrPath]
+    : [`${nameOrPath}.js`, `${nameOrPath}.mjs`]
+
+  for (const name of candidates) {
+    // 项目级：优先 .flowcast/flows，向后兼容 .flowx/flows
+    const projectFlowCast = join(cwd, '.flowcast', 'flows', name)
+    const projectFlowX = join(cwd, '.flowx', 'flows', name)
+    const projectFlow = existsSync(projectFlowCast) ? projectFlowCast : projectFlowX
+    if (existsSync(projectFlow)) return projectFlow
+    const userFlow = join(USER_FLOWS_DIR, name)
+    if (existsSync(userFlow)) return userFlow
+  }
   return null
 }
 

@@ -4,16 +4,29 @@ import { flowcastDir } from './dirs.js'
 
 const DEFAULT_MAX_ENTRIES = 500  // scope 文件超出此条数时，保留最新的一半（LRU 淘汰）
 
+// 进程内缓存 Map 条数上限（按 scopePath 计）。
+// 长生命周期进程（如 daemon）操作大量不同 scope 时，缓存可能无界增长。
+// 超限时按插入顺序淘汰最老的条目（Map 的迭代顺序即插入顺序，天然 FIFO LRU）。
+const CACHE_MAX_SCOPES = 200
+
 // 进程内行计数缓存：key = scopePath，value = 行数。
 // 避免每次 recordLearning 都全量读文件计数——append 后只需 +1，
 // 仅在超限时才做一次全量读 + 重写。进程重启时从文件行数重新初始化。
 const _lineCountCache = new Map()
 
-// 进程内 entries 缓存：key = scopePath，value = {entries: object[], size: number}。
+// 进程内 entries 缓存：key = scopePath，value = object[]。
 // recall / buildMemorySection 每次调用都会全量读文件，对高频 loop 有累积 IO 开销。
 // recordLearning 在写入后同步更新此缓存，recall 优先命中缓存（O(1) 读内存），
 // 进程重启后首次 recall 触发惰性加载（此时缓存为空）。
 const _entriesCache = new Map()
+
+/** 通用 LRU 淘汰：Map 超过 maxSize 时删除最早插入的条目。 */
+function evictMapIfNeeded(map, maxSize) {
+  if (map.size > maxSize) {
+    const oldestKey = map.keys().next().value
+    map.delete(oldestKey)
+  }
+}
 
 // ── memory：轻量「跨-run」记忆（learnings 的持久累积）─────────────────
 //
@@ -30,8 +43,13 @@ const _entriesCache = new Map()
 const defaultBase = () => flowcastDir(process.cwd()) + '/memory'
 
 function scopePath(baseDir, scope) {
-  const safe = String(scope).replace(/[^a-zA-Z0-9._-]/g, '_')
-  return join(baseDir, `${safe}.jsonl`)
+  const s = String(scope)
+  const safe = s.replace(/[^a-zA-Z0-9._-]/g, '_')
+  // 若 scope 含特殊字符（被替换成 _），追加 hash 后缀防碰撞（如 'a/b' 与 'a_b' 均映射到 'a_b'）。
+  // 纯合法字符的 scope 保持原文件名（向后兼容已有 .jsonl 文件）。
+  if (safe === s) return join(baseDir, `${safe}.jsonl`)
+  const hash = s.split('').reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0)
+  return join(baseDir, `${safe}_${(hash >>> 0).toString(36)}.jsonl`)
 }
 
 function parseJsonlFile(p) {
@@ -50,6 +68,7 @@ function readEntries(baseDir, scope) {
   if (_entriesCache.has(p)) return _entriesCache.get(p)
   const entries = parseJsonlFile(p)
   _entriesCache.set(p, entries)
+  evictMapIfNeeded(_entriesCache, CACHE_MAX_SCOPES)
   return entries
 }
 
@@ -99,6 +118,7 @@ export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), max
   } else {
     // 缓存为空时从文件重建（包含刚 append 的新记录）
     _entriesCache.set(p, parseJsonlFile(p))
+    evictMapIfNeeded(_entriesCache, CACHE_MAX_SCOPES)
   }
 
   // 容量守卫：用进程内计数器避免每次写都全量读文件。
@@ -111,6 +131,7 @@ export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), max
     lineCount += 1
   }
   _lineCountCache.set(p, lineCount)
+  evictMapIfNeeded(_lineCountCache, CACHE_MAX_SCOPES)
 
   if (lineCount > maxEntries) {
     const allEntries = _entriesCache.get(p) ?? parseJsonlFile(p)

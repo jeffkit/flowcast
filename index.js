@@ -6,6 +6,8 @@ export { Checkpoint, PauseSignal } from './checkpoint.js'
 export {
   runAgent, runAgentChain, setWorkdir, setAgentEventSink,
   claude, cursor, gemini, codex, aider, recursive, agy,
+  CLAUDE_DEFAULT_TIMEOUT, GEMINI_DEFAULT_TIMEOUT, CODEX_DEFAULT_TIMEOUT,
+  AGY_DEFAULT_TIMEOUT, CURSOR_DEFAULT_TIMEOUT, AIDER_DEFAULT_TIMEOUT, RECURSIVE_DEFAULT_TIMEOUT,
   spawnCapture, resolveRecursiveBin, recursiveProviderEnv, claudeProviderEnv, isProviderRetryable,
   parallel, pipeline,
   waitForInput, notify, setHitlBackend, getHitlBackend,

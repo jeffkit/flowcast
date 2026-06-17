@@ -109,7 +109,15 @@ export async function runGate(gate, deps = {}) {
  */
 export async function runGates(gates, deps = {}) {
   if (deps.parallel) {
-    return parallel(gates.map(g => () => runGate(g, deps)), { strict: true })
+    // resume-fix 门依赖 agent 修复上下文，并发时多个门同时修复会冲突（修复结果互相覆盖）。
+    // 自动检测：有任意 resume-fix 门时降级为串行，打 warn 提醒配置方。
+    const hasResumeFix = gates.some(g => (g.onFail ?? 'rollback') === 'resume-fix')
+    if (hasResumeFix) {
+      const names = gates.filter(g => (g.onFail ?? 'rollback') === 'resume-fix').map(g => g.name).join(', ')
+      console.warn(`  [runGates] parallel=true 但门 [${names}] 为 resume-fix 策略，已自动降级为串行执行以避免修复冲突`)
+    } else {
+      return parallel(gates.map(g => () => runGate(g, deps)), { strict: true })
+    }
   }
   const results = []
   for (const g of gates) results.push(await runGate(g, deps))

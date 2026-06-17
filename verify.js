@@ -46,6 +46,7 @@ export async function verifyAdversarial(claim, {
     return { verdict: true, survived: lensList.length, total: lensList.length, threshold: need, votes: [], dryRun: true }
   }
 
+  const voterErrors = []
   const votes = await parallel(lensList.map((lens, i) => () => {
     const lensLine = lens ? `请专门从「${lens}」视角审视。` : ''
     const prompt = `你是一个严格的怀疑者，任务是尽力**反驳**下面的论断（claim）。${lensLine}
@@ -55,9 +56,28 @@ ${context ? `\n# 上下文\n${context}\n` : ''}
 ${claim}`
     return runStructured((p) => runner(p, agent), prompt, { schema: VERDICT_SCHEMA })
       .then(v => ({ ...v, lens: lens ?? `voter-${i}` }))
-  }))
+  }), {
+    // strict=false：单个 voter 因网络/限额失败时不中断整体验证。
+    // 失败的 voter 在结果数组中为 null，通过 onError 记录供调用方感知。
+    strict: false,
+    onError: ({ index, error }) => {
+      const lens = lensList[index] ?? `voter-${index}`
+      console.warn(`  [verifyAdversarial] voter '${lens}' 失败（忽略）：${error.message}`)
+      voterErrors.push({ lens, error: error.message })
+    },
+  })
 
   const valid = votes.filter(Boolean)
   const survived = valid.filter(v => v.real === true).length
-  return { verdict: survived >= need, survived, total: lensList.length, threshold: need, votes: valid }
+  // 如果所有 voter 都失败（valid 为空），视为验证失败而非通过
+  if (valid.length === 0) {
+    const err = new Error(`verifyAdversarial: 所有 ${lensList.length} 个 voter 均失败，无法完成验证`)
+    err.voterErrors = voterErrors
+    throw err
+  }
+  return {
+    verdict: survived >= need,
+    survived, total: lensList.length, threshold: need, votes: valid,
+    ...(voterErrors.length > 0 ? { voterErrors } : {}),
+  }
 }
