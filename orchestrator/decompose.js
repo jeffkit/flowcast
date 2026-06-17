@@ -48,17 +48,24 @@ export function parseTasks(text) {
   try { raw = JSON.parse(match[0]) } catch (e) { throw new Error(`JSON 解析失败：${e.message}`) }
   if (!Array.isArray(raw) || raw.length === 0) throw new Error('任务清单为空')
 
-  const seen = new Map()
+  const usedNames = new Set()
   return raw.map((t, i) => {
     if (!t || typeof t !== 'object') throw new Error(`任务 ${i} 不是对象`)
     const goal = String(t.goal ?? '').trim()
     if (!goal) throw new Error(`任务 ${i}（${t.name ?? '?'}）缺少 goal`)
 
-    // name 规整为 kebab-case 安全标识；去重时加序号后缀
-    let name = String(t.name ?? `task-${i + 1}`).trim().toLowerCase()
+    // name 规整为 kebab-case 安全标识；去重时不断加序号后缀直到不冲突。
+    // 原来用 Map 记计数，但无法检测「生成的 foo-2 与字面量 foo-2 同名」的碰撞，
+    // 改用 Set 记录所有已使用名字，每次找到第一个可用后缀。
+    let base = String(t.name ?? `task-${i + 1}`).trim().toLowerCase()
       .replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || `task-${i + 1}`
-    if (seen.has(name)) { const n = seen.get(name) + 1; seen.set(name, n); name = `${name}-${n}` }
-    else seen.set(name, 1)
+    let name = base
+    if (usedNames.has(name)) {
+      let n = 2
+      while (usedNames.has(`${base}-${n}`)) n++
+      name = `${base}-${n}`
+    }
+    usedNames.add(name)
 
     const task = { name, goal }
     if (t.agent) task.agent = String(t.agent)

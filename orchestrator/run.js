@@ -219,6 +219,8 @@ export async function orchestrateMulti(goal, {
   // ② 每个子任务生成一条 flow（限并发生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
   // failFast=true（默认）：任一失败立即终止整批（strict=true），保持原有行为。
   // failFast=false：收集所有失败，尽量跑完剩余子任务；执行阶段只跑生成成功的子任务。
+  // failFast=false 时用 onError 捕获各任务错误消息，防止错误信息随 null 结果丢失。
+  const genErrors = new Map()  // index → Error
   let flowTaskResults
   try {
     flowTaskResults = await parallel(
@@ -238,7 +240,11 @@ export async function orchestrateMulti(goal, {
         }
         return { name: t.name, flow: file, runId: `${runId}-${t.name}`, goal: t.goal, agent: t.agent ?? agent }
       }),
-      { concurrency: genConcurrency, strict: failFast },
+      {
+        concurrency: genConcurrency,
+        strict: failFast,
+        ...(!failFast ? { onError: ({ index, error }) => genErrors.set(index, error) } : {}),
+      },
     )
   } catch (e) {
     // failFast=true 时 parallel（strict=true）把所有失败打包进 e.failures；取第一个的原始错误保持原有返回形状。
@@ -248,7 +254,7 @@ export async function orchestrateMulti(goal, {
 
   // failFast=false 时 parallel 返回含 null 的数组（失败项为 null），收集失败信息并继续跑成功项。
   const generateFailures = flowTaskResults
-    .map((r, i) => r === null ? { task: tasks[i]?.name ?? String(i) } : null)
+    .map((r, i) => r === null ? { task: tasks[i]?.name ?? String(i), error: genErrors.get(i)?.message } : null)
     .filter(Boolean)
   const flowTasks = flowTaskResults.filter(Boolean)
 

@@ -76,7 +76,13 @@ export async function runOrchestrate(argv, { generate, onData = (d) => process.s
       return 1
     }
     const okN = r.results.filter(x => x.result.ok).length
-    console.log(`\n${r.ok ? '✓' : '✗'} orchestrate --split ${r.ok ? '完成' : '部分失败'}  ${okN}/${r.tasks} 子任务成功`)
+    const genFails = r.generateFailures ?? []
+    const totalTasks = r.tasks ?? (r.results.length + genFails.length)
+    console.log(`\n${r.ok ? '✓' : '✗'} orchestrate --split ${r.ok ? '完成' : '部分失败'}  ${okN}/${totalTasks} 子任务成功`)
+    if (genFails.length > 0) {
+      console.log(`  生成失败（${genFails.length} 个）：`)
+      for (const f of genFails) console.log(`    ✗ ${f.task ?? f.name ?? '?'}  ${f.error ?? ''}`)
+    }
     for (const x of r.results) console.log(`  ${x.result.ok ? '✓' : '✗'} ${x.task.name}  exit=${x.result.exitCode}`)
     return r.ok ? 0 : 1
   }

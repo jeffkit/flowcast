@@ -356,19 +356,39 @@ export function collectRuns(repo, {
   for (const r of runs) r.children = childrenOf.get(r.runId) ?? []
 
   // 父 run 汇总子 run 的 token（drain 父自身不跑 agent，token 在各子 run 里）。
+  // 用 DFS post-order（叶节点先于父节点处理）递归聚合，确保三层以上层级
+  // （orchestrateMulti → fanOut child → inner subflow）的孙代 token 也正确冒泡到根。
   const byIdMap = byId
-  for (const r of runs) {
-    if (!r.children.length) { r.childUsage = null; continue }
+  const childUsageMemo = new Map()
+  function computeChildUsage(run) {
+    if (childUsageMemo.has(run.runId)) return childUsageMemo.get(run.runId)
+    // 先标记防止循环引用（理论上 run 图是树，但防御性保护）
+    childUsageMemo.set(run.runId, null)
     const cu = { inputTokens: 0, outputTokens: 0, totalTokens: 0, hasTokens: false }
-    for (const cid of r.children) {
+    for (const cid of run.children) {
       const c = byIdMap.get(cid)
-      if (!c?.usage?.hasTokens) continue
-      cu.inputTokens += c.usage.inputTokens
-      cu.outputTokens += c.usage.outputTokens
-      cu.hasTokens = true
+      if (!c) continue
+      // 子节点自身 token
+      if (c.usage?.hasTokens) {
+        cu.inputTokens += c.usage.inputTokens
+        cu.outputTokens += c.usage.outputTokens
+        cu.hasTokens = true
+      }
+      // 子节点的后代 token（递归计算）
+      const deep = computeChildUsage(c)
+      if (deep?.hasTokens) {
+        cu.inputTokens += deep.inputTokens
+        cu.outputTokens += deep.outputTokens
+        cu.hasTokens = true
+      }
     }
     cu.totalTokens = cu.inputTokens + cu.outputTokens
-    r.childUsage = cu.hasTokens ? cu : null
+    const result = cu.hasTokens ? cu : null
+    childUsageMemo.set(run.runId, result)
+    return result
+  }
+  for (const r of runs) {
+    r.childUsage = r.children.length ? computeChildUsage(r) : null
   }
 
   // 默认排序：最近活动倒序（最新的在前）
