@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { generateFlow } from './generate.js'
 import { decompose } from './decompose.js'
 import { runFlow, fanOut } from '../subflow.js'
+import { parallel } from '../concurrency.js'
 import { flowcastDir } from '../dirs.js'
 
 const FLOWCAST_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -138,10 +139,15 @@ export async function orchestrate(request, {
  *   - dryRun / timeout / onData
  * @returns {Promise<{ok, stage, runId, tasks, results?, error?, task?}>}
  */
+// 并发生成子 flow 时对 LLM API 的并发上限（默认 3）。
+// 子任务执行（fanOut）有独立 concurrency 控制；此常量仅限「生成阶段」防 429 轰击。
+const DEFAULT_GEN_CONCURRENCY = 3
+
 export async function orchestrateMulti(goal, {
   repo = process.cwd(), runId = `orchm-${Date.now()}`,
   agent, agents = {}, providers = {}, generate, decomposeGen,
-  concurrency = 2, isolate = 'worktree', dryRun = false, timeout, onData,
+  concurrency = 2, genConcurrency = DEFAULT_GEN_CONCURRENCY,
+  isolate = 'worktree', dryRun = false, timeout, onData,
 } = {}) {
   const dep = checkFlowcastResolvable(repo)
   if (!dep.ok) return { ok: false, stage: 'precheck', runId, error: dep.error }
@@ -185,30 +191,36 @@ export async function orchestrateMulti(goal, {
     break
   }
 
-  // ② 每个子任务生成一条 flow（并发生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
+  // ② 每个子任务生成一条 flow（限并发生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
   // 原先顺序生成：N 个子任务 × 平均 10s/个 = 50s 才开始执行（execution 阶段已是并发）。
-  // 改为并发生成：所有子任务 LLM 调用同时发出，总生成时间降到单个子任务的生成时间。
-  // 任意子任务生成失败时，Promise.all 会 reject，整体返回失败（与顺序版行为一致）。
+  // 并发生成可降低总耗时，但 Promise.all 无限并发会同时轰击 LLM API 触发 429。
+  // 改用 parallel({concurrency: genConcurrency}) 限流：生成时间接近无限并发，同时避免限额。
+  // strict=true：任意子任务失败立即向上传播（与旧 Promise.all 行为一致）。
   let flowTasks
   try {
-    flowTasks = await Promise.all(tasks.map(async (t) => {
-      const subDir = join(runDir, 'sub', t.name)
-      const file = join(subDir, 'flow.mjs')
-      if (!existsSync(file)) {
-        const g = await generateFlow(t.goal, {
-          repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate,
-        })
-        if (!g.validation.ok) {
-          const err = new Error(g.validation.error)
-          err.taskName = t.name
-          err.stage = 'generate'
-          throw err
+    flowTasks = await parallel(
+      tasks.map((t) => async () => {
+        const subDir = join(runDir, 'sub', t.name)
+        const file = join(subDir, 'flow.mjs')
+        if (!existsSync(file)) {
+          const g = await generateFlow(t.goal, {
+            repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate,
+          })
+          if (!g.validation.ok) {
+            const err = new Error(g.validation.error)
+            err.taskName = t.name
+            err.stage = 'generate'
+            throw err
+          }
         }
-      }
-      return { name: t.name, flow: file, runId: `${runId}-${t.name}`, goal: t.goal, agent: t.agent ?? agent }
-    }))
+        return { name: t.name, flow: file, runId: `${runId}-${t.name}`, goal: t.goal, agent: t.agent ?? agent }
+      }),
+      { concurrency: genConcurrency, strict: true },
+    )
   } catch (e) {
-    return { ok: false, stage: 'generate', runId, task: e.taskName ?? '?', error: e.message, tasks: tasks.length }
+    // strict=true 时 parallel 把所有失败打包进 e.failures；取第一个的原始错误保持原有返回形状。
+    const cause = e.failures?.[0]?.error ?? e
+    return { ok: false, stage: 'generate', runId, task: cause.taskName ?? '?', error: cause.message, tasks: tasks.length }
   }
 
   // ③ fanOut 并发执行（worktree 隔离 + per-task 日志 + 续跑由各子 flow 的 --run-id 负责）

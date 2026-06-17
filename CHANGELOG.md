@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-06-17
+
+### 修复
+- **`subflow.runFlow` 信号监听器内存泄漏**：`process.once` 注册 SIGINT/SIGTERM 后，`done()` 里用新匿名函数调 `removeListener` 永远移除不掉旧监听（JS 按引用比较）。改为保存具名引用再移除，`fanOut` 并发跑多子 flow 时不再累积信号处理器。
+- **`quality-gate.js` 依赖链修正**：从 `agent.js` import `spawnCapture` 改为直接从 `spawn.js` import，消除不必要的跨模块耦合，与 CLAUDE.md 架构描述对齐。
+- **`executor.js` aider 缺失 `EXTRA_ARGS_WHITELIST` 条目**：aider 是 BYO-LLM 执行器（有 `applyProvider`），但白名单缺失导致 `extraArgs` 永远被拒（返回 `[]`）。补入安全 flag 白名单：`--model`、`--edit-format`、`--no-auto-commits`、`--no-dirty-commits`、`--read`。
+
+### 架构
+- **消除 `agent.js` ↔ `executor.js` 循环依赖**：`runAgent`/`runAgentChain`/`setWorkdir`/`AGENT_COOLDOWN_*` 迁入 `executor.js`，直接访问 `EXECUTORS`，彻底消除此前 `runAgent` 内 `dynamic import executor.js` 的技术债。`agent.js` 改为纯 CLI adapter 层，通过静态 re-export 保持公共 API 不变。ESM 安全：adapter 函数均为 function 声明（已提升），模块初始化顺序正确。
+
+### 新增
+- **`orchestrateMulti` 生成阶段并发限流**：新增可选参数 `genConcurrency`（默认 3）控制子任务 flow 生成的 LLM 并发度，替代原来的 `Promise.all` 无限并发，防止大目标拆分出多子任务时同时轰击 LLM API 触发 429。执行（fanOut）阶段由独立的 `concurrency` 参数控制，两者正交。
+
 ## [0.2.1] - 2026-06-15
 
 ### 新增

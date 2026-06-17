@@ -77,17 +77,17 @@ export function runFlow(flowRef, {
       sigForwarded = true
       try { proc.kill(sig) } catch { /* already dead */ }
     }
-    const onSig = (sig) => {
-      forwardSig(sig)
-      // 给子进程 5s 优雅退出时间，主进程不等待（next tick resolve）
-    }
-    process.once('SIGINT', () => onSig('SIGINT'))
-    process.once('SIGTERM', () => onSig('SIGTERM'))
+    // 保存具名引用：process.removeListener 按引用比较，匿名函数每次创建都是新对象，
+    // 必须用同一个函数引用才能真正移除——否则每次 runFlow 都会永久泄漏一个信号处理器。
+    const onSigInt = () => forwardSig('SIGINT')
+    const onSigTerm = () => forwardSig('SIGTERM')
+    process.once('SIGINT', onSigInt)
+    process.once('SIGTERM', onSigTerm)
     const done = (exitCode, extra = {}) => {
       if (timer) clearTimeout(timer)
       if (fd != null) { try { closeSync(fd) } catch { /* ignore */ } }
-      process.removeListener('SIGINT', () => onSig('SIGINT'))
-      process.removeListener('SIGTERM', () => onSig('SIGTERM'))
+      process.removeListener('SIGINT', onSigInt)
+      process.removeListener('SIGTERM', onSigTerm)
       resolve({ ok: exitCode === 0, exitCode, stdout, stderr, ...extra })
     }
     proc.on('close', code => done(code))

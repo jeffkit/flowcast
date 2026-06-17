@@ -18,7 +18,12 @@ function defaultPipelineConcurrency() {
  * @param {Array<Function>} thunks
  * @param {object} [o]
  * @param {number}  [o.concurrency]  并发上限；缺省 = 全部一起跑。结果按原下标顺序返回。
- * @param {boolean} [o.strict=false] true：任一失败立即抛错；false（默认）：失败返回 null 不中断整体。
+ * @param {boolean} [o.strict=false] 错误处理策略：
+ *   - false（默认）：失败的 thunk 在对应位置返回 null，其余继续跑；控制台打 [parallel error]。
+ *     调用方务必检查结果数组中的 null，否则失败会被静默丢失。
+ *     适合「部分失败可接受」场景（如批量 agent 调用，结果可 fallback）。
+ *   - true：任一失败立即汇总并抛出含 failures 数组的 Error（仍等全部跑完）。
+ *     e.failures 是 [{index, error}] 数组，适合「任一失败则整体放弃」场景。
  * @returns {Promise<Array>}
  */
 export async function parallel(thunks, { concurrency, strict = false } = {}) {

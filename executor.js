@@ -14,10 +14,12 @@
 
 import {
   claude, cursor, gemini, codex, aider, recursive, agy,
-  recursiveProviderEnv, claudeApplyProvider,
+  recursiveProviderEnv, claudeApplyProvider, emitAgentEvent,
 } from './agent.js'
+import { isProviderRetryable } from './spawn.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
+import { runStructured, stubFromSchema } from './schema.js'
 
 // ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
 //
@@ -97,6 +99,10 @@ const EXTRA_ARGS_WHITELIST = {
   ]),
   recursive: new Set([
     '--max-steps', '--model', '--workspace',
+  ]),
+  // aider 是 BYO-LLM 执行器，接受模型/编辑格式等配置 flag
+  aider: new Set([
+    '--model', '--edit-format', '--no-auto-commits', '--no-dirty-commits', '--read',
   ]),
   // 锁定型执行器只允许运行时安全 flag（workspace 信任/宽松权限），不允许注入 LLM 配置 flag
   cursor: new Set(['--trust', '--force', '--yolo', '--dangerously-skip-permissions']),
@@ -195,4 +201,117 @@ function makeFakeRun(executor) {
     const out = `[dry-run] ${executor} would run: ${String(goal ?? '').slice(0, 80)}`
     return Object.assign(out, { _meta: { cli: executor, dryRun: true, exitCode: 0 } })
   }
+}
+
+// ── runAgent 路由 ────────────────────────────────────────────────────
+//
+// 从 agent.js 迁来，消除 agent.js ↔ executor.js 初始化时序循环依赖：
+//   - 旧位置（agent.js）：无法静态引用 EXECUTORS，只能 dynamic import executor.js（技术债）。
+//   - 新位置（本文件）：EXECUTORS 在同一文件，直接访问；agent.js 静态 re-export 保持 API 不变。
+// ESM 安全性：agent.js 的 adapter 函数均为 function 声明（已提升），executor.js 初始化时
+// agent.js 已完成提升，EXECUTORS 可安全取到 claude/cursor 等正确引用。
+
+let _defaultCwd = process.cwd()
+
+/** 设置全局默认工作目录，flow 启动时调用一次，之后所有 runAgent 自动继承。 */
+export function setWorkdir(dir) {
+  _defaultCwd = dir
+}
+
+/**
+ * 跑一次 agent。
+ * @param {string} prompt
+ * @param {object} [o]
+ *   - cli           执行器名（默认 'claude'）
+ *   - cwd           工作目录
+ *   - schema        可选 JSON Schema：强制 agent 返回结构化对象（不匹配回喂重试）
+ *   - schemaRetries 不匹配重试次数（默认 1）
+ *   - 其余透传给底层执行器 adapter
+ */
+export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetries = 1, ...opts } = {}) {
+  if (isDryRun()) {
+    if (schema) return stubFromSchema(schema)
+    return Object.assign(`[dry-run] ${cli} 未真实执行`, { _meta: { cli, dryRun: true } })
+  }
+  const entry = EXECUTORS[cli]
+  if (!entry) {
+    const known = Object.keys(EXECUTORS).join('/')
+    throw new Error(`未知 CLI: ${cli}，支持：${known}（或通过 registerExecutor 注册的自定义执行器）`)
+  }
+  const fn = entry.run
+  const runner = (p) => fn(p, { cwd: cwd ?? _defaultCwd, ...opts })
+  if (schema) return runStructured(runner, prompt, { schema, retries: schemaRetries })
+  return runner(prompt)
+}
+
+// ── runAgentChain：跨 CLI 链式回退 ──────────────────────────────────
+
+function specLabel(spec = {}) {
+  return `${spec.cli ?? 'claude'}${spec.provider?.name ? '/' + spec.provider.name : ''}`
+}
+
+export const AGENT_COOLDOWN_BASE_MS = 30_000
+export const AGENT_COOLDOWN_MAX_MS = 480_000
+
+function envMs(newName, oldName, fallback) {
+  const v = parseInt(process.env[newName] ?? process.env[oldName] ?? '', 10)
+  return Number.isFinite(v) && v >= 0 ? v : fallback
+}
+function defaultCooldownBaseMs() { return envMs('FLOWCAST_AGENT_COOLDOWN_BASE_MS', 'FLOWX_AGENT_COOLDOWN_BASE_MS', AGENT_COOLDOWN_BASE_MS) }
+function defaultCooldownMaxMs() { return envMs('FLOWCAST_AGENT_COOLDOWN_MAX_MS', 'FLOWX_AGENT_COOLDOWN_MAX_MS', AGENT_COOLDOWN_MAX_MS) }
+
+function backoffMs(fails, base = AGENT_COOLDOWN_BASE_MS, cap = AGENT_COOLDOWN_MAX_MS) {
+  const ms = Math.min(base * 2 ** Math.max(0, fails - 1), cap)
+  return Math.round(ms * (0.9 + Math.random() * 0.2))
+}
+
+function coolRemaining(cooldown, spec, now) {
+  if (!cooldown) return 0
+  const entry = cooldown.get(specLabel(spec))
+  const until = entry && typeof entry === 'object' ? entry.until : entry
+  return until && until > now ? until - now : 0
+}
+
+/**
+ * 跨 CLI 的 agent 链式回退：按序尝试，因限额/超载/超时失败就切下一个。
+ * 可选 run 级冷却：共享 cooldown Map，按指数退避降级到链尾。
+ */
+export async function runAgentChain(prompt, chain, {
+  runner = runAgent, cooldown = null,
+  cooldownBaseMs = defaultCooldownBaseMs(), cooldownMaxMs = defaultCooldownMaxMs(),
+} = {}) {
+  const list = Array.isArray(chain) && chain.length ? chain : [{}]
+  const now = Date.now()
+  const order = cooldown
+    ? list.map((spec, i) => ({ spec, i, cool: coolRemaining(cooldown, spec, now) }))
+        .sort((a, b) => (a.cool - b.cool) || (a.i - b.i)).map(x => x.spec)
+    : list
+  let lastErr
+  for (let i = 0; i < order.length; i++) {
+    const spec = order[i]
+    try {
+      const r = await runner(prompt, spec)
+      if (cooldown) cooldown.delete(specLabel(spec))
+      return r
+    } catch (e) {
+      lastErr = e
+      if (isProviderRetryable(e)) {
+        const from = specLabel(spec)
+        const reason = e.timedOut ? 'timeout' : String(e.apiStatus ?? e.message).slice(0, 80)
+        if (cooldown) {
+          const prev = cooldown.get(from)
+          const fails = (prev && typeof prev === 'object' ? prev.fails ?? 0 : 0) + 1
+          cooldown.set(from, { until: Date.now() + backoffMs(fails, cooldownBaseMs, cooldownMaxMs), fails })
+        }
+        if (i < order.length - 1) {
+          const to = specLabel(order[i + 1])
+          console.warn(`  [agent fallback] ${from} 不可用（${reason}），切换 → ${to}`)
+          emitAgentEvent({ event: 'fallback', scope: 'cli', from, to, reason })
+          continue
+        }
+      }
+      throw e
+    }
+  }
+  // 不可达：最后 provider 失败已通过 throw e 退出
 }

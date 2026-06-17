@@ -1,20 +1,19 @@
-// agent.js — CLI adapter 层 + runAgent 路由
+// agent.js — CLI adapter 层
 //
-// 职责拆分后（重构说明）：
+// 职责拆分：
 //   spawn.js       — 底层进程原语（spawnCapture / spawnCli / isProviderRetryable / sweepStaleTmp）
 //   concurrency.js — 并发工具（parallel / pipeline）
 //   hitl.js        — HITL 子系统（setHitlBackend / waitForInput / notify …）
-//   agent.js（本文件）— CLI adapter（claude/cursor/…/recursive）+ runAgent 路由 + 全局状态
+//   agent.js（本文件）— CLI adapter（claude/cursor/…/recursive）+ 可观测事件 sink
+//   executor.js    — runAgent 路由 + runAgentChain 回退链 + EXECUTORS 注册表
 //
 // 所有曾从 agent.js 导出的符号仍从本文件导出（re-export），保持公共 API 不变。
-// 循环依赖说明：runAgent 需要 EXECUTORS（executor.js），executor.js 又 import agent.js。
-// 目前用 dynamic import 规避（已注释），是已知技术债，待后续将 runAgent 迁至 executor.js。
+// runAgent / runAgentChain / setWorkdir / AGENT_COOLDOWN_* 已迁至 executor.js，
+// 本文件通过静态 re-export 将其重新暴露，消除了此前的 dynamic import 循环依赖。
 
 import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { isDryRun } from './dry-run.js'
-import { runStructured, stubFromSchema } from './schema.js'
 import { spawnCapture, spawnCli, isProviderRetryable } from './spawn.js'
 import { parallel, pipeline } from './concurrency.js'
 import { setHitlBackend, getHitlBackend, waitForInput, notify } from './hitl.js'
@@ -52,7 +51,9 @@ export function setAgentEventSink(fn) {
   _agentEventSink = typeof fn === 'function' ? fn : null
 }
 
-function emitAgentEvent(e) {
+// executor.js 的 runAgentChain 需要 emitAgentEvent 发送 CLI fallback 事件；
+// 导出为内部工具（不进 index.js 公共 API），executor.js 静态 import 以消除循环依赖。
+export function emitAgentEvent(e) {
   if (!_agentEventSink) return
   try { _agentEventSink(e) } catch { /* 观测失败不影响主流程 */ }
 }
@@ -275,115 +276,9 @@ export function recursiveProviderEnv({ type, apiBase, model, apiKey, maxSteps } 
   return env
 }
 
-// ── runAgent 路由 ────────────────────────────────────────────────────
-
-// 内置 CLI 映射（cursor-agent 二进制名就叫 agent，别名复用）
-const CLI_MAP = { claude, gemini, codex, aider, cursor, recursive, agy, agent: cursor }
-
-let _defaultCwd = process.cwd()
-
-/** 设置全局默认工作目录，flow 启动时调用一次，之后所有 runAgent 自动继承。 */
-export function setWorkdir(dir) {
-  _defaultCwd = dir
-}
-
-/**
- * 跑一次 agent。
- * @param {string} prompt
- * @param {object} [o]
- *   - cli           执行器名（默认 'claude'）
- *   - cwd           工作目录
- *   - schema        可选 JSON Schema：强制 agent 返回结构化对象（不匹配回喂重试）
- *   - schemaRetries 不匹配重试次数（默认 1）
- *   - 其余透传给底层执行器 adapter
- */
-export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetries = 1, ...opts } = {}) {
-  if (isDryRun()) {
-    if (schema) return stubFromSchema(schema)
-    return Object.assign(`[dry-run] ${cli} 未真实执行`, { _meta: { cli, dryRun: true } })
-  }
-  let fn = CLI_MAP[cli]
-  if (!fn) {
-    // CLI_MAP 未命中时回退查 EXECUTORS（registerExecutor 注册的自定义执行器）。
-    // dynamic import 规避 agent.js ↔ executor.js 初始化时序的循环依赖。
-    // 已知技术债：后续将 runAgent 迁至 executor.js 后可消除此 dynamic import。
-    const { EXECUTORS } = await import('./executor.js')
-    fn = EXECUTORS[cli]?.run
-  }
-  if (!fn) throw new Error(`未知 CLI: ${cli}，支持：${Object.keys(CLI_MAP).join('/')}（或通过 registerExecutor 注册的自定义执行器）`)
-  const runner = (p) => fn(p, { cwd: cwd ?? _defaultCwd, ...opts })
-  if (schema) return runStructured(runner, prompt, { schema, retries: schemaRetries })
-  return runner(prompt)
-}
-
-// ── runAgentChain：跨 CLI 链式回退 ──────────────────────────────────
-
-function specLabel(spec = {}) {
-  return `${spec.cli ?? 'claude'}${spec.provider?.name ? '/' + spec.provider.name : ''}`
-}
-
-export const AGENT_COOLDOWN_BASE_MS = 30_000
-export const AGENT_COOLDOWN_MAX_MS = 480_000
-
-function envMs(newName, oldName, fallback) {
-  const v = parseInt(process.env[newName] ?? process.env[oldName] ?? '', 10)
-  return Number.isFinite(v) && v >= 0 ? v : fallback
-}
-function defaultCooldownBaseMs() { return envMs('FLOWCAST_AGENT_COOLDOWN_BASE_MS', 'FLOWX_AGENT_COOLDOWN_BASE_MS', AGENT_COOLDOWN_BASE_MS) }
-function defaultCooldownMaxMs() { return envMs('FLOWCAST_AGENT_COOLDOWN_MAX_MS', 'FLOWX_AGENT_COOLDOWN_MAX_MS', AGENT_COOLDOWN_MAX_MS) }
-
-function backoffMs(fails, base = AGENT_COOLDOWN_BASE_MS, cap = AGENT_COOLDOWN_MAX_MS) {
-  const ms = Math.min(base * 2 ** Math.max(0, fails - 1), cap)
-  return Math.round(ms * (0.9 + Math.random() * 0.2))
-}
-
-function coolRemaining(cooldown, spec, now) {
-  if (!cooldown) return 0
-  const entry = cooldown.get(specLabel(spec))
-  const until = entry && typeof entry === 'object' ? entry.until : entry
-  return until && until > now ? until - now : 0
-}
-
-/**
- * 跨 CLI 的 agent 链式回退：按序尝试，因限额/超载/超时失败就切下一个。
- * 可选 run 级冷却：共享 cooldown Map，按指数退避降级到链尾。
- */
-export async function runAgentChain(prompt, chain, {
-  runner = runAgent, cooldown = null,
-  cooldownBaseMs = defaultCooldownBaseMs(), cooldownMaxMs = defaultCooldownMaxMs(),
-} = {}) {
-  const list = Array.isArray(chain) && chain.length ? chain : [{}]
-  const now = Date.now()
-  const order = cooldown
-    ? list.map((spec, i) => ({ spec, i, cool: coolRemaining(cooldown, spec, now) }))
-        .sort((a, b) => (a.cool - b.cool) || (a.i - b.i)).map(x => x.spec)
-    : list
-  let lastErr
-  for (let i = 0; i < order.length; i++) {
-    const spec = order[i]
-    try {
-      const r = await runner(prompt, spec)
-      if (cooldown) cooldown.delete(specLabel(spec))
-      return r
-    } catch (e) {
-      lastErr = e
-      if (isProviderRetryable(e)) {
-        const from = specLabel(spec)
-        const reason = e.timedOut ? 'timeout' : String(e.apiStatus ?? e.message).slice(0, 80)
-        if (cooldown) {
-          const prev = cooldown.get(from)
-          const fails = (prev && typeof prev === 'object' ? prev.fails ?? 0 : 0) + 1
-          cooldown.set(from, { until: Date.now() + backoffMs(fails, cooldownBaseMs, cooldownMaxMs), fails })
-        }
-        if (i < order.length - 1) {
-          const to = specLabel(order[i + 1])
-          console.warn(`  [agent fallback] ${from} 不可用（${reason}），切换 → ${to}`)
-          emitAgentEvent({ event: 'fallback', scope: 'cli', from, to, reason })
-          continue
-        }
-      }
-      throw e
-    }
-  }
-  // 不可达：最后 provider 失败已通过 throw e 退出
-}
+// ── re-export 路由层（已迁至 executor.js）───────────────────────────
+//
+// runAgent / runAgentChain / setWorkdir / AGENT_COOLDOWN_* 的实现在 executor.js；
+// 由 executor.js 直接访问 EXECUTORS，无需 dynamic import，循环依赖已消除。
+// 此处静态 re-export 保持公共 API 不变（index.js 及现有调用方无需修改）。
+export { runAgent, runAgentChain, setWorkdir, AGENT_COOLDOWN_BASE_MS, AGENT_COOLDOWN_MAX_MS } from './executor.js'

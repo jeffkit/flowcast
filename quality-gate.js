@@ -1,4 +1,4 @@
-import { spawnCapture } from './agent.js'
+import { spawnCapture } from './spawn.js'
 import { isDryRun } from './dry-run.js'
 import { loadMergedConfig, basenamesFor } from './provider.js'
 
