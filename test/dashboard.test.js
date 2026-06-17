@@ -91,6 +91,39 @@ test('collectRuns：按 run 汇总 token + 模型，父 run 汇总子 run token'
   } finally { rmSync(repo, { recursive: true, force: true }) }
 })
 
+test('collectRuns：三层层级 childUsage 深聚合（孙代 token 冒泡到根）', () => {
+  // 验证 DFS post-order 修复：orchestrateMulti → fanOut child → inner subflow 场景
+  // 中间层自身无 token（orchestrate root 不跑 agent），孙代 token 需正确聚合到根
+  const repo = tempRepo()
+  try {
+    const mainRuns = join(repo, '.flowx', 'runs')
+    // 根（自身无 token）
+    writeRun(mainRuns, 'root-8', { runId: 'root-8', status: 'completed', completed: {}, steps: [] })
+    // 中间层（自身无 token，有子孙）
+    writeRun(mainRuns, 'root-8-mid', { runId: 'root-8-mid', status: 'completed', completed: {}, steps: [], parentRunId: 'root-8' })
+    // 叶节点（有 token）
+    writeRun(mainRuns, 'root-8-mid-leaf', {
+      runId: 'root-8-mid-leaf', status: 'completed', parentRunId: 'root-8-mid',
+      completed: { p1: 'x' },
+      steps: [{ key: 'p1', status: 'done', durationMs: 1, cli: 'claude', inputTokens: 2000, outputTokens: 400 }],
+    })
+    const model = collectRuns(repo)
+    const root = model.runs.find(r => r.runId === 'root-8')
+    const mid = model.runs.find(r => r.runId === 'root-8-mid')
+    const leaf = model.runs.find(r => r.runId === 'root-8-mid-leaf')
+    // 叶节点有自己的 token
+    assert.equal(leaf.usage.inputTokens, 2000)
+    // 中间层无自身 token，childUsage 来自叶
+    assert.equal(mid.usage.hasTokens, false)
+    assert.equal(mid.childUsage?.inputTokens, 2000)
+    // 根的 childUsage 应包含孙代 token（深聚合）
+    assert.equal(root.usage.hasTokens, false)
+    assert.ok(root.childUsage, '根应有 childUsage')
+    assert.equal(root.childUsage.inputTokens, 2000, '孙代 token 需冒泡到根')
+    assert.equal(root.childUsage.totalTokens, 2400)
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
 test('collectRuns：僵尸推断 —— status=running 且超阈值 → stale', () => {
   const repo = tempRepo()
   try {

@@ -30,6 +30,19 @@ test('parseTasks: 缺 goal / 空数组 / 非数组 → 抛错', () => {
   assert.throws(() => parseTasks('no json here'), /未找到 JSON/)
 })
 
+test('parseTasks: 字面量 foo-2 与去重生成的 foo-2 不碰撞', () => {
+  // 旧实现：foo→foo-2 后未把 foo-2 写入 seen，导致字面量 foo-2 也能通过，产生两个 foo-2
+  const raw = '[{"name":"foo","goal":"a"},{"name":"foo-2","goal":"b"},{"name":"foo","goal":"c"}]'
+  const tasks = parseTasks(raw)
+  assert.equal(tasks.length, 3)
+  const names = tasks.map(t => t.name)
+  assert.equal(names[0], 'foo')
+  assert.equal(names[1], 'foo-2')
+  assert.equal(names[2], 'foo-3')  // 应跳过已被字面量占用的 foo-2，取 foo-3
+  // 确保三个名字互不相同
+  assert.equal(new Set(names).size, 3, '所有名字必须唯一')
+})
+
 test('parseTasks: 透传可选 agent 字段', () => {
   const [t] = parseTasks('[{"name":"a","goal":"g","agent":"claude-sonnet"}]')
   assert.equal(t.agent, 'claude-sonnet')
