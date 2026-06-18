@@ -13,8 +13,13 @@ import { parallel } from './concurrency.js'
 // 对应 cargo test / clippy / fmt / E2E smoke 各自的红灯处理路径。
 
 async function runShell(cmd, cwd, timeout) {
-  const command = Array.isArray(cmd) ? cmd.join(' ') : cmd
-  return spawnCapture('sh', ['-c', command], { cwd, timeout })
+  // 数组形式：直接 spawn，不经 shell——规避「join(' ') 后 sh -c」的命令注入风险
+  // （特殊字符不会被 shell 重新解析；但也不做 $VAR / glob 展开）。
+  // 字符串形式：走 sh -c，shell 自负责变量展开（FLOW_API 契约允许）。
+  if (Array.isArray(cmd)) {
+    return spawnCapture(cmd[0], cmd.slice(1), { cwd, timeout })
+  }
+  return spawnCapture('sh', ['-c', cmd], { cwd, timeout })
 }
 
 /**

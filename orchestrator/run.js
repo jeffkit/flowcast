@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url'
 import { spawnSync } from 'child_process'
 import { generateFlow } from './generate.js'
 import { decompose } from './decompose.js'
-import { runFlow, fanOut } from '../subflow.js'
+import { runFlow, fanOut, archiveChildRun } from '../subflow.js'
 import { parallel } from '../concurrency.js'
 import { flowcastDir } from '../dirs.js'
 
@@ -261,7 +261,6 @@ export async function orchestrateMulti(goal, {
   // ③ fanOut 并发执行（worktree 隔离 + per-task 日志 + 续跑由各子 flow 的 --run-id 负责）
   //    onResult 自动调 archiveChildRun：worktree 隔离下子 run 落 worktree 内 .flowcast/runs/，
   //    归档到主仓 .flowcast/runs/ 让 dashboard 看到子 run 完整数据（父子关系靠 state.parentRunId）。
-  const { archiveChildRun } = await import('../subflow.js')
   const results = await fanOut(flowTasks, {
     repo, concurrency, isolate, dryRun, timeout, logDir: runDir, onData,
     onResult: async ({ task, result, worktree }) => {

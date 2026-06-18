@@ -11,17 +11,53 @@
 
 ---
 
-## 30 秒上手
+## 快速上手
+
+### 1. 安装
 
 ```bash
-# 全局安装
 npm install -g flowcast
+```
 
+### 2. 前置配置（必须，约 2 分钟）
+
+`orchestrate` 需要有可用的 AI agent CLI（如 `claude`）和 provider 配置：
+
+```json5
+// ~/.flowcast/providers.json（机器级，gitignore）
+{
+  "providers": {
+    "anthropic": {
+      "type": "anthropic",
+      "apiKey": "${ANTHROPIC_API_KEY}"   // 密钥从 env 展开，明文不入仓
+    }
+  }
+}
+```
+
+```json5
+// ~/.flowcast/agents.json
+{
+  "agents": {
+    "claude-sonnet": {
+      "executor": "claude",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6"
+    }
+  }
+}
+```
+
+> 详见 `examples/providers.example.json` 和 `examples/agents.example.json`。
+
+### 3. 跑起来
+
+```bash
 # 一行需求 → 生成 flow → 校验 → 执行
-flowcast orchestrate "把 README 里的 TODO 清单逐条实现" --repo .
+flowcast orchestrate "把 README 里的 TODO 清单逐条实现" --repo . --agent claude-sonnet
 
-# 干跑验证结构（不烧 API）
-FLOWCAST_DRY_RUN=1 flowcast run ./my-flow.js
+# 干跑验证结构（不烧 API，无需配置）
+FLOWCAST_DRY_RUN=1 flowcast orchestrate "test" --repo .
 ```
 
 ---
@@ -127,12 +163,12 @@ flowcast run .flowcast/flows/my-flow.js --run-id run-1234567890 --repo .
 ## CLI 命令
 
 ```bash
-flowcast orchestrate "<需求>" --repo .          # L3：需求 → 生成 flow → 执行
-flowcast orchestrate "<需求>" --split --repo .  # 大目标拆子任务 → 并发执行
-flowcast run <flow-file> [--run-id <id>]        # 跑 flow（续跑传同一 id）
-flowcast force-dev --feature <name> --repo .    # 运行内置 force-dev flow
-flowcast dashboard --repo . [--open]            # 生成可观测看板 HTML
-flowcast list --repo .                          # 列出所有 run
+flowcast orchestrate "<需求>" --repo .           # L3：需求 → 生成 flow → 执行
+flowcast orchestrate "<需求>" --split --repo .   # 大目标拆子任务 → 并发执行
+flowcast run <flow-file> [--run-id <id>]         # 跑 flow（续跑传同一 id）
+flowcast flows install <path-to-flow.js>         # 安装自定义 flow 到 ~/.flowcast/flows/
+flowcast flows list                              # 列出已安装的用户级 flow
+flowcast dashboard --repo . [--open]             # 生成可观测看板 HTML
 ```
 
 ---

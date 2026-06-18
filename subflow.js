@@ -82,7 +82,15 @@ export function runFlow(flowRef, {
     }
 
     let timer
-    if (timeout) timer = setTimeout(() => proc.kill('SIGKILL'), timeout)
+    let hardKillTimer
+    if (timeout) timer = setTimeout(() => {
+      // 先 SIGTERM：给子 flow 5 秒清理机会（flush Checkpoint / 写日志）。
+      // 5 秒后 SIGKILL 兜底——与 spawn.js 的超时处理逻辑对齐（单一策略，易维护）。
+      try { proc.kill('SIGTERM') } catch { /* already dead */ }
+      hardKillTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL') } catch { /* already dead */ }
+      }, 5_000)
+    }, timeout)
     // 父进程收到 SIGINT/SIGTERM 时主动 kill 子进程——避免父死了子 node 还在跑（连带 agent CLI）。
     // 真正的 SIGKILL 父进程救不了（信号处理器不跑），但子 node 默认会随父退出（除非 detached）。
     // 不设 detached，让 Node 默认父死子死。
@@ -100,6 +108,7 @@ export function runFlow(flowRef, {
     process.once('SIGTERM', onSigTerm)
     const done = (exitCode, extra = {}) => {
       if (timer) clearTimeout(timer)
+      if (hardKillTimer) clearTimeout(hardKillTimer)
       if (fd != null) { try { closeSync(fd) } catch { /* ignore */ } }
       process.removeListener('SIGINT', onSigInt)
       process.removeListener('SIGTERM', onSigTerm)

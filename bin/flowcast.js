@@ -109,12 +109,12 @@ if (command === 'flows') {
       console.log('~/.flowcast/flows/ 为空，尚未安装任何 flow。')
       console.log('安装示例：flowcast flows install ./flows/force-dev.js')
     } else {
-      const files = readdirSync(USER_FLOWS_DIR).filter(f => f.endsWith('.js'))
+      const files = readdirSync(USER_FLOWS_DIR).filter(f => f.endsWith('.js') || f.endsWith('.mjs'))
       if (files.length === 0) {
         console.log('~/.flowcast/flows/ 为空，尚未安装任何 flow。')
       } else {
         console.log('已安装的用户级 flow（~/.flowcast/flows/）：')
-        files.forEach(f => console.log(`  ${f.replace(/\.js$/, '')}`))
+        files.forEach(f => console.log(`  ${f.replace(/\.(m)?js$/, '')}`))
       }
     }
 

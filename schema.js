@@ -57,6 +57,12 @@ export function validateSchema(value, schema, path = '$') {
 
 function walk(value, schema, path, errors) {
   if (!schema || typeof schema !== 'object') return
+  // 本实现只支持 type/properties/required/items/enum/additionalProperties 子集。
+  // oneOf/anyOf/allOf 会被静默忽略——发现时打 warn 让调用方知情，避免「校验通过但语义不对」。
+  if (schema.oneOf || schema.anyOf || schema.allOf) {
+    const unsupported = ['oneOf', 'anyOf', 'allOf'].filter(k => schema[k]).join(', ')
+    console.warn(`[schema] 警告：${path} 使用了不支持的关键字（${unsupported}），将被忽略。本实现只支持 type/properties/required/items/enum/additionalProperties`)
+  }
   const t = schema.type
   if (t && !typeMatches(value, t)) {
     errors.push(`${path}: 期望类型 ${t}，实际 ${jsType(value)}`)

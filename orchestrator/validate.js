@@ -8,8 +8,8 @@
 // 生成 flow 自循环使用——dashboard 是给宿主看的，不是给被编排对象用的。
 
 import { execFileSync } from 'child_process'
-import { mkdtempSync, rmSync, readFileSync, copyFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdtempSync, rmSync, readFileSync, copyFileSync, existsSync } from 'fs'
+import { tmpdir, homedir } from 'os'
 import { join, dirname } from 'path'
 
 // 生成的 flow 只准 import flowcast 包本身 + util（parseArgs）。
@@ -124,12 +124,21 @@ export async function validateFlow(file, { timeout = 60_000, repo, cwd } = {}) {
 
   // ③ 假执行器 dry-run（一次性 git repo）
   const tmp = repo ?? mkdtempSync(join(tmpdir(), 'flowcast-dryrun-'))
-  const cleanup = () => { if (!repo) rmSync(tmp, { recursive: true, force: true }) }
+  const cleanupRepo = () => { if (!repo) rmSync(tmp, { recursive: true, force: true }) }
+  // 加 random 后缀防止多个并发校验进程（不同测试文件平行跑）在同一毫秒内
+  // 使用相同 timestamp → 共享 ~/.flowcast/dryrun/runs/dryrun-X/ → state.json.tmp 竞态
+  const dryRunId = `dryrun-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  // validateFlow 的 dry-run 只做冒烟校验，不需要保留 Checkpoint 状态供后续续跑。
+  // 子进程退出后立即清理，防止 ~/.flowcast/dryrun/runs/ 目录随测试次数无限积累。
+  const dryRunStateDir = join(process.env.HOME ?? homedir(), '.flowcast', 'dryrun', 'runs', dryRunId)
+  const cleanupDryRunState = () => {
+    try { if (existsSync(dryRunStateDir)) rmSync(dryRunStateDir, { recursive: true, force: true }) } catch { /* 清理失败忽略，不影响校验结果 */ }
+  }
   try {
     if (!repo) {
       execFileSync('git', ['init', '-q'], { cwd: tmp })
     }
-    execFileSync('node', [file, '--dry-run', '--repo', tmp, '--goal', 'dry-run-demo', '--run-id', `dryrun-${Date.now()}`], {
+    execFileSync('node', [file, '--dry-run', '--repo', tmp, '--goal', 'dry-run-demo', '--run-id', dryRunId], {
       stdio: 'pipe',
       timeout,
       cwd,
@@ -147,8 +156,11 @@ export async function validateFlow(file, { timeout = 60_000, repo, cwd } = {}) {
     })
     checks.push('dry-run')
   } catch (e) {
-    return (cleanup(), fail('dry-run', String(e.stderr ?? e.stdout ?? e.message).trim().slice(0, 500)))
+    cleanupRepo()
+    cleanupDryRunState()
+    return fail('dry-run', String(e.stderr ?? e.stdout ?? e.message).trim().slice(0, 500))
   }
-  cleanup()
+  cleanupRepo()
+  cleanupDryRunState()
   return { ok: true, checks }
 }

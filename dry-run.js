@@ -8,7 +8,21 @@
 // 开关：环境变量 FLOWCAST_DRY_RUN（'1'/'true' 开；'0'/'false'/空 关）。
 // 向后兼容：FLOWX_DRY_RUN 仍被识别（deprecated）。
 
+let _warnedDryRun = false
+
 export function isDryRun(env = process.env) {
-  const v = env.FLOWCAST_DRY_RUN ?? env.FLOWX_DRY_RUN
-  return !!v && v !== '0' && v !== 'false'
+  // 优先读新变量；旧变量向后兼容，但发出 deprecation warning（一次性，不刷屏）。
+  if (env.FLOWCAST_DRY_RUN != null) {
+    const v = env.FLOWCAST_DRY_RUN
+    return !!v && v !== '0' && v !== 'false'
+  }
+  if (env.FLOWX_DRY_RUN != null) {
+    if (!_warnedDryRun) {
+      _warnedDryRun = true
+      console.warn('[flowcast] FLOWX_DRY_RUN 已弃用，请改用 FLOWCAST_DRY_RUN=1')
+    }
+    const v = env.FLOWX_DRY_RUN
+    return !!v && v !== '0' && v !== 'false'
+  }
+  return false
 }

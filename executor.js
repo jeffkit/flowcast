@@ -200,6 +200,29 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
     opts.extraArgs = sanitizeExtraArgs(profile.executor, opts.extraArgs)
   }
 
+  // 路径型白名单字段：transcriptOut / pricingFile / files 里的路径元素。
+  // 这些字段允许通过 agents.json 配置——若配置文件被篡改或注入，未校验的路径
+  // 可能导致 CLI 写入/读取任意系统文件（路径穿越）。
+  // 复用 isSafePath 守卫：必须是相对路径、规范化后不以 `..` 开头。
+  for (const pathKey of ['transcriptOut', 'pricingFile']) {
+    if (opts[pathKey] != null && !isSafePath(String(opts[pathKey]))) {
+      throw new Error(
+        `agent '${name}': ${pathKey} 必须是相对路径且不能逃逸工作目录` +
+        `（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
+      )
+    }
+  }
+  // files 数组（aider 专用）：每个元素单独校验
+  if (Array.isArray(opts.files)) {
+    for (const f of opts.files) {
+      if (typeof f === 'string' && !isSafePath(f)) {
+        throw new Error(
+          `agent '${name}': files 数组包含不安全路径（绝对路径或 ..）：${f}`,
+        )
+      }
+    }
+  }
+
   if (profile.provider) {
     if (!ex.acceptsProvider) {
       throw new Error(
@@ -280,8 +303,16 @@ export const AGENT_COOLDOWN_BASE_MS = 30_000
 export const AGENT_COOLDOWN_MAX_MS = 480_000
 
 function envMs(newName, oldName, fallback) {
-  const v = parseInt(process.env[newName] ?? process.env[oldName] ?? '', 10)
-  return Number.isFinite(v) && v >= 0 ? v : fallback
+  if (process.env[newName] != null) {
+    const v = parseInt(process.env[newName], 10)
+    return Number.isFinite(v) && v >= 0 ? v : fallback
+  }
+  if (process.env[oldName] != null) {
+    console.warn(`[flowcast] ${oldName} 已弃用，请改用 ${newName}`)
+    const v = parseInt(process.env[oldName], 10)
+    return Number.isFinite(v) && v >= 0 ? v : fallback
+  }
+  return fallback
 }
 function defaultCooldownBaseMs() { return envMs('FLOWCAST_AGENT_COOLDOWN_BASE_MS', 'FLOWX_AGENT_COOLDOWN_BASE_MS', AGENT_COOLDOWN_BASE_MS) }
 function defaultCooldownMaxMs() { return envMs('FLOWCAST_AGENT_COOLDOWN_MAX_MS', 'FLOWX_AGENT_COOLDOWN_MAX_MS', AGENT_COOLDOWN_MAX_MS) }

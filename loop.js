@@ -130,7 +130,16 @@ export async function loop(iterate, opts = {}) {
     const { result: iterResult, gateResults } = result
     lastResult = iterResult
 
-    const done = await isDone({ turn: turnNo, result: iterResult, gateResults, state: cp.state })
+    let done
+    try {
+      done = await isDone({ turn: turnNo, result: iterResult, gateResults, state: cp.state })
+    } catch (e) {
+      // isDone 抛错：与 iterate 失败同等对待，落盘 failed 状态后向上抛
+      cp.setLoopState({ status: 'failed' })
+      cp.flush()
+      emit({ phase: 'failed', turn: turnNo, error: e.message })
+      throw e
+    }
     lastVerdict = done ? 'done' : 'continue'
     cp.setLoopState({ verdict: lastVerdict })
     cp.flush()
