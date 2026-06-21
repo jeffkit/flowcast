@@ -9,6 +9,7 @@ import { runAgent } from './executor.js'
 import { parallel } from './concurrency.js'
 import { runStructured } from './schema.js'
 import { isDryRun } from './dry-run.js'
+import { VerifyError } from './errors.js'
 
 const VERDICT_SCHEMA = {
   type: 'object',
@@ -72,9 +73,7 @@ ${claim}`
   const survived = valid.filter(v => v.real === true).length
   // 如果所有 voter 都失败（valid 为空），视为验证失败而非通过
   if (valid.length === 0) {
-    const err = new Error(`verifyAdversarial: 所有 ${lensList.length} 个 voter 均失败，无法完成验证`)
-    err.voterErrors = voterErrors
-    throw err
+    throw new VerifyError(`verifyAdversarial: 所有 ${lensList.length} 个 voter 均失败，无法完成验证`, voterErrors)
   }
   return {
     verdict: survived >= need,

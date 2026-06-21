@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { parallel, pipeline } from '../concurrency.js'
+import { ParallelError } from '../errors.js'
 
 const delay = (ms) => new Promise(res => setTimeout(res, ms))
 
@@ -24,6 +25,7 @@ test('parallel: strict=true（默认）所有任务跑完后汇总抛，err.fail
       () => Promise.reject(new Error('task-2-fail')),
     ]),
     (err) => {
+      assert.ok(err instanceof ParallelError, 'strict=true 抛出的错误应是 ParallelError 实例')
       assert.match(err.message, /2 task\(s\) failed/)
       assert.equal(err.failures.length, 2)
       assert.equal(err.failures[0].index, 1)

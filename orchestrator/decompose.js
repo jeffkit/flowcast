@@ -79,7 +79,8 @@ export function parseTasks(text) {
     try {
       assertSafeIdent(name, 'task.name')
     } catch (e) {
-      throw new Error(`任务 ${i} 的 name '${name}' 包含非法字符（${e.message}）`)
+      e.message = `任务 ${i} 的 name '${name}': ${e.message}`
+      throw e
     }
 
     const task = { name, goal }

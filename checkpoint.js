@@ -3,7 +3,7 @@ import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
 import { assertSafeIdent, makeEvent } from './helpers.js'
-import { TimeoutError } from './errors.js'
+import { TimeoutError, FlowcastError } from './errors.js'
 
 /**
  * pause() 抛出此错误，让 flow 入口点（而非库内部）决定是否 process.exit。
@@ -110,7 +110,9 @@ export class Checkpoint {
       }
     }
     if (this._inFlight.has(key)) {
-      throw new Error(`Checkpoint.step: key "${key}" is already in-flight (concurrent call detected)`)
+      const err = new FlowcastError(`Checkpoint.step: key "${key}" is already in-flight (concurrent call detected)`)
+      err.code = 'STEP_REENTRY'
+      throw err
     }
     this._inFlight.add(key)
     console.log(`  [run]  ${key}`)

@@ -28,4 +28,4 @@ export { gitStatus, gitDiff, gitCommitAll, gitHead, gitCurrentBranch, gitCommits
 export { runFlow, fanOut, archiveChildRun } from './subflow.js'  // sweepStaleTmp 是内部工具，从 flowcast/internal 导出
 export { collectRuns, renderHtml, generateDashboard } from './dashboard/index.js'
 export { assertSafeIdent, makeEvent } from './helpers.js'
-export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, ParallelError, isRetryable } from './errors.js'
+export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, ParallelError, VerifyError, isRetryable } from './errors.js'

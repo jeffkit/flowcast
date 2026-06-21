@@ -11,6 +11,7 @@
 import { realpathSync } from 'fs'
 import { join, basename } from 'path'
 import { spawnCapture } from './spawn.js'
+import { SpawnError, TimeoutError } from './errors.js'
 
 // ── 终端后端 ─────────────────────────────────────────────────────────
 
@@ -113,9 +114,9 @@ function makeWecomBackend(config = {}) {
     const { stdout, exitCode, timedOut, spawnError } = await spawnCapture(
       mcp2cli, [server, toolCli, '--stdin'], { timeout, stdin: payload }
     )
-    if (spawnError) throw new Error(`wecom: mcp2cli 未找到或无法启动（${spawnError}）——请确认 mcp2cli 已安装`)
-    if (timedOut) throw new Error(`wecom: HITL 等待超时（${timeout}ms 内无回复）`)
-    if (exitCode !== 0) throw new Error(`wecom mcp2cli ${toolCli} exit ${exitCode}: ${stdout.slice(0, 200)}`)
+    if (spawnError) throw new SpawnError('[wecom] mcp2cli 未找到或无法启动', null, { cause: String(spawnError) })
+    if (timedOut) throw new TimeoutError(`[wecom] HITL 等待超时（${timeout}ms 内无回复）`)
+    if (exitCode !== 0) throw new SpawnError('[wecom] mcp2cli 异常退出', null, { exitCode, output: stdout.slice(0, 200) })
     return stdout
   }
   return {

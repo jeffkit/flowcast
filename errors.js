@@ -93,6 +93,15 @@ export class PathError extends FlowcastError {
   }
 }
 
+/** verifyAdversarial 所有 voter 均失败时抛出（err.voterErrors 含 {lens,error} 数组）*/
+export class VerifyError extends FlowcastError {
+  constructor(message, voterErrors) {
+    super(message, 'VERIFY_FAIL')
+    this.name = 'VerifyError'
+    this.voterErrors = voterErrors
+  }
+}
+
 /** parallel() strict=true 时汇总多个子任务失败（err.failures 含 {index,error} 数组）*/
 export class ParallelError extends FlowcastError {
   constructor(message, failures) {

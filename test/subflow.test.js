@@ -57,6 +57,17 @@ test('runFlow: 不认识的 flag 不会被自动注入（goal/agent 未给则不
   } finally { cleanRun(id) }
 })
 
+test('runFlow: timeout 极短时 timedOut=true', async () => {
+  const flowDir = mkdtempSync(join(tmpdir(), 'flowcast-tmo-'))
+  const flowFile = join(flowDir, 'slow.mjs')
+  writeFileSync(flowFile, `await new Promise(r => setTimeout(r, 60000))\n`)
+  try {
+    const r = await runFlow(flowFile, { cwd: flowDir, timeout: 100 })
+    assert.equal(r.timedOut, true, '极短 timeout 应标记 timedOut=true')
+    assert.ok(!r.ok, 'timedOut 时 ok 应为 false')
+  } finally { rmSync(flowDir, { recursive: true, force: true }) }
+})
+
 // ── fanOut ───────────────────────────────────────────────────────
 
 test('fanOut: 限并发跑多条子 flow，结果按序，onResult 每任务回调一次', async () => {
