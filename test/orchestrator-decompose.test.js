@@ -126,6 +126,33 @@ test('orchestrateMulti: 分拆失败 → stage=decompose', async () => {
   } finally { cleanRun(id) }
 })
 
+test('orchestrateMulti: failFast=false — 一个任务生成失败，另一个成功继续执行', async () => {
+  const id = `t-multi-ff-false-${Date.now()}`
+  try {
+    // generate 收到的是 prompt 字符串（由 buildGenPrompt 构造），其中包含 task goal
+    // alpha 生成非法 flow（import fs），beta 生成合法 flow；maxAttempts=1 让 alpha 直接失败
+    const r = await orchestrateMulti('build two things', {
+      repo: REPO, runId: id, isolate: 'none', dryRun: true, timeout: 30_000,
+      failFast: false,
+      maxAttempts: 1,
+      decomposeGen: async () => '[{"name":"alpha","goal":"do alpha"},{"name":"beta","goal":"do beta"}]',
+      generate: async (prompt) => {
+        if (prompt.includes('do alpha')) return fence("import { x } from 'fs'\nawait Promise.resolve()")
+        return fence(goldenCode)
+      },
+    })
+    assert.equal(r.ok, false, '有生成失败时 ok 应为 false')
+    assert.ok(Array.isArray(r.generateFailures), 'generateFailures 应为数组')
+    assert.equal(r.generateFailures.length, 1, 'generateFailures 应有 1 条')
+    assert.equal(r.generateFailures[0].task, 'alpha', '失败任务应为 alpha')
+    assert.ok(Array.isArray(r.results) && r.results.length >= 1, 'beta 成功后应有 results')
+    assert.ok(r.results.some(x => x.task.name === 'beta'), '成功的 beta 任务应在 results 中')
+  } finally {
+    cleanRun(id)
+    cleanRun(`${id}-beta`)
+  }
+})
+
 // ── orchestrateMulti fanOut 自动 archiveChildRun ──────────────────
 
 test('orchestrateMulti: worktree 隔离下子 run 自动归档到主仓 .flowx/runs/', async () => {

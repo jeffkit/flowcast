@@ -235,6 +235,20 @@ test('Checkpoint.step: timeout 超时抛错并带 key 信息', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('Checkpoint.step: TimeoutError 序列化后 error 对象包含 timedOut: true', async () => {
+  const dir = tempDir()
+  try {
+    const events = []
+    const cp = new Checkpoint('r-timeout-serial', dir, { onStep: (e) => events.push(e) })
+    await assert.rejects(
+      () => cp.step('slow2', async () => new Promise(res => setTimeout(res, 200)), { timeout: 50 }),
+    )
+    const errEvt = events.find(e => e.event === 'error')
+    assert.ok(errEvt, 'error 事件应触发')
+    assert.strictEqual(errEvt.error.timedOut, true, '序列化 error 应包含 timedOut: true')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('Checkpoint.step: 续跑时 _meta 从步骤记录里还原', async () => {
   const dir = tempDir()
   try {

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, rmSync, mkdtempSync } from 'node:fs'
+import { readFileSync, rmSync, mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -162,6 +162,25 @@ test('orchestrate: 活进程持有锁（owner.pid 还活着）→ 抛错而非�
 })
 
 // ── M5 端到端 + 续跑锁定 ─────────────────────────────────────────
+
+test('acquireLock: lockDir 存在但 owner.json 缺失且 mtime 尚新 → 抛 LockError LOCK_OWNER_PENDING', async () => {
+  const id = `t-owner-pending-${Date.now()}`
+  try {
+    // 手动创建 lockDir 但不写 owner.json，模拟「owner 还没来得及写盘」的竞态窗口
+    const runDir = join(flowcastDir(REPO), 'runs', id)
+    const lockDir = join(runDir, '.lock')
+    mkdirSync(lockDir, { recursive: true })
+    // orchestrate 进来 → mkdirSync(lockDir) 抛 EEXIST → 等待 owner.json，等不到 → 检查 mtime → mtime 尚新 → 抛错
+    await assert.rejects(
+      orchestrate('x', { repo: REPO, runId: id, dryRun: true, generate: async () => fence(goldenCode) }),
+      (err) => {
+        assert.ok(err instanceof LockError, `应为 LockError，实际：${err?.constructor?.name}`)
+        assert.strictEqual(err.code, 'LOCK_OWNER_PENDING')
+        return true
+      },
+    )
+  } finally { cleanRun(id) }
+})
 
 test('orchestrate: 需求→生成→校验→dry-run 真跑；同 runId 续跑锁定不重生成', async () => {
   const id = `t-orch-${Date.now()}`

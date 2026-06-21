@@ -6,7 +6,7 @@
 import { execFileSync } from 'child_process'
 import { existsSync, realpathSync } from 'fs'
 import { isDryRun } from './dry-run.js'
-import { PathError, GitError } from './errors.js'
+import { PathError, GitError, ConfigError } from './errors.js'
 
 // 分支名安全校验：允许字母数字 / . _ - /（支持 feature/xxx 命名空间），
 // 但不允许：以 - 开头（被 git 解析为 flag）、包含 .. （相对 ref）、空字符或空格。
@@ -74,7 +74,7 @@ export function gitCommitsAhead(repo = process.cwd(), baseRef = 'main') {
  * @returns {{branch:string, created:boolean, dryRun?:boolean}}
  */
 export function gitCreateBranch(repo = process.cwd(), name) {
-  if (!name) throw new Error('gitCreateBranch 需要 name')
+  if (!name) throw new ConfigError('gitCreateBranch 需要 name')
   // 分支名安全校验：防止以 - 开头被 git 当作 flag，或包含路径遍历等危险字符
   assertSafeBranchName(name)
   if (isDryRun()) return { branch: name, created: false, dryRun: true }
@@ -106,7 +106,7 @@ export function gitCommitAll(repo = process.cwd(), message = 'flowcast: automate
  * @returns {{dir:string, created:boolean, dryRun?:boolean, reason?:string}}
  */
 export function gitWorktreeAdd(repo = process.cwd(), dir, { ref } = {}) {
-  if (!dir) throw new Error('gitWorktreeAdd 需要 dir')
+  if (!dir) throw new ConfigError('gitWorktreeAdd 需要 dir')
   if (isDryRun()) return { dir, created: false, dryRun: true }
   if (existsSync(dir)) {
     // 检查是否已注册为有效 worktree，防止孤儿目录被当成合法续跑复用。
@@ -124,9 +124,10 @@ export function gitWorktreeAdd(repo = process.cwd(), dir, { ref } = {}) {
       try { return realpathSync(p) === realDir } catch { return p === realDir }
     })
     if (!registered) {
-      throw new Error(
+      throw new GitError(
         `gitWorktreeAdd: ${dir} 已存在但未在 git worktree 注册表中，` +
-        `可能是上次失败留下的孤儿目录。请手动删除后重试，或先运行 git worktree prune。`
+        `可能是上次失败留下的孤儿目录。请手动删除后重试，或先运行 git worktree prune。`,
+        { orphanDir: dir },
       )
     }
     return { dir, created: false, reason: 'exists' }
@@ -142,7 +143,7 @@ export function gitWorktreeAdd(repo = process.cwd(), dir, { ref } = {}) {
  * @returns {{dir:string, removed:boolean, dryRun?:boolean}}
  */
 export function gitWorktreeRemove(repo = process.cwd(), dir, { force = true } = {}) {
-  if (!dir) throw new Error('gitWorktreeRemove 需要 dir')
+  if (!dir) throw new ConfigError('gitWorktreeRemove 需要 dir')
   if (isDryRun()) return { dir, removed: false, dryRun: true }
   const args = ['worktree', 'remove', dir]
   if (force) args.push('--force')

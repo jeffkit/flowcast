@@ -139,6 +139,7 @@ export function runFlow(flowRef, {
  * @param {string} [o.logDir]          给了则每任务输出写 <logDir>/<name>.log
  * @param {Function} [o.prepare]       隔离后、跑 flow 前的钩子 async (task, {cwd,worktree}) => void（如往 worktree 拷配置）
  * @param {Function} [o.onResult]      每个任务完成回调 async ({task,result,worktree}) => void
+ * @param {Function} [o.onData]        实时输出回调（同 runFlow.onData；在未指定 logDir 时生效）
  * @param {boolean} [o.cleanWorktrees=false]  任务完成后是否自动删除 worktree（仅 isolate='worktree' 时生效）。
  *   默认 false——保留 worktree 方便事后检查失败现场。**注意**：长期运行（如 fanOut 循环）若不
  *   开启此项，`.worktrees/` 目录会随任务数增长无限堆积，建议显式传 `cleanWorktrees: true`
@@ -161,11 +162,7 @@ export async function fanOut(tasks, {
     // task.name 是 worktree 路径与日志文件名的直接拼入部分。
     // path.join 会解析 `..`，不安全的名字会路径穿越。
     // 白名单字符校验拦在源头（与 helpers.assertSafeIdent 一致）。
-    try {
-      assertSafeIdent(task.name, 'task.name')
-    } catch (e) {
-      throw e
-    }
+    assertSafeIdent(task.name, 'task.name')
     let cwd = task.cwd ?? repo
     let worktree
     if (isolate === 'worktree' && !dryRun) {
@@ -181,6 +178,7 @@ export async function fanOut(tasks, {
       }
     }
     const logFile = logDir ? join(logDir, `${task.name}.log`) : undefined
+    let succeeded = false
     try {
       // prepare 放在 try/finally 内：prepare 抛错时 worktree 也能被清理，不泄漏
       if (prepare) await prepare(task, { cwd, worktree })
@@ -193,11 +191,13 @@ export async function fanOut(tasks, {
       results[idx] = record
       // onResult 先于 worktree 清理：调用方可在此 archiveChildRun（从 worktree 镜像日志回主仓）。
       await onResult?.(record)
+      succeeded = true
       return record
     } finally {
-      // cleanWorktrees=true 时自动清理（避免孤儿堆积）；默认 false 保持旧行为，
-      // 让调用方在 fanOut 返回后仍能访问 worktree 路径（如读取产物、归档）。
-      if (worktree && cleanWorktrees) {
+      // cleanWorktrees=true 时成功/失败都清理（避免孤儿堆积）；
+      // 失败时（succeeded=false）即便 cleanWorktrees=false 也要清理——防止 prepare/runFlow 抛错时 worktree 泄漏。
+      // 默认 cleanWorktrees=false + 成功：保留 worktree，让调用方在 fanOut 返回后仍能访问（如读取产物、归档）。
+      if (worktree && (cleanWorktrees || !succeeded)) {
         try { gitWorktreeRemove(repo, worktree, { force: true }) } catch { /* 忽略清理失败 */ }
       }
     }
