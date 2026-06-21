@@ -163,6 +163,16 @@ test('registerExecutor: run 非函数抛 TypeError', () => {
   assert.throws(() => registerExecutor('bad', 'not-a-fn'), /TypeError|run 必须是函数/)
 })
 
+test('registerExecutor: 非法名称（路径穿越）→ 抛 PathError', () => {
+  assert.throws(
+    () => registerExecutor('../evil', () => {}),
+    (err) => {
+      assert.ok(err instanceof PathError, '应为 PathError')
+      return true
+    },
+  )
+})
+
 // ── extraArgs / 配置字段白名单（防 LLM 注入任意文件路径）──────────
 
 test('resolveAgent: 透传字段必须在白名单内（systemPromptFile/workspace 等被丢弃）', () => {

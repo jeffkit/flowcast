@@ -182,7 +182,7 @@ test('onStep: error 事件在步骤失败时触发，携带 error 信息', async
     const errEvt = events.find(e => e.event === 'error')
     assert.ok(errEvt, 'error 事件应触发')
     assert.equal(errEvt.key, 'p1')
-    assert.match(errEvt.error, /boom/)
+    assert.match(errEvt.error.message, /boom/)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

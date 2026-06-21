@@ -133,13 +133,14 @@ export class Checkpoint {
         result = await fn()
       }
     } catch (e) {
-      error = e.message
+      error = { message: e.message, code: e.code, gate: e.gate }
+      Object.keys(error).forEach(k => error[k] === undefined && delete error[k])
       const durationMs = Date.now() - startedAt
       this._inFlight.delete(key)
       this._log({ key, status: 'error', error, durationMs, meta })
       this._emit({ event: 'error', key, error, durationMs, meta })
       // 控制台打出完整 error，方便不翻 jsonl 就能诊断（e.message 里已包含 stderr）
-      console.error(`  [error] ${key}: ${error}`)
+      console.error(`  [error] ${key}: ${e.message}`)
       throw e
     }
 

@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 import { runGate, runGates, loadGates, mergeGates } from '../quality-gate.js'
+import { GateError } from '../errors.js'
 
 test('绿灯门 → passed', async () => {
   const r = await runGate({ name: 'ok', cmd: 'true' })
@@ -16,6 +17,7 @@ test('红灯 + onFail=rollback → 抛错且带 gate/output', async () => {
   await assert.rejects(
     runGate({ name: 'test', cmd: 'echo FAILLINE >&2; echo out; exit 3', onFail: 'rollback' }),
     (err) => {
+      assert.ok(err instanceof GateError, '应为 GateError')
       assert.equal(err.gate, 'test')
       assert.equal(err.exitCode, 3)
       assert.match(err.output, /out/)
@@ -46,6 +48,7 @@ test('红灯 + onFail=autofix → autofixCmd 修后重验仍失败 → 抛错', 
   await assert.rejects(
     runGate({ name: 'fmt', cmd: 'exit 1', onFail: 'autofix', autofixCmd: 'true' }),
     (err) => {
+      assert.ok(err instanceof GateError, '应为 GateError')
       assert.match(err.message, /still failing after autofix/)
       assert.equal(err.gate, 'fmt')
       return true
@@ -128,7 +131,11 @@ test('runGates 顺序执行，遇红灯即抛', async () => {
       { name: 'b', cmd: 'exit 2', onFail: 'rollback' },
       { name: 'c', cmd: 'true' },
     ]),
-    (err) => { assert.equal(err.gate, 'b'); return true },
+    (err) => {
+      assert.ok(err instanceof GateError, '应为 GateError')
+      assert.equal(err.gate, 'b')
+      return true
+    },
   )
 })
 

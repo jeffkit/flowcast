@@ -157,7 +157,7 @@ export async function fanOut(tasks, {
     try {
       assertSafeIdent(task.name, 'task.name')
     } catch (e) {
-      throw new Error(`fanOut: ${e.message}`)
+      throw e
     }
     let cwd = task.cwd ?? repo
     let worktree
@@ -248,6 +248,7 @@ export async function fanOut(tasks, {
  */
 export function archiveChildRun(repo, worktree, childRunId) {
   if (!worktree || !childRunId) return false
+  assertSafeIdent(childRunId, 'childRunId')
   const src = join(flowcastDir(worktree), 'runs', childRunId)
   const dst = join(flowcastDir(repo), 'runs', childRunId)
   if (!existsSync(src) || src === dst) return false

@@ -72,7 +72,7 @@ async function loadConfigFile(file) {
     try {
       return JSON.parse(readFileSync(file, 'utf8'))
     } catch (e) {
-      throw new Error(`解析配置文件失败 ${file}：${e.message}`)
+      throw new ConfigError(`解析配置文件失败 ${file}：${e.message}`)
     }
   }
   if (file.endsWith('.js') || file.endsWith('.mjs')) {
@@ -85,11 +85,11 @@ async function loadConfigFile(file) {
       const m = await import('yaml')
       YAML = m.default ?? m
     } catch {
-      throw new Error(`解析 ${file} 需要 yaml 包（npm i yaml），或改用 providers.json`)
+      throw new ConfigError(`解析 ${file} 需要 yaml 包（npm i yaml），或改用 providers.json`)
     }
     return YAML.parse(readFileSync(file, 'utf8'))
   }
-  throw new Error(`不支持的 provider 配置类型：${file}`)
+  throw new ConfigError(`不支持的 provider 配置类型：${file}`)
 }
 
 /**

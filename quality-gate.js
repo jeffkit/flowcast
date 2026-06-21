@@ -105,7 +105,7 @@ export async function runGate(gate, deps = {}) {
   // dry-run：不 spawn，直接判过（结构校验用，不烧构建时间）
   if (isDryRun()) return { name, passed: true, attempts: 1, dryRun: true, output: '[dry-run] gate skipped' }
 
-  let { stdout, exitCode } = await runShell(cmd, cwd, timeout)
+  let { stdout, exitCode, timedOut } = await runShell(cmd, cwd, timeout)
   if (exitCode === 0) { emit({ status: 'pass', attempts: 1 }); return { name, passed: true, attempts: 1, output: stdout } }
 
   if (onFail === 'autofix') {
@@ -135,7 +135,7 @@ export async function runGate(gate, deps = {}) {
   }
 
   emit({ status: 'fail', exitCode })
-  throw new GateError(name, exitCode, stdout)
+  throw new GateError(name, exitCode, stdout, timedOut ? 'timeout' : undefined)
 }
 
 /**
