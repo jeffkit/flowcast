@@ -4,6 +4,7 @@
 // 与执行器/HITL/provider 完全解耦，可独立使用和测试。
 
 import { cpus } from 'os'
+import { ParallelError } from './errors.js'
 
 // 流式 pipeline 的默认并发上限 = CPU 核数（env FLOWCAST_PIPELINE_CONCURRENCY 覆盖）
 function defaultPipelineConcurrency() {
@@ -67,9 +68,7 @@ export async function parallel(thunks, { concurrency, strict = true, failFast = 
   }
   if (strict && failures.length > 0) {
     const msgs = failures.map(f => `[${f.index}] ${f.error.message}`).join('; ')
-    const err = new Error(`parallel: ${failures.length} task(s) failed — ${msgs}`)
-    err.failures = failures
-    throw err
+    throw new ParallelError(`parallel: ${failures.length} task(s) failed — ${msgs}`, failures)
   }
   return results
 }

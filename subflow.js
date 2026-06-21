@@ -9,6 +9,7 @@
 import { spawn } from 'child_process'
 import { mkdirSync, openSync, closeSync, existsSync, cpSync } from 'fs'
 import { assertSafeIdent } from './helpers.js'
+import { ConfigError } from './errors.js'
 import { dirname, join } from 'path'
 import { gitWorktreeAdd, gitWorktreeRemove } from './git.js'
 import { isDryRun } from './dry-run.js'
@@ -82,9 +83,11 @@ export function runFlow(flowRef, {
       })
     }
 
+    let timedOut = false
     let timer
     let hardKillTimer
     if (timeout) timer = setTimeout(() => {
+      timedOut = true
       // 先 SIGTERM：给子 flow 5 秒清理机会（flush Checkpoint / 写日志）。
       // 5 秒后 SIGKILL 兜底——与 spawn.js 的超时处理逻辑对齐（单一策略，易维护）。
       try { proc.kill('SIGTERM') } catch { /* already dead */ }
@@ -113,7 +116,7 @@ export function runFlow(flowRef, {
       if (fd != null) { try { closeSync(fd) } catch { /* ignore */ } }
       process.removeListener('SIGINT', onSigInt)
       process.removeListener('SIGTERM', onSigTerm)
-      resolve({ ok: exitCode === 0, exitCode, stdout, stderr, ...extra })
+      resolve({ ok: exitCode === 0, exitCode, stdout, stderr, ...(timedOut ? { timedOut: true } : {}), ...extra })
     }
     proc.on('close', code => done(code))
     proc.on('error', err => done(null, { stderr: stderr + String(err), spawnError: true }))
@@ -169,7 +172,7 @@ export async function fanOut(tasks, {
         cwd = dir
       } catch (e) {
         // worktree 创建失败时不能静默降级到主 repo——并发任务会互相污染，直接抛错
-        throw new Error(`fanOut: 任务 '${task.name}' 建 worktree 失败（${e.message}）；` +
+        throw new ConfigError(`fanOut: 任务 '${task.name}' 建 worktree 失败（${e.message}）；` +
           `请用 isolate='none' 或修复 git worktree 环境`)
       }
     }

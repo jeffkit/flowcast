@@ -8,7 +8,8 @@ export {
   claude, cursor, gemini, codex, aider, recursive, agy,
   CLAUDE_DEFAULT_TIMEOUT, GEMINI_DEFAULT_TIMEOUT, CODEX_DEFAULT_TIMEOUT,
   AGY_DEFAULT_TIMEOUT, CURSOR_DEFAULT_TIMEOUT, AIDER_DEFAULT_TIMEOUT, RECURSIVE_DEFAULT_TIMEOUT,
-  spawnCapture, resolveRecursiveBin, recursiveProviderEnv, claudeProviderEnv, isProviderRetryable,
+  spawnCapture, spawnCli, resolveRecursiveBin, recursiveProviderEnv, claudeProviderEnv, claudeApplyProvider, isProviderRetryable,
+  emitAgentEvent,
   parallel, pipeline,
   waitForInput, notify, setHitlBackend, getHitlBackend,
 } from './agent.js'
@@ -27,4 +28,4 @@ export { gitStatus, gitDiff, gitCommitAll, gitHead, gitCurrentBranch, gitCommits
 export { runFlow, fanOut, archiveChildRun } from './subflow.js'  // sweepStaleTmp 是内部工具，从 flowcast/internal 导出
 export { collectRuns, renderHtml, generateDashboard } from './dashboard/index.js'
 export { assertSafeIdent, makeEvent } from './helpers.js'
-export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, isRetryable } from './errors.js'
+export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, ParallelError, isRetryable } from './errors.js'

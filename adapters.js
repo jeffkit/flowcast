@@ -12,7 +12,7 @@ import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { spawnCapture, spawnCli, isProviderRetryable } from './spawn.js'
-import { TimeoutError, FlowcastError } from './errors.js'
+import { TimeoutError, SpawnError, FlowcastError } from './errors.js'
 import { makeEvent } from './helpers.js'
 
 // ── provider 翻译器（claude adapter）────────────────────────────────
@@ -77,13 +77,13 @@ async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
   if (effModel) args.push('--model', effModel)
   args.push(...extraArgs)
   const { stdout, exitCode, timedOut, spawnError } = await spawnCapture('claude', args, { cwd, timeout, env })
-  if (spawnError) throw new Error(`[claude] spawn error: ${spawnError}`)
+  if (spawnError) throw new SpawnError('[claude] spawn error', spawnError)
   if (timedOut) throw new TimeoutError(`[claude] timeout after ${timeout}ms`)
   let data
   try {
     data = JSON.parse(stdout)
   } catch {
-    if (exitCode !== 0) throw new Error(`[claude] exit ${exitCode}\n${stdout.trim()}`)
+    if (exitCode !== 0) throw new SpawnError('[claude]', null, { exitCode, output: stdout.trim() })
     console.warn(`[claude] warn: output is not JSON (exit 0), falling back to raw stdout — check claude CLI version`)
     return Object.assign(String(stdout.trim()), { _meta: { cli: 'claude' } })
   }

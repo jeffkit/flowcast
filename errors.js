@@ -93,6 +93,15 @@ export class PathError extends FlowcastError {
   }
 }
 
+/** parallel() strict=true 时汇总多个子任务失败（err.failures 含 {index,error} 数组）*/
+export class ParallelError extends FlowcastError {
+  constructor(message, failures) {
+    super(message, 'PARALLEL_FAIL')
+    this.name = 'ParallelError'
+    this.failures = failures
+  }
+}
+
 // ── isRetryable：唯一的 provider 回退判定入口 ────────────────────────
 //
 // 判定逻辑：

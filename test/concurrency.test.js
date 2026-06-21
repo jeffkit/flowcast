@@ -69,6 +69,38 @@ test('parallel: 空 thunks 数组返回空数组', async () => {
   assert.deepEqual(r, [])
 })
 
+test('parallel: concurrency + failFast=true 时第一个失败后排队任务不执行', async () => {
+  let executed = 0
+  const tasks = [
+    async () => { executed++; throw new Error('fail') },
+    async () => { executed++; return 'b' },
+    async () => { executed++; return 'c' },
+  ]
+  await assert.rejects(
+    () => parallel(tasks, { concurrency: 1, failFast: true }),
+    (err) => {
+      assert.match(err.message, /1 task\(s\) failed/)
+      return true
+    },
+  )
+  // concurrency=1 时每次只取 1 个任务，第一个失败后 aborted=true，后续任务不再出队
+  assert.equal(executed, 1, `只应执行 1 个任务，实际执行了 ${executed}`)
+})
+
+test('parallel: 无 concurrency 时 failFast 对已入队任务无效，等待全部完成', async () => {
+  let executed = 0
+  const tasks = [
+    async () => { executed++; throw new Error('fail') },
+    async () => { await new Promise(r => setTimeout(r, 10)); executed++; return 'b' },
+    async () => { executed++; return 'c' },
+  ]
+  // 无 concurrency：全量 Promise.all，所有任务已同时启动，failFast 无法阻止
+  await assert.rejects(
+    () => parallel(tasks, { failFast: true }),
+  )
+  assert.equal(executed, 3, `无 concurrency 时 3 个任务都应执行，实际执行了 ${executed}`)
+})
+
 // ── pipeline（流式：stage 间无 barrier）──────────────────────────
 
 test('pipeline: 两阶段正常流转，结果保持原序', async () => {
