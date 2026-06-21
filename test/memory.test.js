@@ -74,6 +74,17 @@ test('promoteFailureContext：空内容不写、返回 null；有内容沉淀进
   } finally { rmSync(baseDir, { recursive: true, force: true }) }
 })
 
+test('recordLearning/recall: scope 为空字符串时应 throw', () => {
+  assert.throws(
+    () => recordLearning('', { topic: 'x' }),
+    /scope must be a non-empty string/,
+  )
+  assert.throws(
+    () => recall('', { query: 'x' }),
+    /scope must be a non-empty string/,
+  )
+})
+
 test('scope 含特殊字符被安全化为文件名（不越目录）', () => {
   const baseDir = tempDir()
   try {

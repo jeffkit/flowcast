@@ -193,13 +193,13 @@ export async function cursor(prompt, { cwd = process.cwd(), timeout = CURSOR_DEF
   const raw = await spawnCli('agent', args, cwd, timeout)
   try {
     const data = JSON.parse(raw)
-    if (data.is_error) throw new Error(`cursor agent error: ${data.result}`)
+    if (data.is_error) throw new SpawnError(`cursor agent error: ${data.result}`, null)
     const result = data.result ?? raw.trim()
     return Object.assign(String(result), {
       _meta: { cli: 'cursor', inputTokens: data.usage?.inputTokens, outputTokens: data.usage?.outputTokens }
     })
   } catch (e) {
-    if (e.message.startsWith('cursor agent error:')) throw e
+    if (e instanceof SpawnError) throw e
     return Object.assign(String(raw.trim()), { _meta: { cli: 'cursor' } })
   }
 }

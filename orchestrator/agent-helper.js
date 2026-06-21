@@ -1,5 +1,6 @@
 // orchestrator/agent-helper.js — 内部共用：从 agents map 中选定执行器并构建生成函数。
 import { resolveAgent } from '../executor.js'
+import { ConfigError } from '../errors.js'
 
 /**
  * 从 agents map 里找出可用 agent，构建 generate(prompt)=>string 函数。
@@ -21,7 +22,7 @@ export function resolveGenerateFn({ agent, agents = {}, providers = {}, repo, ge
     const hint = known.length
       ? `请用 --agent <name> 选择以下之一：${known.join(' / ')}`
       : '请在 ~/.flowcast/agents.json 或 .flowx/agents.json 配置 default agent'
-    throw new Error(`${context} 需要一个 agent，但未指定 --agent 且无 default 配置。${hint}`)
+    throw new ConfigError(`${context} 需要一个 agent，但未指定 --agent 且无 default 配置。${hint}`)
   }
   return async (prompt) => {
     const a = resolveAgent(effectiveAgent, agents, { providers })

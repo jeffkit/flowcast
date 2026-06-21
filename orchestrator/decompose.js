@@ -6,6 +6,7 @@
 
 import { resolveGenerateFn } from './agent-helper.js'
 import { assertSafeIdent } from '../helpers.js'
+import { SchemaError, ConfigError } from '../errors.js'
 
 /** 构建分拆提示：要求只输出一个 JSON 数组，每项 {name, goal, agent?}。 */
 export function buildDecomposePrompt(goal, { agentsList = [], priorError } = {}) {
@@ -48,16 +49,16 @@ Output ONLY the JSON array.`
  */
 export function parseTasks(text) {
   const match = String(text).match(/\[[\s\S]*\]/)
-  if (!match) throw new Error('未找到 JSON 任务数组')
+  if (!match) throw new SchemaError('未找到 JSON 任务数组')
   let raw
-  try { raw = JSON.parse(match[0]) } catch (e) { throw new Error(`JSON 解析失败：${e.message}`) }
-  if (!Array.isArray(raw) || raw.length === 0) throw new Error('任务清单为空')
+  try { raw = JSON.parse(match[0]) } catch (e) { throw new SchemaError(`JSON 解析失败：${e.message}`) }
+  if (!Array.isArray(raw) || raw.length === 0) throw new SchemaError('任务清单为空')
 
   const usedNames = new Set()
   return raw.map((t, i) => {
-    if (!t || typeof t !== 'object') throw new Error(`任务 ${i} 不是对象`)
+    if (!t || typeof t !== 'object') throw new SchemaError(`任务 ${i} 不是对象`)
     const goal = String(t.goal ?? '').trim()
-    if (!goal) throw new Error(`任务 ${i}（${t.name ?? '?'}）缺少 goal`)
+    if (!goal) throw new SchemaError(`任务 ${i}（${t.name ?? '?'}）缺少 goal`)
 
     // name 规整为 kebab-case 安全标识；去重时不断加序号后缀直到不冲突。
     // 原来用 Map 记计数，但无法检测「生成的 foo-2 与字面量 foo-2 同名」的碰撞，
@@ -110,5 +111,5 @@ export async function decompose(goal, {
       lastErr = e.message
     }
   }
-  throw new Error(`decompose 失败（${maxAttempts} 次尝试）：${lastErr}`)
+  throw new ConfigError(`decompose 失败（${maxAttempts} 次尝试）：${lastErr}`)
 }

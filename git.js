@@ -6,22 +6,23 @@
 import { execFileSync } from 'child_process'
 import { existsSync, realpathSync } from 'fs'
 import { isDryRun } from './dry-run.js'
+import { PathError, GitError } from './errors.js'
 
 // 分支名安全校验：允许字母数字 / . _ - /（支持 feature/xxx 命名空间），
 // 但不允许：以 - 开头（被 git 解析为 flag）、包含 .. （相对 ref）、空字符或空格。
 function assertSafeBranchName(name) {
   if (typeof name !== 'string' || name.length === 0) {
-    throw new Error(`gitCreateBranch: 分支名不能为空`)
+    throw new PathError(`gitCreateBranch: 分支名不能为空`)
   }
   if (name.startsWith('-')) {
-    throw new Error(`gitCreateBranch: 分支名 '${name}' 不能以 '-' 开头（会被 git 解析为 flag）`)
+    throw new PathError(`gitCreateBranch: 分支名 '${name}' 不能以 '-' 开头（会被 git 解析为 flag）`)
   }
   if (name.includes('..')) {
-    throw new Error(`gitCreateBranch: 分支名 '${name}' 不能包含 '..'（会被 git 解析为相对 ref）`)
+    throw new PathError(`gitCreateBranch: 分支名 '${name}' 不能包含 '..'（会被 git 解析为相对 ref）`)
   }
   // 只允许安全字符集：字母数字 . _ - /
   if (/[^a-zA-Z0-9._\-/]/.test(name)) {
-    throw new Error(
+    throw new PathError(
       `gitCreateBranch: 分支名 '${name}' 含不安全字符，` +
       `只允许 字母 数字 . _ - /`,
     )
@@ -33,7 +34,8 @@ export function git(args, cwd) {
   try {
     return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   } catch (e) {
-    throw new Error(`git ${args[0]} failed in ${cwd}: ${(e.stderr ?? e.message ?? '').trim()}`)
+    const stderr = (e.stderr ?? '').trim()
+    throw new GitError(`git ${args[0]} failed in ${cwd}: ${stderr || (e.message ?? '').trim()}`, { stderr })
   }
 }
 

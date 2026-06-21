@@ -11,6 +11,7 @@ import { runFlow, fanOut, archiveChildRun } from '../subflow.js'
 import { parallel } from '../concurrency.js'
 import { flowcastDir } from '../dirs.js'
 import { assertSafeIdent } from '../helpers.js'
+import { LockError } from '../errors.js'
 
 const FLOWCAST_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -104,19 +105,21 @@ export async function orchestrate(request, {
     if (claimed === null) {
       // stale 锁已清理 → 重试（加上限防极端情况死循环）
       if (++lockRetries > MAX_LOCK_RETRIES) {
-        throw new Error(
+        throw new LockError(
           `orchestrate: runId=${runId} 拿锁重试超过 ${MAX_LOCK_RETRIES} 次，` +
           `请手动检查或删除锁目录：${lockDir}`,
+          'LOCK_RETRY_EXHAUSTED', { lockDir },
         )
       }
       continue
     }
     if (claimed !== true) {
       // claimed 是 {pid,startedAt,runId}：别的活进程持有，抛错让外层决定（不偷偷重试）
-      throw new Error(
+      throw new LockError(
         `orchestrate: runId=${runId} 正在被 pid=${claimed.pid} 执行` +
         `（startedAt=${new Date(claimed.startedAt).toISOString()}）。` +
         `如确认已死，可手动 rm -rf ${lockDir} 后重试。`,
+        'LOCK_BUSY', { pid: claimed.pid, runId: claimed.runId },
       )
     }
     // 已独占锁，生成 flow
@@ -195,18 +198,20 @@ export async function orchestrateMulti(goal, {
     if (claimed === null) {
       // stale 锁已清理 → 重试（加上限防极端情况死循环）
       if (++decompLockRetries > MAX_LOCK_RETRIES) {
-        throw new Error(
+        throw new LockError(
           `orchestrateMulti: runId=${runId} 分拆锁重试超过 ${MAX_LOCK_RETRIES} 次，` +
           `请手动检查或删除锁目录：${tasksLockDir}`,
+          'LOCK_RETRY_EXHAUSTED', { lockDir: tasksLockDir },
         )
       }
       continue
     }
     if (claimed !== true) {
-      throw new Error(
+      throw new LockError(
         `orchestrateMulti: runId=${runId} 正在被 pid=${claimed.pid} 分拆` +
         `（startedAt=${new Date(claimed.startedAt).toISOString()}）。` +
         `如确认已死，可手动 rm -rf ${tasksLockDir} 后重试。`,
+        'LOCK_BUSY', { pid: claimed.pid, runId: claimed.runId },
       )
     }
     let d
@@ -348,13 +353,7 @@ async function acquireLock(lockDir, runId, { allowReuse = false, producePath } =
         if (isPidAlive(owner.pid) && isPidLockOwner(owner.pid, owner.startedAt)) {
           return { pid: owner.pid, startedAt: owner.startedAt, runId: owner.runId }
         }
-        // PID 已死 → 看是否够 stale
-        const ageMs = Date.now() - (owner.startedAt ?? 0)
-        if (ageMs < STALE_LOCK_MS) {
-          // 刚 SIGKILL 没多久，可能是活进程残留锁；为安全抛错不清理
-          return { pid: owner.pid, startedAt: owner.startedAt, runId: owner.runId }
-        }
-        // 僵尸锁：清理后下一轮重试
+        // PID 已死 → 直接视为 stale 进行清理（进程已不存在，无需等待 STALE_LOCK_MS）
         rmSync(lockDir, { recursive: true, force: true })
         return null
       }

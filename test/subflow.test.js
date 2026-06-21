@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { runFlow, fanOut, sweepStaleTmp } from '../subflow.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
 import { flowcastDir } from '../dirs.js'
+import { PathError } from '../errors.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const cleanRun = (id) => rmSync(join(flowcastDir(REPO), 'runs', id), { recursive: true, force: true })
@@ -108,8 +109,36 @@ test('fanOut: 空任务列表 → 空结果，不报错', async () => {
 test('fanOut: task.name 含路径穿越字符 → 抛错', async () => {
   await assert.rejects(
     fanOut([{ name: '../evil', flow: 'x.mjs' }], { repo: REPO, dryRun: true }),
-    /非法字符/,
+    (err) => {
+      assert.ok(err instanceof PathError, `应为 PathError，实际：${err?.constructor?.name}`)
+      assert.match(err.message, /非法字符/)
+      return true
+    },
   )
+})
+
+test('fanOut: 一个 flow 非零退出（软失败）→ 返回 2 个结果，失败项 ok===false，整体不 throw', async () => {
+  const flowDir = mkdtempSync(join(tmpdir(), 'flowcast-fo-soft-'))
+  const failFlow = join(flowDir, 'fail.mjs')
+  const okFlow = join(flowDir, 'ok.mjs')
+  writeFileSync(failFlow, `process.exit(1)\n`)
+  writeFileSync(okFlow, `// noop\n`)
+  try {
+    const results = await fanOut(
+      [
+        { name: 'task-fail', flow: failFlow },
+        { name: 'task-ok', flow: okFlow },
+      ],
+      { repo: flowDir, isolate: 'none', dryRun: false, timeout: 10_000 },
+    )
+    assert.equal(results.length, 2)
+    const failResult = results.find(r => r.task.name === 'task-fail')
+    const okResult = results.find(r => r.task.name === 'task-ok')
+    assert.ok(failResult, '应有 task-fail 结果')
+    assert.ok(okResult, '应有 task-ok 结果')
+    assert.equal(failResult.result.ok, false, '非零退出的 flow ok 应为 false')
+    assert.equal(okResult.result.ok, true, '正常退出的 flow ok 应为 true')
+  } finally { rmSync(flowDir, { recursive: true, force: true }) }
 })
 
 test('fanOut: cleanWorktrees=true 时 fanOut 返回后 worktree 已被清理', async () => {

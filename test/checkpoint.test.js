@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { Checkpoint, PauseSignal } from '../checkpoint.js'
 import { clearFlowcastDirCache, flowcastDir } from '../dirs.js'
+import { TimeoutError } from '../errors.js'
 
 function tempDir() { return mkdtempSync(join(tmpdir(), 'flowcast-cp-')) }
 
@@ -120,7 +121,11 @@ test('Checkpoint.step: 重入同一 key 抛错（并发双重执行保护）', a
     assert.equal(firstStarted, true)
     await assert.rejects(
       () => cp.step('s1', async () => 'second'),
-      /in-flight/,
+      (err) => {
+        assert.match(err.message, /in-flight/)
+        assert.equal(err.code, 'STEP_REENTRY', `code 应为 STEP_REENTRY，实际：${err.code}`)
+        return true
+      },
     )
     await first  // 第一个正常完成
     assert.equal(cp.state.completed['s1'], 'first')
@@ -221,7 +226,11 @@ test('Checkpoint.step: timeout 超时抛错并带 key 信息', async () => {
     const cp = new Checkpoint('r-timeout', dir)
     await assert.rejects(
       () => cp.step('slow', async () => new Promise(res => setTimeout(res, 200)), { timeout: 50 }),
-      /timed out/,
+      (err) => {
+        assert.ok(err instanceof TimeoutError, `应为 TimeoutError，实际：${err?.constructor?.name}`)
+        assert.match(err.message, /timed out/)
+        return true
+      },
     )
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

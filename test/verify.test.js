@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { verifyAdversarial } from '../verify.js'
+import { VerifyError } from '../errors.js'
 
 // 注入 runner：按 prompt 里的 lens / 顺序返回结构化 verdict 文本，省真实 API。
 function fakeRunner(map) {
@@ -62,6 +63,23 @@ test('verifyAdversarial: 自定义 threshold（要求全票）', async () => {
   })
   assert.equal(r.threshold, 3)
   assert.equal(r.verdict, false)
+})
+
+test('verifyAdversarial: 所有 voter 均失败 → 抛 VerifyError，voterErrors 长度等于 voters 数', async () => {
+  const voters = 3
+  let callCount = 0
+  const failRunner = async () => {
+    callCount++
+    throw new Error(`voter ${callCount} failed`)
+  }
+  await assert.rejects(
+    () => verifyAdversarial('all fail', { voters, runner: failRunner }),
+    (err) => {
+      assert.ok(err instanceof VerifyError, `应为 VerifyError，实际：${err?.constructor?.name}`)
+      assert.equal(err.voterErrors.length, voters, `voterErrors.length 应为 ${voters}`)
+      return true
+    },
+  )
 })
 
 test('verifyAdversarial: dry-run 全票通过且不调 runner', async () => {

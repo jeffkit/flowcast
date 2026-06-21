@@ -1,6 +1,7 @@
 import { mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync } from 'fs'
 import { join } from 'path'
 import { flowcastDir } from './dirs.js'
+import { ConfigError } from './errors.js'
 
 const DEFAULT_MAX_ENTRIES = 500  // scope 文件超出此条数时，保留最新的一半（LRU 淘汰）
 
@@ -99,7 +100,7 @@ function scoreEntry(entry, terms) {
  * @returns {object} 实际写入的记录（含 ts）
  */
 export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
-  if (!scope) throw new Error('scope must be a non-empty string')
+  if (!scope) throw new ConfigError('scope must be a non-empty string')
   const rec = {
     ts: new Date().toISOString(),
     topic: entry.topic ?? 'untitled',
@@ -164,7 +165,7 @@ export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), max
  * @returns {object[]} 排序后的记录（最多 topK 条）
  */
 export function recall(scope, { query = '', topK = 5, baseDir = defaultBase() } = {}) {
-  if (!scope) throw new Error('scope must be a non-empty string')
+  if (!scope) throw new ConfigError('scope must be a non-empty string')
   const entries = readEntries(baseDir, scope)
   if (entries.length === 0) return []
   const terms = String(query).toLowerCase().split(/\s+/).filter(Boolean)

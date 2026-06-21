@@ -93,12 +93,32 @@ export class PathError extends FlowcastError {
   }
 }
 
+/** git 命令执行失败（err.stderr 含原始错误输出）*/
+export class GitError extends FlowcastError {
+  constructor(message, extra) {
+    super(message)
+    this.name = 'GitError'
+    this.code = 'GIT_FAIL'
+    Object.assign(this, extra)
+  }
+}
+
 /** verifyAdversarial 所有 voter 均失败时抛出（err.voterErrors 含 {lens,error} 数组）*/
 export class VerifyError extends FlowcastError {
   constructor(message, voterErrors) {
     super(message, 'VERIFY_FAIL')
     this.name = 'VerifyError'
     this.voterErrors = voterErrors
+  }
+}
+
+/** orchestrate 续跑锁相关错误（锁重试超限或锁被活进程持有）*/
+export class LockError extends FlowcastError {
+  constructor(message, code, extra) {
+    super(message)
+    this.name = 'LockError'
+    this.code = code || 'LOCK_BUSY'
+    Object.assign(this, extra)
   }
 }
 
