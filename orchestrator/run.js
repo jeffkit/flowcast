@@ -16,7 +16,9 @@ const FLOWCAST_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // 僵尸锁阈值：owner.json 记录 createdAt 超过此时长且 PID 已死则视为僵尸。
 // 1 小时够长：常驻 CI runner 也不会比这更久；又够短：真正 SIGKILL 的活进程不会被误删。
-const STALE_LOCK_MS = 60 * 60 * 1000
+// 可通过 FLOWCAST_STALE_LOCK_MS 环境变量覆盖（单位 ms）。
+const _envStaleLockMs = parseInt(process.env.FLOWCAST_STALE_LOCK_MS ?? '', 10)
+const STALE_LOCK_MS = Number.isFinite(_envStaleLockMs) && _envStaleLockMs > 0 ? _envStaleLockMs : 60 * 60 * 1000
 // lockDir 已存在但 owner.json 还没写的最长等待：10 次 × 100ms = 1s，给 owner 写盘留时间。
 const LOCK_WAIT_TRIES = 10
 const LOCK_WAIT_MS = 100
@@ -156,7 +158,9 @@ export async function orchestrate(request, {
  */
 // 并发生成子 flow 时对 LLM API 的并发上限（默认 3）。
 // 子任务执行（fanOut）有独立 concurrency 控制；此常量仅限「生成阶段」防 429 轰击。
-const DEFAULT_GEN_CONCURRENCY = 3
+// 可通过 FLOWCAST_GEN_CONCURRENCY 环境变量覆盖。
+const _envGenConcurrency = parseInt(process.env.FLOWCAST_GEN_CONCURRENCY ?? '', 10)
+const DEFAULT_GEN_CONCURRENCY = Number.isFinite(_envGenConcurrency) && _envGenConcurrency > 0 ? _envGenConcurrency : 3
 
 export async function orchestrateMulti(goal, {
   repo = process.cwd(), runId = `orchm-${Date.now()}`,

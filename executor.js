@@ -21,6 +21,7 @@ import { isProviderRetryable } from './spawn.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
+import { ConfigError, PathError } from './errors.js'
 import { resolve, normalize } from 'path'
 
 // ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
@@ -54,10 +55,10 @@ export const EXECUTORS = {
   agy:       { run: agy },      // 自带鉴权的编译型 agent CLI
 }
 
-/** 取执行器描述符；未注册抛错。 */
+/** 取执行器描述符；未注册抛 ConfigError。 */
 export function getExecutor(name) {
   const e = EXECUTORS[name]
-  if (!e) throw new Error(`未知执行器 '${name}'（已注册：${Object.keys(EXECUTORS).join(' / ')}）`)
+  if (!e) throw new ConfigError(`未知执行器 '${name}'（已注册：${Object.keys(EXECUTORS).join(' / ')}）`)
   return { name, run: e.run, applyProvider: e.applyProvider, acceptsProvider: typeof e.applyProvider === 'function' }
 }
 
@@ -183,9 +184,9 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
     if (isDryRun()) return { executor: name, run: makeFakeRun(name), opts: {} }
     const known = Object.keys(agents)
     const hint = known.length ? `已定义：${known.join(' / ')}` : '当前无任何 agent 配置，请创建 ~/.flowcast/agents.json'
-    throw new Error(`未知 agent '${name}'（${hint}）`)
+    throw new ConfigError(`未知 agent '${name}'（${hint}）`)
   }
-  if (!profile.executor) throw new Error(`agent '${name}' 缺少 executor 字段`)
+  if (!profile.executor) throw new ConfigError(`agent '${name}' 缺少 executor 字段`)
 
   const ex = getExecutor(profile.executor)
 
@@ -208,7 +209,7 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
   // 复用 isSafePath 守卫：必须是相对路径、规范化后不以 `..` 开头。
   for (const pathKey of ['transcriptOut', 'pricingFile']) {
     if (opts[pathKey] != null && !isSafePath(String(opts[pathKey]))) {
-      throw new Error(
+      throw new PathError(
         `agent '${name}': ${pathKey} 必须是相对路径且不能逃逸工作目录` +
         `（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
       )
@@ -218,7 +219,7 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
   if (Array.isArray(opts.files)) {
     for (const f of opts.files) {
       if (typeof f === 'string' && !isSafePath(f)) {
-        throw new Error(
+        throw new PathError(
           `agent '${name}': files 数组包含不安全路径（绝对路径或 ..）：${f}`,
         )
       }
@@ -227,7 +228,7 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
 
   if (profile.provider) {
     if (!ex.acceptsProvider) {
-      throw new Error(
+      throw new ConfigError(
         `执行器 '${profile.executor}' 不接受外部 provider（自管鉴权/路由）；` +
         `请从 agent '${name}' 去掉 provider，改用它自带的 model 选择`,
       )
@@ -312,6 +313,11 @@ export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetr
   for (const [k, v] of Object.entries(opts)) {
     if (RUN_AGENT_ALL_KEYS.has(k)) safeOpts[k] = v
   }
+  // P1 修复：recursive 非零退出默认抛错，防止失败被当成功静默返回。
+  // 调用方可显式传 throwOnCritical: false 恢复旧行为（需要在 opts 白名单里）。
+  if (cli === 'recursive' && safeOpts.throwOnCritical === undefined) {
+    safeOpts.throwOnCritical = true
+  }
   // extraArgs 元素级白名单（与 resolveAgent 一致）
   if (safeOpts.extraArgs) {
     safeOpts.extraArgs = sanitizeExtraArgs(cli, safeOpts.extraArgs)
@@ -320,7 +326,7 @@ export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetr
   for (const pathKey of ['systemPromptFile', 'transcriptOut', 'pricingFile']) {
     if (opts[pathKey] != null) {
       if (!isSafePath(String(opts[pathKey]))) {
-        throw new Error(
+        throw new PathError(
           `runAgent: ${pathKey} 必须是相对路径且不能逃逸工作目录` +
           `（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
         )
@@ -336,7 +342,7 @@ export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetr
   const entry = EXECUTORS[cli]
   if (!entry) {
     const known = Object.keys(EXECUTORS).join('/')
-    throw new Error(`未知 CLI: ${cli}，支持：${known}（或通过 registerExecutor 注册的自定义执行器）`)
+    throw new ConfigError(`未知 CLI: ${cli}，支持：${known}（或通过 registerExecutor 注册的自定义执行器）`)
   }
   const fn = entry.run
   const runner = (p) => fn(p, { cwd: cwd ?? _defaultCwd, ...safeOpts })
@@ -422,5 +428,7 @@ export async function runAgentChain(prompt, chain, {
       throw e
     }
   }
-  // 不可达：最后 provider 失败已通过 throw e 退出
+  // 防御性兜底：正常路径最后一项失败已在循环内 throw e 退出，此处不可达。
+  // 若将来循环逻辑变更导致意外走到这里，确保不静默返回 undefined。
+  throw lastErr ?? new Error('runAgentChain: chain exhausted without result or error')
 }

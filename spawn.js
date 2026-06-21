@@ -113,7 +113,9 @@ export async function spawnCli(cli, args, cwd, timeout, env) {
   if (r.timedOut) {
     throw new TimeoutError(`[${cli}] timeout after ${timeout}ms`)
   }
-  if (r.exitCode !== 0) throw new Error(`[${cli}] exit ${r.exitCode}\n${r.stdout.trim()}`)
+  if (r.exitCode !== 0) {
+    throw new SpawnError(`[${cli}] exit ${r.exitCode}\n${r.stdout.trim()}`, null, { exitCode: r.exitCode })
+  }
   return r.stdout
 }
 
@@ -124,7 +126,9 @@ export async function spawnCli(cli, args, cwd, timeout, env) {
 // flowcast 启动时（bin/flowcast.js）调一次，静默清理，失败不影响主流程。
 // 从 subflow.js 迁来——临时文件清理属于进程管理职责，与子流调度无关。
 
-const STALE_TMP_MS = 60 * 60 * 1000  // 1h 没动 → 视为 stale
+// 1h 没动 → 视为 stale；可通过 FLOWCAST_STALE_TMP_MS 环境变量覆盖（测试场景用小值加速清理）
+const _envStaleTmpMs = parseInt(process.env.FLOWCAST_STALE_TMP_MS ?? '', 10)
+const STALE_TMP_MS = Number.isFinite(_envStaleTmpMs) && _envStaleTmpMs > 0 ? _envStaleTmpMs : 60 * 60 * 1000
 const STALE_TMP_PREFIXES = [
   'flowcast-codex-',
   'flowx-codex-',       // legacy

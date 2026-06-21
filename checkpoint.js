@@ -17,7 +17,9 @@ export class PauseSignal extends Error {
   }
 }
 
-const RESULT_INLINE_LIMIT = 500   // 超出此长度则写旁路文件，state.json 只存摘要
+// 超出此长度则写旁路文件，state.json 只存摘要；可通过 FLOWCAST_RESULT_INLINE_LIMIT 覆盖
+const _envInlineLimit = parseInt(process.env.FLOWCAST_RESULT_INLINE_LIMIT ?? '', 10)
+const RESULT_INLINE_LIMIT = Number.isFinite(_envInlineLimit) && _envInlineLimit > 0 ? _envInlineLimit : 500
 const RESULT_SIDECAR_MARKER = '\x00flowcast:sidecar\x00'  // state.json 里的占位标记
 
 // FNV-32 hash（比 Java-style 31 倍乘法碰撞率低得多），用于生成旁路文件名后缀。

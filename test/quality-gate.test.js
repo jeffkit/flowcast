@@ -211,3 +211,82 @@ test('mergeGates：空项目门 → 原样返回内置', () => {
   assert.deepEqual(mergeGates(builtin, []), builtin)
   assert.deepEqual(mergeGates(builtin), builtin)
 })
+
+// ── cwd 路径安全（P1-A5 修复回归测试）────────────────────────────
+//
+// 防止 gates.json 被篡改后用 cwd: '/etc' 让检查命令在任意目录运行，
+// 以及通过 symlink 绕过路径前缀比较的攻击面。
+
+test('cwd 安全：gate.cwd 在 repo 内 → 正常执行', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-cwd-ok-'))
+  const sub = join(repo, 'sub')
+  mkdirSync(sub, { recursive: true })
+  try {
+    const r = await runGate({ name: 'ok', cmd: 'true', cwd: sub }, { repo })
+    assert.equal(r.passed, true)
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('cwd 安全：gate.cwd 等于 repo 本身 → 允许', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-cwd-eq-'))
+  try {
+    const r = await runGate({ name: 'ok', cmd: 'true', cwd: repo }, { repo })
+    assert.equal(r.passed, true)
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('cwd 安全：gate.cwd 逃逸 repo（绝对路径指向外部） → 抛 ConfigError', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-cwd-esc-'))
+  try {
+    await assert.rejects(
+      runGate({ name: 'bad', cmd: 'true', cwd: tmpdir() }, { repo }),
+      (err) => {
+        assert.equal(err.configError, true, '应抛 ConfigError')
+        assert.match(err.message, /cwd.*必须在 repo.*内/)
+        assert.equal(err.gate, 'bad')
+        return true
+      },
+    )
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('cwd 安全：gate.cwd 不存在 → 抛 ConfigError（无法解析真实路径）', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-cwd-missing-'))
+  const nonExistent = join(repo, 'does-not-exist')
+  try {
+    await assert.rejects(
+      runGate({ name: 'bad', cmd: 'true', cwd: nonExistent }, { repo }),
+      (err) => {
+        assert.equal(err.configError, true, '应抛 ConfigError')
+        assert.match(err.message, /无法解析 cwd/)
+        assert.equal(err.gate, 'bad')
+        return true
+      },
+    )
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('cwd 安全：无 deps.repo 时不做 cwd 校验（向后兼容）', async () => {
+  // 不传 repo → 无论 cwd 是什么都不校验，让原有行为正常工作
+  const r = await runGate({ name: 'ok', cmd: 'true', cwd: tmpdir() })
+  assert.equal(r.passed, true)
+})
+
+test('cwd 安全：gate 无显式 cwd（取 process.cwd()）且 deps.repo 存在 → 跳过校验', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'flowcast-cwd-noexpl-'))
+  try {
+    // gate 对象里没有 cwd 字段 → 不触发 symlink 校验逻辑
+    const r = await runGate({ name: 'ok', cmd: 'true' }, { repo })
+    assert.equal(r.passed, true)
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})

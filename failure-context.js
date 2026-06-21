@@ -8,8 +8,10 @@ import { assertSafeIdent } from './helpers.js'
 // 失败时写一份结构化 failure-context.md，下次重试时读取并注入 system prompt，
 // 读取后即删除（只注入一次，避免污染后续无关尝试）。完整 RAG 召回留后续。
 //
-// 跨进程原子性：rename 后还会写一个 PID sidecar（`.<p>.owner.<pid>`）。
-// 读侧等 owner 出现后再读正文（最多 50ms），避免读到「rename 已成功但 fsync 还没完成」的中间态。
+// 跨进程原子性：rename 成为原子占位（先 rename 成功的进程独占）；
+// rename 后同步写 PID sidecar 声明所有权（供未来扩展）。
+// writeFileSync 是同步的，无需 busy-wait——与旧注释的 "等 owner 出现后再读" 不同，
+// 新实现直接同步写/读，sidecar 落盘后立即可读。
 // 严格跨进程安全请走 flock（本项目零依赖原则下不引）——README/memory 里写明这是 best-effort。
 
 function ctxPath(dir, tag) {

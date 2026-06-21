@@ -34,12 +34,16 @@ export class TimeoutError extends FlowcastError {
   }
 }
 
-/** spawn 失败错误（进程无法启动）*/
+/**
+ * spawn 失败错误。覆盖两种场景：
+ *   - spawnMsg 非空：进程无法启动（ENOENT / EACCES 等）
+ *   - spawnMsg 为 null + extra.exitCode：进程启动成功但以非零码退出
+ */
 export class SpawnError extends FlowcastError {
   constructor(message, spawnMsg, extra = {}) {
     super(message, 'SPAWN_ERROR', extra)
     this.name = 'SpawnError'
-    this.spawnError = spawnMsg
+    this.spawnError = spawnMsg  // null 时表示退出码失败，非 null 时表示进程启动失败
   }
 }
 

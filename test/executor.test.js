@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor } from '../executor.js'
+import { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor, runAgent, setWorkdir } from '../executor.js'
+import { PathError, ConfigError } from '../errors.js'
 
 const PROVIDERS = {
   deepseek: { type: 'openai', apiBase: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', apiKey: '${DS_KEY}' },
@@ -212,9 +213,13 @@ test('resolveAgent: extraArgs 锁定型执行器（cursor/gemini/codex/agy）拒
 test('resolveAgent: extraArgs 未知执行器 → 拒绝所有 flag（保守）', () => {
   // 通过 registerExecutor 注册的未知 executor，extraArgs 应被空集过滤
   registerExecutor('my-cli', async () => 'ok')
-  const agents = { 'c1': { executor: 'my-cli', extraArgs: ['--flag', 'val'] } }
-  const r = resolveAgent('c1', agents, { providers: PROVIDERS, env: ENV })
-  assert.deepEqual(r.opts.extraArgs, [], '未知 executor 应丢弃 extraArgs')
+  try {
+    const agents = { 'c1': { executor: 'my-cli', extraArgs: ['--flag', 'val'] } }
+    const r = resolveAgent('c1', agents, { providers: PROVIDERS, env: ENV })
+    assert.deepEqual(r.opts.extraArgs, [], '未知 executor 应丢弃 extraArgs')
+  } finally {
+    delete EXECUTORS['my-cli']
+  }
 })
 
 test('sanitizeExtraArgs: --flag=value 形式正常处理', async () => {
@@ -238,4 +243,178 @@ test('sanitizeExtraArgs: --workspace 路径遍历攻击被拦截', async () => {
   // --flag=value 形式也应被校验
   assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace=/etc']), [], '= 形式绝对路径也应被拦截')
   assert.deepEqual(sanitizeExtraArgs('recursive', ['--workspace=./sub']), ['--workspace=./sub'], '= 形式合法路径应被放行')
+})
+
+// ── runAgent：路由、白名单、路径安全 ────────────────────────────
+
+test('runAgent: 未知 CLI 抛 ConfigError', async () => {
+  await assert.rejects(
+    runAgent('hi', { cli: 'no-such-cli' }),
+    (err) => {
+      assert.ok(err instanceof ConfigError, '应为 ConfigError')
+      assert.match(err.message, /未知 CLI: no-such-cli/)
+      return true
+    },
+  )
+})
+
+test('runAgent: systemPromptFile 绝对路径 → 抛 PathError', async () => {
+  await assert.rejects(
+    runAgent('hi', { cli: 'claude', systemPromptFile: '/etc/shadow' }),
+    (err) => {
+      assert.ok(err instanceof PathError, '应为 PathError')
+      assert.match(err.message, /systemPromptFile.*必须是相对路径/)
+      return true
+    },
+  )
+})
+
+test('runAgent: transcriptOut 路径穿越 → 抛 PathError', async () => {
+  await assert.rejects(
+    runAgent('hi', { cli: 'recursive', transcriptOut: '../../etc/passwd' }),
+    (err) => {
+      assert.ok(err instanceof PathError, '应为 PathError')
+      assert.match(err.message, /transcriptOut.*必须是相对路径/)
+      return true
+    },
+  )
+})
+
+test('runAgent: 合法相对路径 transcriptOut 通过白名单后进入 safeOpts', async () => {
+  // 只验证路径通过了白名单校验，不实际运行 CLI（注册一个 fake 执行器）
+  let capturedOpts
+  registerExecutor('test-runner', async (_prompt, opts) => {
+    capturedOpts = opts
+    return Object.assign('ok', { _meta: { cli: 'test-runner' } })
+  })
+  try {
+    await runAgent('hi', { cli: 'test-runner', transcriptOut: 'out/run.json' })
+    assert.equal(capturedOpts.transcriptOut, 'out/run.json')
+  } finally {
+    delete EXECUTORS['test-runner']
+  }
+})
+
+test('runAgent: opts 白名单外字段被静默丢弃（防 LLM 注入）', async () => {
+  let capturedOpts
+  registerExecutor('test-runner2', async (_prompt, opts) => {
+    capturedOpts = opts
+    return Object.assign('ok', { _meta: { cli: 'test-runner2' } })
+  })
+  try {
+    await runAgent('hi', { cli: 'test-runner2', model: 'sonnet', DANGER: 'evil', __proto__: {} })
+    assert.equal(capturedOpts.model, 'sonnet', '白名单内字段应保留')
+    assert.equal(capturedOpts.DANGER, undefined, '白名单外字段应丢弃')
+  } finally {
+    delete EXECUTORS['test-runner2']
+  }
+})
+
+test('runAgent: dry-run 模式不调 CLI，返回占位字符串', async () => {
+  process.env.FLOWCAST_DRY_RUN = '1'
+  try {
+    const r = await runAgent('hi', { cli: 'claude' })
+    // runAgent 返回 Object.assign(String(...), {_meta}) — 用 String() 转为原始类型后 assert.match
+    assert.match(String(r), /\[dry-run\]/)
+    assert.equal(r._meta.dryRun, true)
+  } finally {
+    delete process.env.FLOWCAST_DRY_RUN
+  }
+})
+
+test('runAgent: dry-run + schema 返回 schema stub', async () => {
+  process.env.FLOWCAST_DRY_RUN = '1'
+  try {
+    const r = await runAgent('hi', { cli: 'claude', schema: { type: 'object', properties: { x: { type: 'number' } } } })
+    assert.equal(typeof r, 'object', 'stub 应为对象')
+  } finally {
+    delete process.env.FLOWCAST_DRY_RUN
+  }
+})
+
+test('runAgent: recursive cli 默认注入 throwOnCritical=true', async () => {
+  let capturedOpts
+  // 拦截 recursive adapter 查看注入参数
+  const orig = EXECUTORS.recursive.run
+  EXECUTORS.recursive.run = async (_p, opts) => {
+    capturedOpts = opts
+    return Object.assign('ok', { _meta: { cli: 'recursive', exitCode: 0 } })
+  }
+  try {
+    await runAgent('hi', { cli: 'recursive' })
+    assert.equal(capturedOpts.throwOnCritical, true, 'recursive 默认应注入 throwOnCritical=true')
+  } finally {
+    EXECUTORS.recursive.run = orig
+  }
+})
+
+test('runAgent: recursive 显式传 throwOnCritical=false 不被覆盖', async () => {
+  let capturedOpts
+  const orig = EXECUTORS.recursive.run
+  EXECUTORS.recursive.run = async (_p, opts) => {
+    capturedOpts = opts
+    return Object.assign('ok', { _meta: { cli: 'recursive', exitCode: 0 } })
+  }
+  try {
+    await runAgent('hi', { cli: 'recursive', throwOnCritical: false })
+    assert.equal(capturedOpts.throwOnCritical, false, '显式传 false 应保留')
+  } finally {
+    EXECUTORS.recursive.run = orig
+  }
+})
+
+// ── 错误类型验证 ─────────────────────────────────────────────────
+
+test('getExecutor: 未知执行器抛 ConfigError', () => {
+  assert.throws(
+    () => getExecutor('no-such'),
+    (err) => {
+      assert.ok(err instanceof ConfigError, '应为 ConfigError')
+      return true
+    },
+  )
+})
+
+test('resolveAgent: 未知 agent 抛 ConfigError', () => {
+  assert.throws(
+    () => resolveAgent('ghost', { a: { executor: 'cursor' } }),
+    (err) => {
+      assert.ok(err instanceof ConfigError, '应为 ConfigError')
+      return true
+    },
+  )
+})
+
+test('resolveAgent: 缺 executor 字段抛 ConfigError', () => {
+  assert.throws(
+    () => resolveAgent('x', { x: {} }),
+    (err) => {
+      assert.ok(err instanceof ConfigError, '应为 ConfigError')
+      assert.match(err.message, /缺少 executor/)
+      return true
+    },
+  )
+})
+
+test('resolveAgent: provider-locked 执行器配 provider 抛 ConfigError', () => {
+  const agents = { bad: { executor: 'cursor', provider: 'deepseek' } }
+  assert.throws(
+    () => resolveAgent('bad', agents, { providers: PROVIDERS, env: ENV }),
+    (err) => {
+      assert.ok(err instanceof ConfigError, '应为 ConfigError')
+      return true
+    },
+  )
+})
+
+test('resolveAgent: transcriptOut 绝对路径抛 PathError', () => {
+  const agents = { r: { executor: 'recursive', transcriptOut: '/tmp/evil.json' } }
+  assert.throws(
+    () => resolveAgent('r', agents),
+    (err) => {
+      assert.ok(err instanceof PathError, '应为 PathError')
+      assert.match(err.message, /transcriptOut.*必须是相对路径/)
+      return true
+    },
+  )
 })

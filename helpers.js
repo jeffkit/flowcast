@@ -4,6 +4,8 @@
 // 都要走 assertSafeIdent。理由：这些字符串最终拼到文件路径里，
 // path.join 不阻止 `..` 解析，必须用白名单字符校验拦在源头。
 
+import { PathError } from './errors.js'
+
 // 标识符白名单：字母数字开头结尾，中间允许 . _ -
 // （跟 subflow.js 原本内联的正则一致，提出来共享）
 const IDENT_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/
@@ -12,11 +14,11 @@ const IDENT_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/
  * 校验任务/资源标识符。
  * @param {string} name
  * @param {string} [field='name']  出错信息里用的字段名
- * @throws {Error} 不安全字符
+ * @throws {PathError} 不安全字符
  */
 export function assertSafeIdent(name, field = 'name') {
   if (typeof name !== 'string' || !IDENT_RE.test(name)) {
-    throw new Error(
+    throw new PathError(
       `${field} '${name}' 包含非法字符。` +
       `只允许字母数字、点、连字符、下划线，且必须以字母数字开头和结尾。`,
     )

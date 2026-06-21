@@ -16,7 +16,7 @@ test('parallel: strict=false 时某个失败返回 null，其余按序返回', a
   assert.deepEqual(r, [1, null, 3])
 })
 
-test('parallel: strict=true（默认）任一失败立即抛，err.failures 含下标和原始 error', async () => {
+test('parallel: strict=true（默认）所有任务跑完后汇总抛，err.failures 含下标和原始 error', async () => {
   await assert.rejects(
     () => parallel([
       () => Promise.resolve(1),
