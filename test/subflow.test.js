@@ -97,7 +97,7 @@ test('fanOut: 空任务列表 → 空结果，不报错', async () => {
 test('fanOut: task.name 含路径穿越字符 → 抛错', async () => {
   await assert.rejects(
     fanOut([{ name: '../evil', flow: 'x.mjs' }], { repo: REPO, dryRun: true }),
-    /unsafe characters/,
+    /非法字符/,
   )
 })
 

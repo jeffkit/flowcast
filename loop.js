@@ -77,7 +77,9 @@ export async function loop(iterate, opts = {}) {
   const startedAt = Date.now()
   let lastVerdict = cp.getLoopState().verdict ?? null
   // 已完成轮数从 Checkpoint 推断，支持续跑：扫已落盘的 turn-N 结果（completed 才算真完成）。
-  let turn = cp.countCompletedTurns()
+  // 用通用的 countCompletedKeysWithPrefix 而非旧的 countCompletedTurns，
+  // 把 'turn-' 前缀约定保持在 loop.js 里，而不是耦合进 Checkpoint。
+  let turn = cp.countCompletedKeysWithPrefix('turn-')
   // lastResult 从最后一个已完成 turn 推断，避免额外缓存 key 的 flush 时序缺口。
   // 续跑时从最后一个完成 turn 的旁路存储里读完整 lastResult（getStepResult 透明处理 sidecar）
   let lastResult = turn > 0
@@ -140,7 +142,12 @@ export async function loop(iterate, opts = {}) {
 
     let done
     try {
-      done = await isDone({ turn: turnNo, result: iterResult, gateResults, state: cp.state })
+      // 传浅克隆+冻结快照，而非直接暴露 cp.state 引用：
+      //   1. 防止 isDone 回调意外修改 Checkpoint 内部状态（写 state.xxx 会影响落盘数据）
+      //   2. Object.freeze 让 top-level 属性只读（strict mode 下写入抛 TypeError）
+      //   3. 向后兼容：快照与 cp.state 形状完全相同，现有 isDone 实现无需改动
+      const stateSnapshot = Object.freeze({ ...cp.state })
+      done = await isDone({ turn: turnNo, result: iterResult, gateResults, state: stateSnapshot })
     } catch (e) {
       // isDone 抛错：与 iterate 失败同等对待，落盘 failed 状态后向上抛
       cp.setLoopState({ status: 'failed' })

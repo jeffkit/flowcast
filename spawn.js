@@ -12,6 +12,12 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { isRetryable, TimeoutError, SpawnError } from './errors.js'
 
+// ── 共享常量 ─────────────────────────────────────────────────────────
+
+/** 子进程 stdout/stderr 缓冲区上限（16 MB）。超出时截断并追加标记，防 verbose 子进程 OOM 宿主。
+ *  导出供 subflow.js 复用，保持单一事实来源——两处缓冲区逻辑对齐同一阈值。 */
+export const SPAWN_MAX_BUF = 16 * 1024 * 1024
+
 // ── provider 回退判定 ────────────────────────────────────────────────
 //
 // 委托到 errors.js 的统一 isRetryable，保留本名兼容现有调用方。
@@ -55,12 +61,10 @@ export function spawnCapture(cmd, args, { cwd = process.cwd(), timeout, env, onD
     }
     let out = ''
     let timedOut = false
-    // 缓冲区上限 16 MB：超出时截断并追加标记，防 verbose 子进程 OOM 宿主
-    const MAX_BUF = 16 * 1024 * 1024
     const append = d => {
       const s = d.toString()
       onData?.(s)
-      if (out.length < MAX_BUF) out += s
+      if (out.length < SPAWN_MAX_BUF) out += s
       else if (!out.endsWith('\n[output truncated]')) out += '\n[output truncated]'
     }
     proc.stdout.on('data', append)

@@ -245,9 +245,24 @@ export class Checkpoint {
     }
   }
 
-  /** 统计已完成 turn-N 步数（用于 loop 续跑推断起始 turn）。 */
+  /**
+   * 统计已完成的、以指定前缀 + 数字结尾的步骤数。通用方法，解耦具体命名约定。
+   * 例：`countCompletedKeysWithPrefix('turn-')` 统计 `turn-1`, `turn-2`, ... 的数量。
+   * @param {string} prefix  key 前缀（如 'turn-'）
+   */
+  countCompletedKeysWithPrefix(prefix) {
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`^${escapedPrefix}\\d+$`)
+    return Object.keys(this.state.completed ?? {}).filter((k) => re.test(k)).length
+  }
+
+  /**
+   * @deprecated 使用 `countCompletedKeysWithPrefix('turn-')` 替代。
+   *   旧方法将 `turn-N` 命名约定硬编码在 Checkpoint 里，属于 loop 概念泄漏；
+   *   新方法通用，调用方（loop.js）自己传前缀，Checkpoint 不感知具体命名规则。
+   */
   countCompletedTurns() {
-    return Object.keys(this.state.completed ?? {}).filter((k) => /^turn-\d+$/.test(k)).length
+    return this.countCompletedKeysWithPrefix('turn-')
   }
 
   /**

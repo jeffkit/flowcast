@@ -19,16 +19,19 @@ function defaultPipelineConcurrency() {
  * @param {object} [o]
  * @param {number}   [o.concurrency]  并发上限；缺省 = 全部一起跑。结果按原下标顺序返回。
  * @param {boolean}  [o.strict=true]  错误收集策略：
- *   - true（默认）：**收集所有失败后**统一抛出含 failures 数组的 Error（所有任务跑完后才抛）。
- *     注意：不是 fail-fast——第一个任务失败后其余任务仍会继续运行到结束。
- *     如需 fail-fast（第一个失败立即停止其余任务），请同时传 failFast: true。
+ *   - true（默认）：等所有任务跑完后，若有失败则统一抛出含 failures 数组的 Error。
+ *     注意：**不是 fail-fast**——第一个任务失败后，其余任务仍会继续运行到结束。
+ *     如需提前停止排队中的任务，请同时传 failFast: true（但已在跑的任务不会被中断）。
  *   - false：失败的 thunk 在对应位置返回 null，其余继续跑；控制台打 [parallel error]。
  *     适合「部分失败可接受」场景（如批量 agent 调用，结果可 fallback）；
  *     调用方务必检查结果数组中的 null，否则失败会被静默丢失。
  *     注意：无法区分「任务失败」和「任务本身返回 null」，如需区分请传 onError。
- * @param {boolean}  [o.failFast=false]  true 时第一个失败立即停止还未开始的任务并抛错。
- *   - 仅在 concurrency 模式下有效（有并发上限时才有"还未开始的任务"可以停止）。
- *   - 已经在跑的任务不会被强制中断（需要 AbortController 支持，当前不实现）。
+ * @param {boolean}  [o.failFast=false]  true 时第一个失败立即停止尚未入队的任务。
+ *   ⚠️ 两个重要限制：
+ *   1. **仅在 concurrency 有限制时有效**：无 concurrency（Promise.all 全量并发）时，所有任务已同时启动，
+ *      failFast 无法阻止任何任务运行，退化为 strict 的等待全量完成行为。
+ *   2. **已在跑的任务不会被强制中断**：failFast 只停止还未出队的任务，已在运行的仍会执行到结束。
+ *      需要真正的中止需配合 AbortController（当前不实现）。
  *   - 与 strict=true 搭配使用：failFast 控制"是否提前停止排队任务"，strict 控制"是否汇总抛出"。
  * @param {Function} [o.onError]  额外的错误回调 ({index, error}) => void，
  *   用于在保持 null 语义（strict=false）的同时追踪失败（区分失败和任务返回 null 的唯一可靠手段）。

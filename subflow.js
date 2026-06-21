@@ -7,12 +7,13 @@
 // 续跑由子 flow 自身的 --run-id + Checkpoint 负责；worktree 隔离让并发子 flow 互不污染。
 
 import { spawn } from 'child_process'
-import { mkdirSync, openSync, closeSync, existsSync, cpSync, readdirSync, statSync } from 'fs'
+import { mkdirSync, openSync, closeSync, existsSync, cpSync } from 'fs'
 import { assertSafeIdent } from './helpers.js'
 import { dirname, join } from 'path'
 import { gitWorktreeAdd, gitWorktreeRemove } from './git.js'
 import { isDryRun } from './dry-run.js'
 import { flowcastDir } from './dirs.js'
+import { SPAWN_MAX_BUF } from './spawn.js'
 
 /**
  * 把一个 flow 文件当独立 node 子进程跑（隔离 + 超时可控；崩溃不污染宿主）。
@@ -64,19 +65,18 @@ export function runFlow(flowRef, {
     const proc = spawn('node', argv, { cwd, env, stdio })
     let stdout = ''
     let stderr = ''
-    // 缓冲区上限 16 MB：与 spawn.js 保持一致，防止 verbose 子 flow 不指定 logFile 时
-    // stdout 无限累积导致宿主 OOM（fanOut 通常指定 logFile；直接调用 runFlow 时不受保护）。
-    const MAX_BUF = 16 * 1024 * 1024
+    // 缓冲区上限复用 spawn.js 的 SPAWN_MAX_BUF（单一事实来源），防止 verbose 子 flow
+    // 不指定 logFile 时 stdout 无限累积导致宿主 OOM。
     if (!logFile) {
       proc.stdout.on('data', d => {
         const s = String(d)
         onData?.(s)
-        if (stdout.length < MAX_BUF) stdout += s
+        if (stdout.length < SPAWN_MAX_BUF) stdout += s
         else if (!stdout.endsWith('\n[output truncated]')) stdout += '\n[output truncated]'
       })
       proc.stderr.on('data', d => {
         const s = String(d)
-        if (stderr.length < MAX_BUF) stderr += s
+        if (stderr.length < SPAWN_MAX_BUF) stderr += s
         else if (!stderr.endsWith('\n[output truncated]')) stderr += '\n[output truncated]'
       })
     }
@@ -215,36 +215,16 @@ export async function fanOut(tasks, {
     process.setMaxListeners(prevMaxListeners)
   }
 
-  // cleanWorktrees=false 时 worktree 目录会随任务数增长持续积累——打磁盘占用警告提示用户清理。
-  // 只在真的创建了 worktree（isolate='worktree' 且非 dry-run）且有任务完成时才检查。
-  if (isolate === 'worktree' && !dryRun && tasks.length > 0) {
+  // cleanWorktrees=false 时 worktree 目录会随任务数增长持续积累——打警告提示用户清理。
+  // 原实现用 readdirSync+statSync 递归统计磁盘占用，对大型 monorepo 会同步阻塞 event loop；
+  // 现改为只统计 worktree 数量，不做 I/O 密集的磁盘统计。
+  if (isolate === 'worktree' && !dryRun && !cleanWorktrees) {
     const createdWorktrees = results.filter(r => r?.worktree).map(r => r.worktree)
-    if (createdWorktrees.length > 0 && !cleanWorktrees) {
-      try {
-        const totalBytes = createdWorktrees.reduce((sum, wt) => {
-          if (!existsSync(wt)) return sum
-          let size = 0
-          const walk = (dir) => {
-            try {
-              for (const name of readdirSync(dir)) {
-                const full = `${dir}/${name}`
-                try {
-                  const st = statSync(full)
-                  if (st.isDirectory()) walk(full)
-                  else size += st.size
-                } catch { /* 单文件失败跳过 */ }
-              }
-            } catch { /* 目录读取失败忽略 */ }
-          }
-          walk(wt)
-          return sum + size
-        }, 0)
-        const mb = (totalBytes / 1024 / 1024).toFixed(1)
-        console.warn(
-          `  [fanOut] cleanWorktrees=false：${createdWorktrees.length} 个 worktree 保留在磁盘（${mb} MB）。` +
-          `\n  长期运行建议传 cleanWorktrees: true，或手动执行 git worktree prune 清理。`,
-        )
-      } catch { /* 磁盘统计失败不影响主流程 */ }
+    if (createdWorktrees.length > 0) {
+      console.warn(
+        `  [fanOut] cleanWorktrees=false：${createdWorktrees.length} 个 worktree 保留在磁盘。` +
+        `\n  长期运行建议传 cleanWorktrees: true，或手动执行 git worktree prune 清理。`,
+      )
     }
   }
 

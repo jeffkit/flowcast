@@ -12,6 +12,7 @@ import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { spawnCapture, spawnCli, isProviderRetryable } from './spawn.js'
+import { TimeoutError, FlowcastError } from './errors.js'
 import { makeEvent } from './helpers.js'
 
 // ── provider 翻译器（claude adapter）────────────────────────────────
@@ -77,7 +78,7 @@ async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
   args.push(...extraArgs)
   const { stdout, exitCode, timedOut, spawnError } = await spawnCapture('claude', args, { cwd, timeout, env })
   if (spawnError) throw new Error(`[claude] spawn error: ${spawnError}`)
-  if (timedOut) { const err = new Error(`[claude] timeout after ${timeout}ms`); err.timedOut = true; throw err }
+  if (timedOut) throw new TimeoutError(`[claude] timeout after ${timeout}ms`)
   let data
   try {
     data = JSON.parse(stdout)
@@ -276,13 +277,18 @@ export async function recursive(goal, {
 
   const meta = { cli: 'recursive', exitCode, timedOut, spawnError, budgetExceeded, finishReason, panicked, transcriptMessages }
 
-  // P1-A3: 严重失败时根据 throwOnCritical 决定是否抛错
+  // 严重失败时根据 throwOnCritical 决定是否抛错。
+  // 抛 FlowcastError（code='RECURSIVE_FAIL'），接入统一错误体系：
+  //   - isRetryable() 可正确识别（timedOut=true 时会重试）
+  //   - runAgentChain 捕获后能走 provider fallback 路径
+  //   - 与其他 adapter 的失败行为保持一致（之前是普通 Error，runAgentChain 无法正常处理）
   if (throwOnCritical && (panicked || budgetExceeded || exitCode !== 0)) {
     const reason = panicked ? 'panicked' : budgetExceeded ? 'BudgetExceeded' : `exit ${exitCode}`
-    const err = new Error(`[recursive] failed: ${reason}\n${stdout.slice(0, 500)}`)
-    err.code = 'RECURSIVE_FAIL'
-    err._meta = meta
-    throw err
+    throw new FlowcastError(
+      `[recursive] failed: ${reason}\n${stdout.slice(0, 500)}`,
+      'RECURSIVE_FAIL',
+      { _meta: meta, timedOut },  // timedOut=true 时 isRetryable 会识别为可回退
+    )
   }
 
   return Object.assign(String(stdout), { _meta: meta })

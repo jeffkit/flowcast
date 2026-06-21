@@ -264,7 +264,16 @@ function makeFakeRun(executor) {
 
 let _defaultCwd = process.cwd()
 
-/** 设置全局默认工作目录，flow 启动时调用一次，之后所有 runAgent 自动继承。 */
+/**
+ * 设置全局默认工作目录，flow 启动时调用一次，之后所有 runAgent 自动继承。
+ *
+ * ⚠️ 并发安全提示：`_defaultCwd` 是进程级单例。
+ *   - fanOut / orchestrateMulti 的并发子任务跑在独立 node 子进程里，各自有自己的 `_defaultCwd`，安全。
+ *   - 同一进程内若并发调用多次 `setWorkdir` + `runAgent`，则 `_defaultCwd` 会被竞争覆盖。
+ *     避免方法：每次 `runAgent` 调用时显式传 `cwd` 参数，不依赖全局默认值。
+ *
+ * @param {string} dir  全局默认工作目录（绝对路径）
+ */
 export function setWorkdir(dir) {
   _defaultCwd = dir
 }

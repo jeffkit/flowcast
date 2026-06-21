@@ -97,26 +97,26 @@ test('writeFailureContext: tag 含路径穿越字符 → 抛错', () => {
   // .. 父目录穿越
   assert.throws(
     () => writeFailureContext(dir, '..', { reason: 'x' }),
-    /unsafe characters/,
+    /非法字符/,
   )
   assert.throws(
     () => writeFailureContext(dir, '../escape', { reason: 'x' }),
-    /unsafe characters/,
+    /非法字符/,
   )
   // / 绝对路径
   assert.throws(
     () => writeFailureContext(dir, '/etc/shadow', { reason: 'x' }),
-    /unsafe characters/,
+    /非法字符/,
   )
   // \\ 反斜杠
   assert.throws(
     () => writeFailureContext(dir, 'a\\b', { reason: 'x' }),
-    /unsafe characters/,
+    /非法字符/,
   )
   // . 开头
   assert.throws(
     () => writeFailureContext(dir, '.hidden', { reason: 'x' }),
-    /unsafe characters/,
+    /非法字符/,
   )
   rmSync(dir, { recursive: true, force: true })
 })
@@ -125,7 +125,7 @@ test('readAndConsumeFailureContext: tag 同样校验', () => {
   // read 路径不应绕过 write 的 tag 校验
   assert.throws(
     () => readAndConsumeFailureContext(tmpdir(), '..'),
-    /unsafe characters/,
+    /非法字符/,
   )
 })
 

@@ -17,9 +17,8 @@ const IDENT_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/
 export function assertSafeIdent(name, field = 'name') {
   if (typeof name !== 'string' || !IDENT_RE.test(name)) {
     throw new Error(
-      `${field} '${name}' contains unsafe characters. ` +
-      `Only alphanumeric, dots, dashes, and underscores are allowed, ` +
-      `and must start/end with alphanumeric.`,
+      `${field} '${name}' 包含非法字符。` +
+      `只允许字母数字、点、连字符、下划线，且必须以字母数字开头和结尾。`,
     )
   }
   return name
