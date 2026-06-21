@@ -195,9 +195,9 @@ export async function loadGates({ repo, dirs } = {}) {
   const map = await loadMergedConfig(basenamesFor('gates'), { repo, dirs, key: 'gates' })
   return Object.entries(map).map(([name, gate]) => {
     if (!gate || typeof gate !== 'object') {
-      throw new Error(`质量门 '${name}' 配置必须是对象（含 cmd 等字段）`)
+      throw new ConfigError(`质量门 '${name}' 配置必须是对象（含 cmd 等字段）`)
     }
-    if (!gate.cmd) throw new Error(`质量门 '${name}' 缺少 cmd`)
+    if (!gate.cmd) throw new ConfigError(`质量门 '${name}' 缺少 cmd`)
     return { name, ...gate }
   })
 }

@@ -223,11 +223,6 @@ export async function orchestrateMulti(goal, {
   }
 
   // ② 每个子任务生成一条 flow（限并发生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
-  // 原先顺序生成：N 个子任务 × 平均 10s/个 = 50s 才开始执行（execution 阶段已是并发）。
-  // 并发生成可降低总耗时，但 Promise.all 无限并发会同时轰击 LLM API 触发 429。
-  // 改用 parallel({concurrency: genConcurrency}) 限流：生成时间接近无限并发，同时避免限额。
-  // strict=true：任意子任务失败立即向上传播（与旧 Promise.all 行为一致）。
-  // ② 每个子任务生成一条 flow（限并发生成+校验；续跑锁定：sub/<name>/flow.mjs 已存在则复用）
   // failFast=true（默认）：任一失败立即终止整批（strict=true），保持原有行为。
   // failFast=false：收集所有失败，尽量跑完剩余子任务；执行阶段只跑生成成功的子任务。
   // failFast=false 时用 onError 捕获各任务错误消息，防止错误信息随 null 结果丢失。

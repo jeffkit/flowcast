@@ -22,6 +22,7 @@ import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
 import { ConfigError, PathError } from './errors.js'
+import { assertSafeIdent } from './helpers.js'
 import { resolve, normalize } from 'path'
 
 // ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
@@ -71,6 +72,7 @@ export function getExecutor(name) {
  *                                         提供则表示该执行器接受外部 provider（BYO-LLM）。
  */
 export function registerExecutor(name, run, { applyProvider } = {}) {
+  assertSafeIdent(name, 'executor')
   if (typeof run !== 'function') throw new TypeError(`registerExecutor: run 必须是函数`)
   EXECUTORS[name] = applyProvider ? { run, applyProvider } : { run }
 }

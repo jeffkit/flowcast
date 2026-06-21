@@ -5,7 +5,8 @@
 // 与确定性质量门（runGate 跑 test/lint/build）互补：runGate 求工程硬验证，verifyAdversarial
 // 求 AI 语义共识——两者各管一类置信度，都不该硬塞进每条 flow。
 
-import { runAgent, parallel } from './agent.js'
+import { runAgent } from './executor.js'
+import { parallel } from './concurrency.js'
 import { runStructured } from './schema.js'
 import { isDryRun } from './dry-run.js'
 

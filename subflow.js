@@ -37,6 +37,7 @@ export function runFlow(flowRef, {
   repo, runId, goal, agent, args = [], cwd = repo,
   timeout, dryRun = isDryRun(), onData, logFile,
 } = {}) {
+  if (runId) assertSafeIdent(runId, 'runId')
   if (onData && logFile) {
     console.warn('[runFlow] onData 被忽略：同时指定了 logFile，子 flow 输出写入文件，onData 回调不生效')
   }

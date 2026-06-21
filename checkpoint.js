@@ -3,6 +3,7 @@ import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
 import { assertSafeIdent, makeEvent } from './helpers.js'
+import { TimeoutError } from './errors.js'
 
 /**
  * pause() 抛出此错误，让 flow 入口点（而非库内部）决定是否 process.exit。
@@ -126,7 +127,7 @@ export class Checkpoint {
         let timer
         result = await Promise.race([
           fn(),
-          new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`step "${key}" timed out after ${timeout}ms`)), timeout) }),
+          new Promise((_, rej) => { timer = setTimeout(() => rej(new TimeoutError(`step "${key}" timed out after ${timeout}ms`, { timeoutMs: timeout })), timeout) }),
         ]).finally(() => clearTimeout(timer))
       } else {
         result = await fn()

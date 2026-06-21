@@ -21,6 +21,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { flowcastDir } from './dirs.js'
+import { ConfigError } from './errors.js'
 
 // 进程内配置缓存：key = JSON.stringify({basenames, dirs})，value = {result, expiresAt}。
 // 每次 loadMergedConfig 都重读磁盘，在 orchestrateMulti 并发生成多个子 flow 时
@@ -56,10 +57,10 @@ export function interpolateEnv(template, env = process.env) {
   const withEscapes = template.split('$$').join(ESCAPE)
   const expanded = withEscapes.replace(/\$\{([^}]*)\}/g, (m, ident) => {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(ident)) {
-      throw new Error(`非法插值 token：${m}（仅支持 \${IDENT}）`)
+      throw new ConfigError(`非法插值 token：${m}（仅支持 \${IDENT}）`)
     }
     if (!(ident in env)) {
-      throw new Error(`环境变量 ${ident} 未设置（插值 ${m} 失败，来自模板：${template.slice(0, 80)}）`)
+      throw new ConfigError(`环境变量 ${ident} 未设置（插值 ${m} 失败，来自模板：${template.slice(0, 80)}）`)
     }
     return env[ident]
   })
@@ -163,7 +164,7 @@ export function resolveProvider(name, providers = {}, env = process.env) {
     const hint = known.length
       ? `已定义：${known.join(' / ')}`
       : '当前无任何 provider 配置，请创建 ~/.flowcast/providers.json'
-    throw new Error(`未知 provider '${name}'（${hint}）`)
+    throw new ConfigError(`未知 provider '${name}'（${hint}）`)
   }
   const bundle = {
     name,
