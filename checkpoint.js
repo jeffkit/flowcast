@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, ren
 import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
+import { assertSafeIdent } from './helpers.js'
 
 /**
  * pause() 抛出此错误，让 flow 入口点（而非库内部）决定是否 process.exit。
@@ -41,6 +42,9 @@ export class Checkpoint {
    *   抛异常会被吞掉，绝不影响主流程。
    */
   constructor(runId, stateDir = flowcastDir(process.cwd()) + '/runs', { onStep } = {}) {
+    // runId 拼入文件路径，必须通过白名单校验（防路径穿越 ../../evil）。
+    // generated flow 直接调 new Checkpoint(runId) 也经此处守卫。
+    assertSafeIdent(runId, 'runId')
     this.runId = runId
     this.dir = join(stateDir, runId)
     this.path = join(this.dir, 'state.json')
@@ -65,21 +69,29 @@ export class Checkpoint {
     }
     this._seenKeys.add(key)
     if (this.state.completed[key] !== undefined) {
-      console.log(`  [skip] ${key}`)
-      this._log({ key, status: 'skip' })
-      this._emit({ event: 'skip', key })
-      // 续跑时：从旁路文件还原完整结果，并从步骤记录里还原 _meta
-      const stepRecord = this.state.steps.find(s => s.key === key)
+      // 续跑时：先尝试从旁路文件还原完整结果，检测 sidecar 损坏
       const cached = this._loadResult(key, this.state.completed[key])
-      if (stepRecord && (stepRecord.cli || stepRecord.model || stepRecord.inputTokens)) {
-        const { cli, model, inputTokens, outputTokens } = stepRecord
-        return Object.assign(String(cached), {
-          _meta: Object.fromEntries(
-            Object.entries({ cli, model, inputTokens, outputTokens }).filter(([, v]) => v != null)
-          ),
-        })
+      if (cached === undefined && this.state.completed[key] === undefined) {
+        // sidecar 损坏：_loadResult 已清除 completed[key] 并打了 warn。
+        // 不能继续 skip——回落到下方的 _inFlight + fn() 重新执行。
+        this._log({ key, status: 'rerun', reason: 'sidecar-corrupted' })
+        // fall through（不 return）
+      } else {
+        console.log(`  [skip] ${key}`)
+        this._log({ key, status: 'skip' })
+        this._emit({ event: 'skip', key })
+        // 从步骤记录里还原 _meta（cli/model/tokens）
+        const stepRecord = this.state.steps.find(s => s.key === key)
+        if (stepRecord && (stepRecord.cli || stepRecord.model || stepRecord.inputTokens)) {
+          const { cli, model, inputTokens, outputTokens } = stepRecord
+          return Object.assign(String(cached), {
+            _meta: Object.fromEntries(
+              Object.entries({ cli, model, inputTokens, outputTokens }).filter(([, v]) => v != null)
+            ),
+          })
+        }
+        return cached
       }
-      return cached
     }
     if (this._inFlight.has(key)) {
       throw new Error(`Checkpoint.step: key "${key}" is already in-flight (concurrent call detected)`)

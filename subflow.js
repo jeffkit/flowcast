@@ -135,6 +135,10 @@ export function runFlow(flowRef, {
  * @param {string} [o.logDir]          给了则每任务输出写 <logDir>/<name>.log
  * @param {Function} [o.prepare]       隔离后、跑 flow 前的钩子 async (task, {cwd,worktree}) => void（如往 worktree 拷配置）
  * @param {Function} [o.onResult]      每个任务完成回调 async ({task,result,worktree}) => void
+ * @param {boolean} [o.cleanWorktrees=false]  任务完成后是否自动删除 worktree（仅 isolate='worktree' 时生效）。
+ *   默认 false——保留 worktree 方便事后检查失败现场。**注意**：长期运行（如 fanOut 循环）若不
+ *   开启此项，`.worktrees/` 目录会随任务数增长无限堆积，建议显式传 `cleanWorktrees: true`
+ *   或事后调 `flowcast worktree prune` / 手动 `gitWorktreeRemove` 清理。
  * @returns {Promise<Array<{task:object, result:object, worktree?:string}>>}  按 tasks 原序
  */
 export async function fanOut(tasks, {

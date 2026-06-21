@@ -12,10 +12,11 @@
 // agent profile（agents.{json,yaml,…}）把「执行器 + 可选 provider + 调用配置」打包成具名引用，
 // flow / L3 编排层按名字引用它。resolveAgent 负责校验 + 解析 + 绑定。
 
+// 从 adapters.js 直接导入（不再经由 agent.js），打破 executor.js ↔ agent.js ESM 循环依赖。
 import {
   claude, cursor, gemini, codex, aider, recursive, agy,
   recursiveProviderEnv, claudeApplyProvider, emitAgentEvent,
-} from './agent.js'
+} from './adapters.js'
 import { isProviderRetryable } from './spawn.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
@@ -98,6 +99,7 @@ const SAFE_OPTS_KEYS = new Set([
 const EXTRA_ARGS_WHITELIST = {
   claude: new Set([
     '--model', '--output-format', '--max-steps', '--allowedTools', '--system-prompt',
+    '--dangerously-skip-permissions',
   ]),
   recursive: new Set([
     '--max-steps', '--model',
@@ -275,9 +277,41 @@ export function setWorkdir(dir) {
  *   - cwd           工作目录
  *   - schema        可选 JSON Schema：强制 agent 返回结构化对象（不匹配回喂重试）
  *   - schemaRetries 不匹配重试次数（默认 1）
- *   - 其余透传给底层执行器 adapter
+ *   - 其余透传给底层执行器 adapter（经 SAFE_RUN_OPTS_KEYS 白名单 + 路径安全校验）
  */
 export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetries = 1, ...opts } = {}) {
+  // opts 白名单过滤（与 resolveAgent 对齐，防 LLM 生成代码注入 systemPromptFile 等危险参数）。
+  // runAgent 由 generated flow 直接调用，flow 本身是 LLM 生成的——同样需要防注入。
+  const safeOpts = {}
+  for (const [k, v] of Object.entries(opts)) {
+    if (SAFE_OPTS_KEYS.has(k)) safeOpts[k] = v
+  }
+  // 额外透传 recursive 专用安全参数（不在 SAFE_OPTS_KEYS，但 runAgent 作为受信代码级 API 允许）
+  // provider/env/model/timeout 等运行时参数白名单
+  const EXTRA_RUN_KEYS = new Set(['provider', 'env', 'bin', 'log', 'onData', 'replayFrom', 'workspace',
+    'apiKey', 'apiBase', 'allowTools', 'timeout',
+    'throwOnCritical',  // recursive 专用：true 时 panicked/budgetExceeded/非零退出抛 FlowcastError
+  ])
+  for (const [k, v] of Object.entries(opts)) {
+    if (EXTRA_RUN_KEYS.has(k)) safeOpts[k] = v
+  }
+  // extraArgs 元素级白名单（与 resolveAgent 一致）
+  if (safeOpts.extraArgs) {
+    safeOpts.extraArgs = sanitizeExtraArgs(cli, safeOpts.extraArgs)
+  }
+  // 路径型参数安全检查：防止 systemPromptFile/transcriptOut/pricingFile 路径穿越
+  for (const pathKey of ['systemPromptFile', 'transcriptOut', 'pricingFile']) {
+    if (opts[pathKey] != null) {
+      if (!isSafePath(String(opts[pathKey]))) {
+        throw new Error(
+          `runAgent: ${pathKey} 必须是相对路径且不能逃逸工作目录` +
+          `（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
+        )
+      }
+      safeOpts[pathKey] = opts[pathKey]
+    }
+  }
+
   if (isDryRun()) {
     if (schema) return stubFromSchema(schema)
     return Object.assign(`[dry-run] ${cli} 未真实执行`, { _meta: { cli, dryRun: true } })
@@ -288,7 +322,7 @@ export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetr
     throw new Error(`未知 CLI: ${cli}，支持：${known}（或通过 registerExecutor 注册的自定义执行器）`)
   }
   const fn = entry.run
-  const runner = (p) => fn(p, { cwd: cwd ?? _defaultCwd, ...opts })
+  const runner = (p) => fn(p, { cwd: cwd ?? _defaultCwd, ...safeOpts })
   if (schema) return runStructured(runner, prompt, { schema, retries: schemaRetries })
   return runner(prompt)
 }

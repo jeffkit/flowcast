@@ -6,7 +6,8 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./internal": "./internal.js"
+    "./internal": "./internal.js",
+    "./orchestrator": "./orchestrator/index.js"
   },
   "bin": {
     "flowcast": "./bin/flowcast.js",
@@ -20,6 +21,8 @@
   "files": [
     "index.js",
     "internal.js",
+    "errors.js",
+    "adapters.js",
     "dirs.js",
     "checkpoint.js",
     "spawn.js",

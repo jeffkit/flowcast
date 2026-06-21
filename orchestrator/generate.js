@@ -52,7 +52,7 @@ Output ONLY the flow code in a single \`\`\`js code block. No explanation.`
  *   - agent          生成用 agent profile 名（默认 'claude-sonnet'）
  *   - agents, providers
  *   - generate       可注入的生成函数 (prompt)=>Promise<text>（测试用，省去真实 LLM）
- *   - maxAttempts    默认 2（生成 + 失败回喂重试一次）
+ *   - maxAttempts    默认 3（生成 + 最多 2 次回喂纠错）
  * @returns {Promise<{file,code,attempts,validation}>}
  */
 export async function generateFlow(request, {

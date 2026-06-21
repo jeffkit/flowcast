@@ -2,6 +2,9 @@ import { spawnCapture } from './spawn.js'
 import { isDryRun } from './dry-run.js'
 import { loadMergedConfig, basenamesFor } from './provider.js'
 import { parallel } from './concurrency.js'
+import { realpathSync, existsSync } from 'fs'
+import { resolve } from 'path'
+import { GateError, ConfigError } from './errors.js'
 
 // ── qualityGate：声明式质量门 ⭐ ───────────────────────────────────
 //
@@ -44,16 +47,56 @@ export async function runGate(gate, deps = {}) {
   const onEvent = gate.onEvent ?? deps.onEvent
   const emit = (data) => { if (onEvent) { try { onEvent({ event: 'gate', name, ...data }) } catch { /* 观测不影响主流程 */ } } }
 
+  // cwd 安全校验（P1-A5 修复）：
+  // 当 deps.repo 已知时，确保 gate 的 cwd 不逃逸 repo 目录（防止 gates.json 被篡改后
+  // 用 cwd: '/etc' 让检查命令在任意目录运行）。
+  // 只在 cwd 非默认时（gate 显式设置了 cwd）才校验，避免误拦 process.cwd() 默认值。
+  //
+  // symlink 逃逸修复：对 cwd 和 repo 双侧都做 realpathSync，消除通过符号链接绕过路径前缀
+  // 比较的攻击面（如 evil -> /etc 后 cwd='evil' 在 startsWith 检查前看起来合法）。
+  // realpathSync 失败（目录不存在等）时拒绝执行，而非保守放行——
+  // 无法解析的 cwd 不应允许命令在其中运行。
+  if (gate.cwd && deps.repo) {
+    try {
+      const repoReal = realpathSync(resolve(deps.repo))
+      const cwdReal = realpathSync(resolve(cwd))
+      if (!cwdReal.startsWith(repoReal + '/') && cwdReal !== repoReal) {
+        const err = new ConfigError(
+          `quality gate '${name}': cwd '${cwd}' 必须在 repo '${deps.repo}' 内（防路径穿越）`,
+        )
+        err.gate = name
+        throw err
+      }
+    } catch (e) {
+      if (e.configError) throw e
+      // realpathSync 失败（路径不存在、权限等）→ 拒绝执行，不保守放行
+      // 无法确认安全边界的 cwd 不应允许命令在其中运行。
+      const err = new ConfigError(
+        `quality gate '${name}': 无法解析 cwd '${cwd}' 或 repo '${deps.repo}' 的真实路径` +
+        `（${e.message}）——拒绝执行以防路径穿越`,
+      )
+      err.gate = name
+      throw err
+    }
+  }
+
+  // 字符串 cmd 安全提示（P1-A5 信息）：
+  // 字符串 cmd 走 sh -c，shell 负责变量展开（FLOW_API 契约允许，文档已说明信任边界）。
+  // 此处仅对非受信来源的 gates（loadGates 加载的项目级配置）打 debug，不强制拦截。
+  // 高安全场景请改用数组形式 cmd（规避 sh -c）。
+
   // 配置校验：进门前 fail-fast，不白跑检查命令
   if (onFail === 'autofix' && !autofixCmd) {
-    const err = new Error(`quality gate '${name}' 配置错误：onFail=autofix 必须同时提供 autofixCmd`)
-    err.gate = name; err.configError = true
+    const err = new ConfigError(`quality gate '${name}' 配置错误：onFail=autofix 必须同时提供 autofixCmd`)
+    err.gate = name
     throw err
   }
   if (onFail === 'resume-fix' && typeof resumeFix !== 'function') {
-    const err = new Error(`quality gate '${name}' 配置错误：onFail=resume-fix 必须同时提供 resumeFix 回调（函数），` +
-      `可通过 gate.resumeFix 或 deps.resumeFix 注入`)
-    err.gate = name; err.configError = true
+    const err = new ConfigError(
+      `quality gate '${name}' 配置错误：onFail=resume-fix 必须同时提供 resumeFix 回调（函数），` +
+      `可通过 gate.resumeFix 或 deps.resumeFix 注入`,
+    )
+    err.gate = name
     throw err
   }
 
@@ -67,17 +110,13 @@ export async function runGate(gate, deps = {}) {
     const fix = await runShell(autofixCmd, cwd, timeout)
     if (fix.exitCode !== 0) {
       emit({ status: 'fail', exitCode: fix.exitCode, autofixFailed: true })
-      const err = new Error(`quality gate '${name}': autofixCmd failed (exit ${fix.exitCode})`)
-      err.gate = name; err.output = fix.stdout; err.exitCode = fix.exitCode
-      throw err
+      throw new GateError(name, fix.exitCode, fix.stdout, 'autofixCmd failed')
     }
     // autofix 后重跑检查，确认真的修好了
     const re = await runShell(cmd, cwd, timeout)
     if (re.exitCode !== 0) {
       emit({ status: 'fail', exitCode: re.exitCode, autofixFailed: true })
-      const err = new Error(`quality gate '${name}': still failing after autofix (exit ${re.exitCode})`)
-      err.gate = name; err.output = re.stdout; err.exitCode = re.exitCode
-      throw err
+      throw new GateError(name, re.exitCode, re.stdout, 'still failing after autofix')
     }
     emit({ status: 'pass', attempts: 2, autofixed: true })
     return { name, passed: true, attempts: 2, autofixed: true, output: re.stdout }
@@ -94,11 +133,7 @@ export async function runGate(gate, deps = {}) {
   }
 
   emit({ status: 'fail', exitCode })
-  const err = new Error(`quality gate '${name}' failed (exit ${exitCode})`)
-  err.gate = name
-  err.output = stdout
-  err.exitCode = exitCode
-  throw err
+  throw new GateError(name, exitCode, stdout)
 }
 
 /**

@@ -24,3 +24,27 @@ export function assertSafeIdent(name, field = 'name') {
   }
   return name
 }
+
+// ── 统一事件 schema（P1-O1）──────────────────────────────────────────
+//
+// cp.event / setAgentEventSink / quality-gate onEvent / verify 等各模块的事件格式不统一，
+// 导致 dashboard 难以跨模块聚合。
+// makeEvent() 提供规范化辅助：将各模块的原始 payload 统一包装成
+//   { type, runId?, ts, durationMs?, ...payload }
+// 各模块仍可自由扩展 payload 字段，但必须包含 type 和 ts。
+
+/**
+ * 构造符合统一 FlowcastEvent schema 的事件对象。
+ * @param {string}  type       事件类型（如 'gate.pass' / 'agent.fallback' / 'step.done'）
+ * @param {object}  [payload]  额外字段（与 type/runId/ts/durationMs 合并）
+ * @param {object}  [ctx]      上下文注入
+ * @param {string}  [ctx.runId]       run 标识（来自 Checkpoint.runId 或 orchestrate 的 runId）
+ * @param {number}  [ctx.durationMs]  事件耗时（ms）
+ * @returns {{ type: string, ts: string, runId?: string, durationMs?: number, [key: string]: any }}
+ */
+export function makeEvent(type, payload = {}, { runId, durationMs } = {}) {
+  const evt = { type, ts: new Date().toISOString() }
+  if (runId !== undefined) evt.runId = runId
+  if (durationMs !== undefined) evt.durationMs = durationMs
+  return Object.assign(evt, payload)
+}

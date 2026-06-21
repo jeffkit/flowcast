@@ -5,6 +5,7 @@
 // 这一场景，不追求完整 JSON Schema 规范——保持零运行时依赖 + 可读。
 
 import { isDryRun } from './dry-run.js'
+import { SchemaError } from './errors.js'
 
 /** 从 LLM 文本里抽出 JSON：优先 ```json fenced，其次第一个平衡 {..}/[..] 块，最后整段 parse。 */
 export function extractJson(text) {
@@ -47,21 +48,41 @@ function firstBalanced(s) {
 
 /**
  * 校验 value 是否符合 schema（支持上述子集）。
+ * @param {any}    value
+ * @param {object} schema
+ * @param {string} [path='$']
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowPartialSchema=false]
+ *   true = 遇到 oneOf/anyOf/allOf 时只打 warn 并跳过（向后兼容降级），
+ *   false = 遇到不支持的关键字时记录错误（P1-A4 修复，默认行为）。
  * @returns {{ok:boolean, errors:string[]}}
  */
-export function validateSchema(value, schema, path = '$') {
+export function validateSchema(value, schema, path = '$', opts = {}) {
   const errors = []
-  walk(value, schema, path, errors)
+  walk(value, schema, path, errors, opts)
   return { ok: errors.length === 0, errors }
 }
 
-function walk(value, schema, path, errors) {
+function walk(value, schema, path, errors, opts = {}) {
   if (!schema || typeof schema !== 'object') return
   // 本实现只支持 type/properties/required/items/enum/additionalProperties 子集。
-  // oneOf/anyOf/allOf 会被静默忽略——发现时打 warn 让调用方知情，避免「校验通过但语义不对」。
+  // oneOf/anyOf/allOf 是 P1-A4 修复点：旧实现静默忽略，可能导致校验「假通过」。
+  // 新行为：
+  //   - schema 未标记 allowPartialSchema=true → 抛错，让调用方知道 schema 超出了本实现的支持范围
+  //   - schema 标记 allowPartialSchema=true → warn（向后兼容降级），跳过不支持的关键字
   if (schema.oneOf || schema.anyOf || schema.allOf) {
     const unsupported = ['oneOf', 'anyOf', 'allOf'].filter(k => schema[k]).join(', ')
-    console.warn(`[schema] 警告：${path} 使用了不支持的关键字（${unsupported}），将被忽略。本实现只支持 type/properties/required/items/enum/additionalProperties`)
+    if (schema.allowPartialSchema || opts.allowPartialSchema) {
+      console.warn(`[schema] 警告：${path} 使用了不支持的关键字（${unsupported}），将被忽略。` +
+        `本实现只支持 type/properties/required/items/enum/additionalProperties`)
+    } else {
+      errors.push(
+        `${path}: 使用了不支持的 JSON Schema 关键字（${unsupported}）。` +
+        `本实现仅支持子集：type/properties/required/items/enum/additionalProperties。` +
+        `若确认可以接受忽略此关键字，请在 schema 顶层加 "allowPartialSchema": true。`,
+      )
+      return  // 提前退出，避免产生误导性的后续错误
+    }
   }
   const t = schema.type
   if (t && !typeMatches(value, t)) {
@@ -83,11 +104,11 @@ function walk(value, schema, path, errors) {
       }
     }
     for (const [k, sub] of Object.entries(props)) {
-      if (k in value) walk(value[k], sub, `${path}.${k}`, errors)
+      if (k in value) walk(value[k], sub, `${path}.${k}`, errors, opts)
     }
   }
   if ((t === 'array' || (!t && Array.isArray(value))) && Array.isArray(value) && schema.items) {
-    value.forEach((el, i) => walk(el, schema.items, `${path}[${i}]`, errors))
+    value.forEach((el, i) => walk(el, schema.items, `${path}[${i}]`, errors, opts))
   }
 }
 
@@ -157,9 +178,10 @@ export async function runStructured(runner, prompt, { schema, retries = 1 } = {}
     if (ok) return parsed
     priorError = `JSON 不符合 schema：\n${errors.join('\n')}`
   }
-  const err = new Error(`runStructured: ${retries + 1} 次尝试后仍不符合 schema — ${priorError}`)
-  err.schemaError = priorError
-  throw err
+  throw new SchemaError(
+    `runStructured: ${retries + 1} 次尝试后仍不符合 schema — ${priorError}`,
+    priorError,
+  )
 }
 
 function buildSchemaPrompt(prompt, schema, priorError) {

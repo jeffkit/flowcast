@@ -34,10 +34,10 @@
 | `loadGates({repo})` | 加载业务项目自定义质量门（`<repo>/.flowcast/gates.json`，map by name；与 `loadProviders`/`loadAgents` 对称），返回有序门数组 |
 | `mergeGates(builtin, project)` | 合并内置默认门与项目门（按门名去重，项目同名覆盖，新增追加在后） |
 | `verifyAdversarial(claim, {voters?, lenses?, threshold?, context?, agent?})` | **可选**对抗式验证：多个怀疑者独立尝试反驳 claim，过阈值才判成立。用于审计/bug 猎杀/高风险评审等确信度关键场景，与 `runGate` 互补，**非强制环** |
-| `parallel(thunks, {concurrency?})` | 并行跑多个 `() => Promise`（单层 barrier，等齐全部），某个失败返回 null 不中断；`concurrency` 限并发 |
+| `parallel(thunks, {concurrency?, strict?})` | 并行跑多个 `() => Promise`（单层 barrier，等齐全部）；`concurrency` 限并发。**默认 `strict=true`**：任一失败则等全部跑完后汇总抛出含 `err.failures` 的 Error。传 `strict: false` 可改为「失败位置返回 null、其余继续」（适合部分失败可接受的批量场景；须检查结果中的 null）|
 | `pipeline(items, ...stages, {concurrency?}?)` | 流式流水线：每个 item 独立穿过所有 stage，**stage 间无 barrier**（快的先完成、零空等）。stage 签名 `(prev, item, index)`；末位可传 `{concurrency}`。需要某 stage 看到全部上游结果时改用 `parallel` 收口 |
 | `runFlow(flowRef, opts)` | 把另一条 flow 当独立子进程跑（隔离+超时+续跑由其 `--run-id` 负责） |
-| `fanOut(tasks, {concurrency?, isolate?, logDir?, onResult?})` | 并发编排多条子 flow：限并发 + 可选 worktree 隔离 + 每任务日志 + 结果汇总 |
+| `fanOut(tasks, {concurrency?, isolate?, logDir?, onResult?, cleanWorktrees?})` | 并发编排多条子 flow：限并发 + 可选 worktree 隔离 + 每任务日志 + 结果汇总。`cleanWorktrees` 默认 `false`（保留现场便于调试）；**长期/循环使用时建议传 `cleanWorktrees: true`** 以避免 `.worktrees/` 无限堆积|
 | `gitWorktreeAdd(repo, dir)` / `gitWorktreeRemove(repo, dir)` | 受控 git worktree（给 fanOut 做每任务隔离用） |
 | `withSelfModGuard(fn, {repo, baseline})` | 自改安全沙箱：失败硬回滚（需要先 `captureBaseline`） |
 | `captureBaseline(repo, {requireClean})` | 捕获 git baseline |

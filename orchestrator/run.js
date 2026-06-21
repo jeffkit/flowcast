@@ -10,6 +10,7 @@ import { decompose } from './decompose.js'
 import { runFlow, fanOut, archiveChildRun } from '../subflow.js'
 import { parallel } from '../concurrency.js'
 import { flowcastDir } from '../dirs.js'
+import { assertSafeIdent } from '../helpers.js'
 
 const FLOWCAST_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -73,6 +74,9 @@ export async function orchestrate(request, {
   maxAttempts,  // 透传给 generateFlow（默认 3，复杂需求可调高）
   dryRun = false, timeout, onData, extraArgs = [],
 } = {}) {
+  // runId 拼入文件路径，必须通过标识符白名单校验（防路径穿越 ../../etc/passwd）
+  assertSafeIdent(runId, 'runId')
+
   const dep = checkFlowcastResolvable(repo)
   if (!dep.ok) return { ok: false, stage: 'precheck', error: dep.error }
 
@@ -162,6 +166,9 @@ export async function orchestrateMulti(goal, {
   failFast = true,  // true（默认）= 任意子任务生成失败则整体中止；false = 收集所有失败，尽量跑完
   isolate = 'worktree', dryRun = false, timeout, onData,
 } = {}) {
+  // runId 拼入文件路径，必须通过标识符白名单校验（防路径穿越）
+  assertSafeIdent(runId, 'runId')
+
   const dep = checkFlowcastResolvable(repo)
   if (!dep.ok) return { ok: false, stage: 'precheck', runId, error: dep.error }
 
@@ -225,6 +232,8 @@ export async function orchestrateMulti(goal, {
   try {
     flowTaskResults = await parallel(
       tasks.map((t) => async () => {
+        // t.name 拼入子 run 目录；fanOut 也验证，但这里是第二道防线（续跑复用路径）
+        assertSafeIdent(t.name, 'task.name')
         const subDir = join(runDir, 'sub', t.name)
         const file = join(subDir, 'flow.mjs')
         if (!existsSync(file)) {

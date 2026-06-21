@@ -7,6 +7,27 @@ import { execFileSync } from 'child_process'
 import { existsSync, realpathSync } from 'fs'
 import { isDryRun } from './dry-run.js'
 
+// 分支名安全校验：允许字母数字 / . _ - /（支持 feature/xxx 命名空间），
+// 但不允许：以 - 开头（被 git 解析为 flag）、包含 .. （相对 ref）、空字符或空格。
+function assertSafeBranchName(name) {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error(`gitCreateBranch: 分支名不能为空`)
+  }
+  if (name.startsWith('-')) {
+    throw new Error(`gitCreateBranch: 分支名 '${name}' 不能以 '-' 开头（会被 git 解析为 flag）`)
+  }
+  if (name.includes('..')) {
+    throw new Error(`gitCreateBranch: 分支名 '${name}' 不能包含 '..'（会被 git 解析为相对 ref）`)
+  }
+  // 只允许安全字符集：字母数字 . _ - /
+  if (/[^a-zA-Z0-9._\-/]/.test(name)) {
+    throw new Error(
+      `gitCreateBranch: 分支名 '${name}' 含不安全字符，` +
+      `只允许 字母 数字 . _ - /`,
+    )
+  }
+}
+
 // 内部 helper，供 self-mod-guard.js 共用；不经 index.js 对外暴露。
 export function git(args, cwd) {
   try {
@@ -52,6 +73,8 @@ export function gitCommitsAhead(repo = process.cwd(), baseRef = 'main') {
  */
 export function gitCreateBranch(repo = process.cwd(), name) {
   if (!name) throw new Error('gitCreateBranch 需要 name')
+  // 分支名安全校验：防止以 - 开头被 git 当作 flag，或包含路径遍历等危险字符
+  assertSafeBranchName(name)
   if (isDryRun()) return { branch: name, created: false, dryRun: true }
   const exists = !!git(['branch', '--list', name], repo)
   git(exists ? ['checkout', name] : ['checkout', '-b', name], repo)

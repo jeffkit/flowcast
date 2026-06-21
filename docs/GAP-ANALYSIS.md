@@ -1,16 +1,16 @@
 # flowcast 可用性 Gap 评审报告
 
 > 评审人视角：资深架构师
-> 评审日期：2026-06-14
-> 评审对象：flowcast `main`（commit `9911a80`，version `0.1.0`）
+> 初版评审日期：2026-06-14（version `0.1.0`，commit `9911a80`，226 测试）
+> 更新日期：2026-06-21（version `0.3.2`，约 270 测试）
 > 核心问题：**距离「真正可用」（对外可被陌生用户安装、按文档跑通、产出可信赖）还差什么？**
 
 ---
 
 ## 0. 评审方法
 
-- 通读三层架构全部核心模块（L1 `agent.js`/`executor.js`、L2 `checkpoint.js`/`self-mod-guard.js`/`quality-gate.js`/`loop.js`/`subflow.js`、L3 `orchestrator/`）。
-- 运行全量单测：`npm test` → **226 通过 / 0 失败**。
+- 通读三层架构全部核心模块（L1 `adapters.js`/`executor.js`、L2 `checkpoint.js`/`self-mod-guard.js`/`quality-gate.js`/`loop.js`/`subflow.js`、L3 `orchestrator/`）。
+- 运行全量单测：`npm test` → **约 270 通过 / 0 失败**（版本 0.3.2）。
 - 核对文档（`README.md`、`CLAUDE.md`、`BACKGROUND.md`、`EVALUATION.md`、`exec-plans/active/*/status.md`）与代码实现的一致性。
 - 检查工程化基础设施（CI、lint、format、发布链路）与文件完整性。
 
@@ -18,7 +18,7 @@
 
 ## 1. 总体结论
 
-flowcast 的**内核设计是扎实的**：原语正交、零运行时依赖、纯 ESM、经历了 8 轮安全审计修复，226 个单测全绿。L1/L2 已达到「能作为库被消费」的成熟度（recursive 仓的 `file:` 依赖消费已验证）。
+flowcast 的**内核设计是扎实的**：原语正交、零运行时依赖、纯 ESM、经历了多轮安全审计修复，约 270 个单测全绿（v0.3.2）。L1/L2 已达到「能作为库被消费」的成熟度（recursive 仓的 `file:` 依赖消费已验证）。
 
 但**距离「对外真正可用」仍有明确缺口**，集中在三类：
 

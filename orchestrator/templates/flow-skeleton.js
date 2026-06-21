@@ -55,11 +55,20 @@ async function main() {
 }
 
 /** 按 agent profile 名跑一次执行器；dry-run 下自动 fake。
- *  传 extra.schema 时强制结构化输出（经 runStructured 校验+回喂重试），返回解析后的对象。 */
+ *  传 extra.schema 时强制结构化输出（经 runStructured 校验+回喂重试），返回解析后的对象。
+ *  对 recursive 执行器默认启用 throwOnCritical=true：确保 panicked/budgetExceeded/非零退出
+ *  正确抛错（而非返回含错误信息的字符串），防止编排层把失败当成功继续执行。
+ *  如需保留 recursive 原始「exit code 作数据」语义，显式传 { throwOnCritical: false }。 */
 async function runProfile(agentName, taskGoal, extra = {}) {
   const a = resolveAgent(agentName, agents, { providers })
   const { schema, schemaRetries, ...rest } = extra
-  const runner = (p) => a.run(p, { cwd: repo, ...a.opts, ...rest })
+  // recursive 执行器默认 throwOnCritical=true；调用方可显式覆盖为 false
+  const throwOnCritical = a.executor === 'recursive' && !('throwOnCritical' in rest)
+    ? true
+    : rest.throwOnCritical
+  const runOpts = { cwd: repo, ...a.opts, ...rest }
+  if (a.executor === 'recursive') runOpts.throwOnCritical = throwOnCritical
+  const runner = (p) => a.run(p, runOpts)
   if (schema) return runStructured(runner, taskGoal, { schema, retries: schemaRetries })
   return runner(taskGoal)
 }

@@ -10,16 +10,14 @@ import { spawn } from 'child_process'
 import { readdirSync, statSync, unlinkSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { isRetryable, TimeoutError, SpawnError } from './errors.js'
 
 // ── provider 回退判定 ────────────────────────────────────────────────
-
-// 限额/超载错误 → 可回退到下一个 provider
-const RETRYABLE_PROVIDER_ERR = /rate.?limit|session limit|too many requests|quota|overloaded|\b429\b|\b529\b/i
+//
+// 委托到 errors.js 的统一 isRetryable，保留本名兼容现有调用方。
 
 export function isProviderRetryable(err) {
-  return err?.timedOut === true ||
-    err?.apiStatus === 429 || err?.apiStatus === 529 ||
-    RETRYABLE_PROVIDER_ERR.test(err?.message ?? '')
+  return isRetryable(err)
 }
 
 // ── spawnCapture：捕获式 spawn ───────────────────────────────────────
@@ -106,14 +104,10 @@ export function spawnCapture(cmd, args, { cwd = process.cwd(), timeout, env, onD
 export async function spawnCli(cli, args, cwd, timeout, env) {
   const r = await spawnCapture(cli, args, { cwd, timeout, env })
   if (r.spawnError) {
-    const e = new Error(`[${cli}] spawn failed: ${r.spawnError}`)
-    e.spawnError = r.spawnError
-    throw e
+    throw new SpawnError(`[${cli}] spawn failed: ${r.spawnError}`, r.spawnError)
   }
   if (r.timedOut) {
-    const e = new Error(`[${cli}] timeout after ${timeout}ms`)
-    e.timedOut = true
-    throw e
+    throw new TimeoutError(`[${cli}] timeout after ${timeout}ms`)
   }
   if (r.exitCode !== 0) throw new Error(`[${cli}] exit ${r.exitCode}\n${r.stdout.trim()}`)
   return r.stdout

@@ -68,6 +68,8 @@ function stripComments(src) {
 export function scanImports(source) {
   const code = stripComments(source)
   const violations = []
+
+  // ── ① 静态 import / 副作用 import / 字面量动态 import ─────────────
   const patterns = [
     /\bimport\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/g, // import x from 'm'
     /\bimport\s*['"]([^'"]+)['"]/g,                  // import 'm'（副作用）
@@ -88,6 +90,44 @@ export function scanImports(source) {
       }
     }
   }
+
+  // ── ① bis: export ... from 'module'（re-export，可绕过 import 白名单）──
+  //
+  // 生成的 flow 是可执行脚本，不需要也不应该 re-export 任何内容。
+  // `export { readFileSync } from 'fs'` 或 `export * from 'node:child_process'`
+  // 会把受限模块的绑定挂到脚本的 Module 命名空间，等效于 import 后立即使用——
+  // 静态分析若不拦截则护栏②对 re-export 形式失效，产生假安全感。
+  //
+  // 拦截策略：任何 `export ... from` 均视为违规（生成 flow 不需要导出绑定）。
+  // 两类形态：
+  //   export { x, y } from 'm'
+  //   export * from 'm'  /  export * as ns from 'm'
+  const reExportPatterns = [
+    /\bexport\s*\{[^}]*\}\s*from\s*['"]([^'"]+)['"]/g, // export { x } from 'm'
+    /\bexport\s*\*(?:\s*as\s+\w+)?\s*from\s*['"]([^'"]+)['"]/g, // export * from 'm'
+  ]
+  for (const re of reExportPatterns) {
+    let m
+    while ((m = re.exec(code))) {
+      // 不论 specifier 是否在白名单，re-export 本身即违规（生成 flow 无导出需求）
+      violations.push(`[re-export] export...from '${m[1]}' is not allowed in generated flows`)
+    }
+  }
+
+  // ── ② 非字面量动态 import/require（安全边界的关键补丁）──────────────
+  //
+  // 上面 patterns[2] 已捕获 import('literal') 的字符串字面量参数。
+  // 但动态 import(variable)、import(`template-${x}`) 无法被 patterns[2] 匹配，
+  // 其 specifier 不进 violations——相当于允许了任意模块的运行时导入，绕过白名单。
+  //
+  // 修复：把已知安全的字面量形式替换占位符，检测剩余的任何 import( / require( 调用，
+  // 并视为违规——静态分析无法确认其导入目标，不能允许。
+  const withoutLiteralDynamic = code
+    .replace(/\b(?:import|require)\s*\(\s*['"][^'"]+['"]\s*\)/g, '__safe_dynamic_import__()')
+  if (/\b(?:import|require)\s*\(/.test(withoutLiteralDynamic)) {
+    violations.push('[non-literal-dynamic-import: import()/require() must use a string literal argument]')
+  }
+
   return [...new Set(violations)]
 }
 
