@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { Checkpoint, PauseSignal } from '../checkpoint.js'
 import { clearFlowcastDirCache, flowcastDir } from '../dirs.js'
-import { TimeoutError } from '../errors.js'
+import { TimeoutError, SpawnError } from '../errors.js'
 
 function tempDir() { return mkdtempSync(join(tmpdir(), 'flowcast-cp-')) }
 
@@ -246,6 +246,22 @@ test('Checkpoint.step: TimeoutError 序列化后 error 对象包含 timedOut: tr
     const errEvt = events.find(e => e.event === 'error')
     assert.ok(errEvt, 'error 事件应触发')
     assert.strictEqual(errEvt.error.timedOut, true, '序列化 error 应包含 timedOut: true')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint.step: SpawnError 序列化后 error 对象包含 exitCode 和 spawnError 字段', async () => {
+  const dir = tempDir()
+  try {
+    const events = []
+    const cp = new Checkpoint('r-spawn-serial', dir, { onStep: (e) => events.push(e) })
+    const spawnErr = new SpawnError('[test] spawn failed', null, { exitCode: 127 })
+    await assert.rejects(
+      () => cp.step('spawn-step', async () => { throw spawnErr }),
+    )
+    const errEvt = events.find(e => e.event === 'error')
+    assert.ok(errEvt, 'error 事件应触发')
+    assert.equal(errEvt.error.exitCode, 127, '序列化 error 应包含 exitCode')
+    assert.ok(errEvt.error.code === 'SPAWN_ERROR', '序列化 error 应包含 code')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

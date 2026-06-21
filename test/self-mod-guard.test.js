@@ -6,6 +6,7 @@ import { join } from 'path'
 import { execFileSync } from 'child_process'
 
 import { withSelfModGuard, captureBaseline } from '../self-mod-guard.js'
+import { GuardError } from '../errors.js'
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -30,14 +31,28 @@ function cleanup(repo) {
 test('captureBaseline 无 commit 时抛错', () => {
   const repo = mkdtempSync(join(tmpdir(), 'flowcast-guard-empty-'))
   git(['init', '-q'], repo)
-  assert.throws(() => captureBaseline(repo), /无 baseline commit/)
+  assert.throws(
+    () => captureBaseline(repo),
+    (err) => {
+      assert.match(err.message, /无 baseline commit/)
+      assert.ok(err instanceof GuardError, `应为 GuardError，实际：${err?.constructor?.name}`)
+      return true
+    },
+  )
   cleanup(repo)
 })
 
 test('captureBaseline 工作树脏时抛错（requireClean）', () => {
   const repo = makeRepo()
   writeFileSync(join(repo, 'a.txt'), 'dirty\n')
-  assert.throws(() => captureBaseline(repo), /工作树不干净/)
+  assert.throws(
+    () => captureBaseline(repo),
+    (err) => {
+      assert.match(err.message, /工作树不干净/)
+      assert.ok(err instanceof GuardError, `应为 GuardError，实际：${err?.constructor?.name}`)
+      return true
+    },
+  )
   cleanup(repo)
 })
 

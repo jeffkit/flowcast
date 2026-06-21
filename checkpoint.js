@@ -143,6 +143,9 @@ export class Checkpoint {
         exitCode: e.exitCode,
         schemaError: e.schemaError,
         configError: e.configError,
+        spawnError: e.spawnError ? String(e.spawnError) : undefined,
+        failures: e.failures ? e.failures.map(f => ({ index: f.index, message: f.error?.message })) : undefined,
+        voterErrors: e.voterErrors ? e.voterErrors.map(ve => ve?.message) : undefined,
       }
       Object.keys(error).forEach(k => error[k] === undefined && delete error[k])
       const durationMs = Date.now() - startedAt

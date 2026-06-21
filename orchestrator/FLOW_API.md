@@ -34,10 +34,14 @@
 | `loadGates({repo})` | 加载业务项目自定义质量门（`<repo>/.flowcast/gates.json`，map by name；与 `loadProviders`/`loadAgents` 对称），返回有序门数组 |
 | `mergeGates(builtin, project)` | 合并内置默认门与项目门（按门名去重，项目同名覆盖，新增追加在后） |
 | `verifyAdversarial(claim, {voters?, lenses?, threshold?, context?, agent?})` | **可选**对抗式验证：多个怀疑者独立尝试反驳 claim，过阈值才判成立。用于审计/bug 猎杀/高风险评审等确信度关键场景，与 `runGate` 互补，**非强制环** |
-| `parallel(thunks, {concurrency?, strict?})` | 并行跑多个 `() => Promise`（单层 barrier，等齐全部）；`concurrency` 限并发。**默认 `strict=true`**：任一失败则等全部跑完后汇总抛出含 `err.failures` 的 Error。传 `strict: false` 可改为「失败位置返回 null、其余继续」（适合部分失败可接受的批量场景；须检查结果中的 null）|
+| `parallel(thunks, {concurrency?, strict?, failFast?, onError?})` | 并行跑多个 `() => Promise`（单层 barrier，等齐全部）；`concurrency` 限并发。**默认 `strict=true`**：任一失败则等全部跑完后汇总抛出 **`ParallelError`**（`err.failures` 含 `{index,error}` 数组）。传 `strict: false` 可改为「失败位置返回 null、其余继续」（适合部分失败可接受的批量场景；须检查结果中的 null）。`onError` 回调 `({index,error})=>void` 在 `strict:false` 时捕获各任务错误 |
 | `pipeline(items, ...stages, {concurrency?}?)` | 流式流水线：每个 item 独立穿过所有 stage，**stage 间无 barrier**（快的先完成、零空等）。stage 签名 `(prev, item, index)`；末位可传 `{concurrency}`。需要某 stage 看到全部上游结果时改用 `parallel` 收口 |
 | `runFlow(flowRef, opts)` | 把另一条 flow 当独立子进程跑（隔离+超时+续跑由其 `--run-id` 负责） |
-| `fanOut(tasks, {concurrency?, isolate?, logDir?, onResult?, cleanWorktrees?})` | 并发编排多条子 flow：限并发 + 可选 worktree 隔离 + 每任务日志 + 结果汇总。`cleanWorktrees` 默认 `false`（保留现场便于调试）；**长期/循环使用时建议传 `cleanWorktrees: true`** 以避免 `.worktrees/` 无限堆积|
+| `fanOut(tasks, {concurrency?, isolate?, logDir?, prepare?, onResult?, onData?, cleanWorktrees?})` | 并发编排多条子 flow：限并发 + 可选 worktree 隔离 + 每任务日志 + 结果汇总。`prepare` 钩子在隔离后、跑 flow 前执行；`onData` 实时输出回调。**`prepare`/`onResult` 抛错为硬失败**：整批 fanOut reject，`err.partialResults` 含已完成结果；子 flow 非零退出为软失败，返回 `result.ok === false` 且不 reject。`cleanWorktrees` 默认 `false`（保留现场便于调试）；**长期/循环使用时建议传 `cleanWorktrees: true`** 以避免 `.worktrees/` 无限堆积 |
+| `loop(iterate, {goal, isDone, gates?, maxTurns?, maxRuntimeMs?, memoryScope?, runId?, stateDir?, onEvent?})` | goal-driven 循环原语：每轮 fresh context 迭代，复用 Checkpoint 续跑，每轮跑质量门硬验证，可选写入跨-run 记忆。`iterate` 签名 `async ({turn, goal, memorySection, lastVerdict, lastResult})=>result`；`isDone` 签名 `async ({turn,result,gateResults,state})=>boolean`。返回 `{status,turns,lastResult,runId}`，`status ∈ 'completed'|'budget_exhausted'` |
+| `recordLearning(entry, {scope, baseDir?})` | 跨-run 记忆写入：把经验/教训追加进 `<baseDir>/<scope>.jsonl`。`entry` 形状 `{topic,rootCause,fix,tags?,runId?}` |
+| `recall(query, {scope, baseDir?, maxEntries?})` | 跨-run 记忆召回：按关键词/tag 匹配相关历史条目，返回 `{entries, total}` |
+| `buildMemorySection(query, {scope, baseDir?, maxEntries?})` | 把召回结果格式化成可注入 prompt 的 Markdown 段落（供 `iterate` 使用） |
 | `gitWorktreeAdd(repo, dir)` / `gitWorktreeRemove(repo, dir)` | 受控 git worktree（给 fanOut 做每任务隔离用） |
 | `withSelfModGuard(fn, {repo, baseline})` | 自改安全沙箱：失败硬回滚（需要先 `captureBaseline`） |
 | `captureBaseline(repo, {requireClean})` | 捕获 git baseline |

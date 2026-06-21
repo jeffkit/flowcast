@@ -8,6 +8,7 @@ import { join } from 'path'
 import { validateFlow } from './validate.js'
 import { FLOW_API_DOC, GOLDEN_SAMPLE } from './paths.js'
 import { resolveGenerateFn } from './agent-helper.js'
+import { ConfigError } from '../errors.js'
 
 /** 从 LLM 输出里抽取代码：优先 ```js 代码块，否则整段。 */
 export function extractCode(text) {
@@ -68,7 +69,7 @@ export async function generateFlow(request, {
   generate,
   maxAttempts = 3,  // 默认 3：生成 + 最多 2 次回喂纠错；复杂需求一次往往不够
 } = {}) {
-  if (!runDir) throw new Error('generateFlow 需要 runDir')
+  if (!runDir) throw new ConfigError('generateFlow 需要 runDir')
   mkdirSync(runDir, { recursive: true })
   const file = join(runDir, 'flow.mjs')
   const agentsList = Object.keys(agents)

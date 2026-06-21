@@ -144,7 +144,9 @@ export function runFlow(flowRef, {
  *   默认 false——保留 worktree 方便事后检查失败现场。**注意**：长期运行（如 fanOut 循环）若不
  *   开启此项，`.worktrees/` 目录会随任务数增长无限堆积，建议显式传 `cleanWorktrees: true`
  *   或事后调 `flowcast worktree prune` / 手动 `gitWorktreeRemove` 清理。
- * @returns {Promise<Array<{task:object, result:object, worktree?:string}>>}  按 tasks 原序
+ * @returns {Promise<Array<{task:object, result:object, worktree?:string}>>}  按 tasks 原序。
+ *   `prepare`/`onResult` 抛错为硬失败，整批 fanOut 会 reject（`err.partialResults` 含已完成结果）；
+ *   子 flow 非零退出为软失败，返回 `result.ok === false`
  */
 export async function fanOut(tasks, {
   repo = process.cwd(), concurrency = 1, isolate = 'none',
@@ -159,10 +161,6 @@ export async function fanOut(tasks, {
   }
 
   const runOne = async (task, idx) => {
-    // task.name 是 worktree 路径与日志文件名的直接拼入部分。
-    // path.join 会解析 `..`，不安全的名字会路径穿越。
-    // 白名单字符校验拦在源头（与 helpers.assertSafeIdent 一致）。
-    assertSafeIdent(task.name, 'task.name')
     let cwd = task.cwd ?? repo
     let worktree
     if (isolate === 'worktree' && !dryRun) {
@@ -178,7 +176,7 @@ export async function fanOut(tasks, {
       }
     }
     const logFile = logDir ? join(logDir, `${task.name}.log`) : undefined
-    let succeeded = false
+    let flowSucceeded = false
     try {
       // prepare 放在 try/finally 内：prepare 抛错时 worktree 也能被清理，不泄漏
       if (prepare) await prepare(task, { cwd, worktree })
@@ -187,17 +185,18 @@ export async function fanOut(tasks, {
         args: task.args ?? [], cwd, timeout, dryRun, logFile,
         onData: logFile ? undefined : onData,
       })
+      // runFlow 成功后即标记：onResult 抛错不应影响 worktree 清理决策
+      flowSucceeded = true
       const record = { task, result, worktree }
       results[idx] = record
       // onResult 先于 worktree 清理：调用方可在此 archiveChildRun（从 worktree 镜像日志回主仓）。
       await onResult?.(record)
-      succeeded = true
       return record
     } finally {
       // cleanWorktrees=true 时成功/失败都清理（避免孤儿堆积）；
-      // 失败时（succeeded=false）即便 cleanWorktrees=false 也要清理——防止 prepare/runFlow 抛错时 worktree 泄漏。
-      // 默认 cleanWorktrees=false + 成功：保留 worktree，让调用方在 fanOut 返回后仍能访问（如读取产物、归档）。
-      if (worktree && (cleanWorktrees || !succeeded)) {
+      // flowSucceeded=false（prepare/runFlow 抛错）即便 cleanWorktrees=false 也要清理——防止 worktree 泄漏。
+      // 默认 cleanWorktrees=false + flowSucceeded：保留 worktree，让调用方在 fanOut 返回后仍能访问（如读取产物、归档）。
+      if (worktree && (cleanWorktrees || !flowSucceeded)) {
         try { gitWorktreeRemove(repo, worktree, { force: true }) } catch { /* 忽略清理失败 */ }
       }
     }
@@ -219,7 +218,12 @@ export async function fanOut(tasks, {
   const needed = limit * 2 + 10  // 每个子 flow 2 个 + 10 缓冲
   if (needed > prevMaxListeners) process.setMaxListeners(needed)
   try {
-    await Promise.all(Array.from({ length: limit }, worker))
+    try {
+      await Promise.all(Array.from({ length: limit }, worker))
+    } catch (e) {
+      e.partialResults = results
+      throw e
+    }
   } finally {
     process.setMaxListeners(prevMaxListeners)
   }

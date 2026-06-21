@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { extractJson, validateSchema, stubFromSchema, runStructured } from '../schema.js'
+import { SchemaError } from '../errors.js'
 
 const ITEM_SCHEMA = {
   type: 'object',
@@ -111,7 +112,11 @@ test('runStructured: 超过重试次数仍不合法 → 抛错', async () => {
   const runner = async () => '{"title":"x"}'  // 永远缺 count
   await assert.rejects(
     () => runStructured(runner, 'do it', { schema: ITEM_SCHEMA, retries: 1 }),
-    (e) => { assert.match(e.message, /仍不符合 schema/); return true },
+    (e) => {
+      assert.match(e.message, /仍不符合 schema/)
+      assert.ok(e instanceof SchemaError, `应为 SchemaError，实际：${e?.constructor?.name}`)
+      return true
+    },
   )
 })
 

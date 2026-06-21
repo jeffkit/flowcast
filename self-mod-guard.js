@@ -1,4 +1,5 @@
 import { git, gitOk } from './git.js'
+import { GuardError } from './errors.js'
 
 // ── withSelfModGuard：自我修改安全沙箱 ⭐ ──────────────────────────
 //
@@ -18,12 +19,12 @@ import { git, gitOk } from './git.js'
  */
 export function captureBaseline(repo, { requireClean = true } = {}) {
   if (!gitOk(['rev-parse', '--verify', 'HEAD'], repo)) {
-    throw new Error('withSelfModGuard: 无 baseline commit，请先 commit 当前状态，以便失败时回滚')
+    throw new GuardError('withSelfModGuard: 无 baseline commit，请先 commit 当前状态，以便失败时回滚', 'GUARD_FAIL')
   }
   const baseline = git(['rev-parse', 'HEAD'], repo)
   if (requireClean) {
     const status = git(['status', '--porcelain'], repo)
-    if (status) throw new Error(`withSelfModGuard: 工作树不干净，请先 commit/stash：\n${status}`)
+    if (status) throw new GuardError(`withSelfModGuard: 工作树不干净，请先 commit/stash：\n${status}`, 'GUARD_FAIL')
   }
   return baseline
 }
@@ -50,8 +51,9 @@ export async function withSelfModGuard(fn, { repo = process.cwd(), requireClean 
     if (clean) git(['clean', '-fd'], repo)
     const remaining = git(['status', '--porcelain'], repo)
     if (remaining) {
-      throw new Error(
+      throw new GuardError(
         `withSelfModGuard: 回滚后工作树仍脏（gitignore 文件未被 clean -fd 清除，可能影响续跑）：\n${remaining}`,
+        'ROLLBACK_FAIL',
       )
     }
   }
@@ -64,11 +66,11 @@ export async function withSelfModGuard(fn, { repo = process.cwd(), requireClean 
     try {
       rollback()
     } catch (rollbackErr) {
-      const wrapped = new Error(
+      const wrapped = new GuardError(
         `withSelfModGuard: 回滚失败，工作树可能仍脏：${rollbackErr.message}`,
-        { cause: err },
+        'ROLLBACK_FAIL',
+        { cause: err, rollbackError: rollbackErr },
       )
-      wrapped.rollbackError = rollbackErr
       throw wrapped
     }
     throw err
@@ -78,11 +80,11 @@ export async function withSelfModGuard(fn, { repo = process.cwd(), requireClean 
     try {
       rollback()
     } catch (rollbackErr) {
-      const wrapped = new Error(
+      throw new GuardError(
         `withSelfModGuard: verdict=rolled-back 但回滚失败：${rollbackErr.message}`,
+        'ROLLBACK_FAIL',
         { cause: rollbackErr },
       )
-      throw wrapped
     }
   }
   // panic-preserved / skip-commit / committed → 不回滚

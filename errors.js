@@ -93,13 +93,21 @@ export class PathError extends FlowcastError {
   }
 }
 
+/** withSelfModGuard 前置检查失败或回滚失败（guard/rollback 错误）*/
+export class GuardError extends FlowcastError {
+  constructor(message, code, extra) {
+    super(message)
+    this.name = 'GuardError'
+    this.code = code || 'GUARD_FAIL'
+    if (extra) Object.assign(this, extra)
+  }
+}
+
 /** git 命令执行失败（err.stderr 含原始错误输出）*/
 export class GitError extends FlowcastError {
-  constructor(message, extra) {
-    super(message)
+  constructor(message, extra = {}) {
+    super(message, 'GIT_FAIL', extra)
     this.name = 'GitError'
-    this.code = 'GIT_FAIL'
-    Object.assign(this, extra)
   }
 }
 

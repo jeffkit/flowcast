@@ -11,7 +11,7 @@
 import { realpathSync } from 'fs'
 import { join, basename } from 'path'
 import { spawnCapture } from './spawn.js'
-import { SpawnError, TimeoutError } from './errors.js'
+import { SpawnError, TimeoutError, ConfigError } from './errors.js'
 
 // ── 终端后端 ─────────────────────────────────────────────────────────
 
@@ -56,25 +56,25 @@ const MCP2CLI_ALLOWED_DIRS = [
 function resolveMcp2cliPath(input) {
   if (input === 'mcp2cli') return input
   if (typeof input !== 'string' || !input.startsWith('/')) {
-    throw new Error(`wecom backend: mcp2cli 必须是 'mcp2cli'（默认）或绝对路径，收到: ${input}`)
+    throw new ConfigError(`wecom backend: mcp2cli 必须是 'mcp2cli'（默认）或绝对路径，收到: ${input}`)
   }
   let resolved
   try { resolved = realpathSync(input) } catch {
-    throw new Error(`wecom backend: mcp2cli 路径不存在或无法解析: ${input}`)
+    throw new ConfigError(`wecom backend: mcp2cli 路径不存在或无法解析: ${input}`)
   }
   if (basename(resolved) !== 'mcp2cli') {
-    throw new Error(`wecom backend: mcp2cli 路径不在白名单目录（basename 必须是 mcp2cli）: ${input}（resolved: ${resolved}）`)
+    throw new ConfigError(`wecom backend: mcp2cli 路径不在白名单目录（basename 必须是 mcp2cli）: ${input}（resolved: ${resolved}）`)
   }
   const allowed = MCP2CLI_ALLOWED_DIRS.some(d => d && (resolved.startsWith(d + '/') || resolved === d))
   if (!allowed) {
-    throw new Error(`wecom backend: mcp2cli 路径不在白名单目录（${MCP2CLI_ALLOWED_DIRS.filter(Boolean).join(', ')}）: ${input}（resolved: ${resolved}）`)
+    throw new ConfigError(`wecom backend: mcp2cli 路径不在白名单目录（${MCP2CLI_ALLOWED_DIRS.filter(Boolean).join(', ')}）: ${input}（resolved: ${resolved}）`)
   }
   return resolved
 }
 
 function resolveMcpServerName(input) {
   if (typeof input !== 'string' || !/^@[\w.-]+(\/[\w.-]+)?$/.test(input)) {
-    throw new Error(`wecom backend: server 必须是 @<name> 或 @<namespace>/<name> 形式，收到: ${input}`)
+    throw new ConfigError(`wecom backend: server 必须是 @<name> 或 @<namespace>/<name> 形式，收到: ${input}`)
   }
   return input
 }
@@ -88,7 +88,7 @@ function makeWecomBackend(config = {}) {
     return {
       async waitForInput(prompt) {
         if (typeof config.sendAndWait !== 'function') {
-          throw new Error('wecom backend: sendAndWait 未配置，无法等待回复')
+          throw new ConfigError('wecom backend: sendAndWait 未配置，无法等待回复')
         }
         return await config.sendAndWait(prompt, ctx)
       },
@@ -147,7 +147,7 @@ export function setHitlBackend(backend, config = {}) {
   if (backend && typeof backend === 'object') { _hitlBackend = backend; return }
   if (backend === 'terminal') { _hitlBackend = terminalBackend; return }
   if (backend === 'wecom') { _hitlBackend = makeWecomBackend(config); return }
-  throw new Error(`未知 HITL 后端: ${backend}（支持 terminal/wecom/自定义对象）`)
+  throw new ConfigError(`未知 HITL 后端: ${backend}（支持 terminal/wecom/自定义对象）`)
 }
 
 /** 当前 HITL 后端（测试 / 调试用）。 */
@@ -156,7 +156,7 @@ export function getHitlBackend() { return _hitlBackend }
 /** 阻塞等待人类输入。未配置后端则 fast-fail，避免非 TTY 静默挂死。 */
 export async function waitForInput(prompt) {
   if (!_hitlBackend) {
-    throw new Error('HITL 后端未配置：请在 flow 启动时调用 setHitlBackend("terminal"|"wecom"|customBackend)（非 TTY 环境下必须显式选后端）')
+    throw new ConfigError('HITL 后端未配置：请在 flow 启动时调用 setHitlBackend("terminal"|"wecom"|customBackend)（非 TTY 环境下必须显式选后端）')
   }
   return _hitlBackend.waitForInput(prompt)
 }
@@ -168,7 +168,7 @@ export async function waitForInput(prompt) {
  */
 export async function notify(message, opts = {}) {
   if (!_hitlBackend) {
-    throw new Error('HITL 后端未配置：请在 flow 启动时调用 setHitlBackend(...) 后再 notify')
+    throw new ConfigError('HITL 后端未配置：请在 flow 启动时调用 setHitlBackend(...) 后再 notify')
   }
   return _hitlBackend.notify(message, opts)
 }

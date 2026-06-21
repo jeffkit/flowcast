@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { decompose, parseTasks, orchestrateMulti } from '../orchestrator/index.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
 import { flowcastDir } from '../dirs.js'
+import { ConfigError } from '../errors.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const goldenCode = readFileSync(GOLDEN_SAMPLE, 'utf8')
@@ -62,7 +63,11 @@ test('decompose: 首次返回坏 JSON → 回喂 → 第二次修正（attempts=
 test('decompose: 始终坏 → 抛错', async () => {
   await assert.rejects(
     () => decompose('x', { generate: async () => 'nope', maxAttempts: 2 }),
-    /decompose 失败/,
+    (err) => {
+      assert.match(err.message, /decompose 失败/)
+      assert.ok(err instanceof ConfigError, `应为 ConfigError，实际：${err?.constructor?.name}`)
+      return true
+    },
   )
 })
 

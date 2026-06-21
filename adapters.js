@@ -89,6 +89,7 @@ async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
   }
   const item = Array.isArray(data) ? data.find(x => x.type === 'result') : data
   if (item?.is_error) {
+    // 保留普通 Error 以供 isRetryable 识别 apiStatus 字段（不能换为 SpawnError）
     const err = new Error(`claude error: ${item.result}`)
     err.apiStatus = item.api_error_status
     throw err

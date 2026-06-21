@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { interpolateEnv, loadProviders, resolveProvider } from '../provider.js'
 import { recursiveProviderEnv } from '../agent.js'
+import { ConfigError } from '../errors.js'
 
 // ── interpolateEnv ───────────────────────────────────────────────
 
@@ -24,7 +25,14 @@ test('interpolateEnv: $$ 转义为字面 $（不查 env）', () => {
 })
 
 test('interpolateEnv: 未定义变量 fail-fast', () => {
-  assert.throws(() => interpolateEnv('${MISSING}', {}), /MISSING 未设置/)
+  assert.throws(
+    () => interpolateEnv('${MISSING}', {}),
+    (err) => {
+      assert.match(err.message, /MISSING 未设置/)
+      assert.ok(err instanceof ConfigError, `应为 ConfigError，实际：${err?.constructor?.name}`)
+      return true
+    },
+  )
 })
 
 test('interpolateEnv: 显式空串合法', () => {

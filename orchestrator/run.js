@@ -245,7 +245,7 @@ export async function orchestrateMulti(goal, {
             repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate, maxAttempts,
           })
           if (!g.validation.ok) {
-            const err = new SchemaError(g.validation.error)
+            const err = new SchemaError(g.validation.error, g.validation.error)
             err.taskName = t.name
             err.stage = 'generate'
             throw err
