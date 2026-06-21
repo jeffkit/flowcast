@@ -11,7 +11,7 @@ import { runFlow, fanOut, archiveChildRun } from '../subflow.js'
 import { parallel } from '../concurrency.js'
 import { flowcastDir } from '../dirs.js'
 import { assertSafeIdent } from '../helpers.js'
-import { LockError } from '../errors.js'
+import { LockError, SchemaError } from '../errors.js'
 
 const FLOWCAST_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -245,7 +245,7 @@ export async function orchestrateMulti(goal, {
             repo, runDir: subDir, agent: t.agent ?? agent, agents, providers, generate, maxAttempts,
           })
           if (!g.validation.ok) {
-            const err = new Error(g.validation.error)
+            const err = new SchemaError(g.validation.error)
             err.taskName = t.name
             err.stage = 'generate'
             throw err
@@ -285,7 +285,7 @@ export async function orchestrateMulti(goal, {
       },
     })
   } catch (e) {
-    return { ok: false, stage: 'run', runId, error: e.message, tasks: tasks.length }
+    return { ok: false, stage: 'run', runId, error: e.message, errorCode: e.code, tasks: tasks.length }
   }
 
   const allOk = results.every(r => r.result.ok) && generateFailures.length === 0
@@ -369,7 +369,12 @@ async function acquireLock(lockDir, runId, { allowReuse = false, producePath } =
       return null
     }
   } catch { /* statSync 失败就当忙处理 */ }
-  return { pid: 0, startedAt: 0, runId }
+  // 等不到 owner.json 且 mtime 尚新，可能是极短竞态窗口，视为忙处理
+  throw new LockError(
+    `获取锁超时：${lockDir} 存在但 owner 信息未就绪（可能是竞态，请稍后重试）`,
+    'LOCK_OWNER_PENDING',
+    { lockDir, runId },
+  )
 }
 
 /**

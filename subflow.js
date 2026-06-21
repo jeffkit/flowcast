@@ -152,6 +152,10 @@ export async function fanOut(tasks, {
 } = {}) {
   const wtRoot = worktreesDir ?? join(repo, '.worktrees')
   const results = new Array(tasks.length)
+  // 提前批量校验，避免并发中途失败
+  for (let i = 0; i < tasks.length; i++) {
+    assertSafeIdent(tasks[i].name, `tasks[${i}].name`)
+  }
 
   const runOne = async (task, idx) => {
     // task.name 是 worktree 路径与日志文件名的直接拼入部分。
@@ -176,9 +180,10 @@ export async function fanOut(tasks, {
           `请用 isolate='none' 或修复 git worktree 环境`)
       }
     }
-    if (prepare) await prepare(task, { cwd, worktree })
     const logFile = logDir ? join(logDir, `${task.name}.log`) : undefined
     try {
+      // prepare 放在 try/finally 内：prepare 抛错时 worktree 也能被清理，不泄漏
+      if (prepare) await prepare(task, { cwd, worktree })
       const result = await runFlow(task.flow, {
         repo: cwd, runId: task.runId ?? task.name, goal: task.goal, agent: task.agent,
         args: task.args ?? [], cwd, timeout, dryRun, logFile,

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { generateFlow, extractCode, runGeneratedFlow, orchestrate, checkFlowcastResolvable } from '../orchestrator/index.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
 import { flowcastDir } from '../dirs.js'
+import { LockError } from '../errors.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const goldenCode = readFileSync(GOLDEN_SAMPLE, 'utf8')
@@ -149,7 +150,12 @@ test('orchestrate: 活进程持有锁（owner.pid 还活着）→ 抛错而非�
         repo: REPO, runId: id, dryRun: true, timeout: 30_000,
         generate: async () => { genCalled = true; return fence('bad') },
       }),
-      /正在被 pid=.* 执行/,
+      (err) => {
+        assert.ok(err instanceof LockError, `应为 LockError，实际：${err?.constructor?.name}`)
+        assert.strictEqual(err.code, 'LOCK_BUSY')
+        assert.match(err.message, /正在被 pid=.* 执行/)
+        return true
+      },
     )
     assert.equal(genCalled, false)
   } finally { cleanRun(id) }

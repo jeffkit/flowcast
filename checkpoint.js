@@ -135,7 +135,15 @@ export class Checkpoint {
         result = await fn()
       }
     } catch (e) {
-      error = { message: e.message, code: e.code, gate: e.gate }
+      error = {
+        message: e.message,
+        code: e.code,
+        gate: e.gate,
+        timedOut: e.timedOut,
+        exitCode: e.exitCode,
+        schemaError: e.schemaError,
+        configError: e.configError,
+      }
       Object.keys(error).forEach(k => error[k] === undefined && delete error[k])
       const durationMs = Date.now() - startedAt
       this._inFlight.delete(key)

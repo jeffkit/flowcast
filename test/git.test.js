@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { existsSync } from 'node:fs'
 import { gitCommitAll, gitStatus, gitDiff, gitWorktreeAdd, gitWorktreeRemove, gitHead, gitCurrentBranch, gitCommitsAhead, gitCreateBranch } from '../git.js'
+import { GitError, PathError } from '../errors.js'
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'flowcast-git-'))
@@ -185,4 +186,32 @@ test('gitWorktreeAdd: macOS 风格 symlink 路径（realpath 后比较）', () =
     // Linux 上 /tmp 不是 symlink（realpath 不变），行为与 macOS 一致——这条
     // 测试是 macOS 行为的功能性覆盖，跨平台都能跑。
   } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
+test('gitCreateBranch: 分支名含非法字符 → 抛 PathError', () => {
+  const dir = tempRepo()
+  try {
+    writeFileSync(join(dir, 'a.txt'), 'hi')
+    gitCommitAll(dir, 'init')
+    assert.throws(
+      () => gitCreateBranch(dir, 'bad branch!'),
+      (err) => {
+        assert.ok(err instanceof PathError, `应为 PathError，实际：${err?.constructor?.name}`)
+        return true
+      },
+    )
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('gitStatus: 非 git 目录 → 抛 GitError', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'flowcast-notgit-'))
+  try {
+    assert.throws(
+      () => gitStatus(dir),
+      (err) => {
+        assert.ok(err instanceof GitError, `应为 GitError，实际：${err?.constructor?.name}`)
+        return true
+      },
+    )
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

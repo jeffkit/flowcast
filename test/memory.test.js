@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { recordLearning, recall, buildMemorySection, promoteFailureContext } from '../memory.js'
+import { ConfigError } from '../errors.js'
 
 function tempDir() { return mkdtempSync(join(tmpdir(), 'flowcast-mem-')) }
 
@@ -77,11 +78,19 @@ test('promoteFailureContext：空内容不写、返回 null；有内容沉淀进
 test('recordLearning/recall: scope 为空字符串时应 throw', () => {
   assert.throws(
     () => recordLearning('', { topic: 'x' }),
-    /scope must be a non-empty string/,
+    (err) => {
+      assert.ok(err instanceof ConfigError, `应为 ConfigError，实际：${err?.constructor?.name}`)
+      assert.match(err.message, /scope must be a non-empty string/)
+      return true
+    },
   )
   assert.throws(
     () => recall('', { query: 'x' }),
-    /scope must be a non-empty string/,
+    (err) => {
+      assert.ok(err instanceof ConfigError, `应为 ConfigError，实际：${err?.constructor?.name}`)
+      assert.match(err.message, /scope must be a non-empty string/)
+      return true
+    },
   )
 })
 
