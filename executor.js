@@ -279,21 +279,29 @@ export function setWorkdir(dir) {
  *   - schemaRetries 不匹配重试次数（默认 1）
  *   - 其余透传给底层执行器 adapter（经 SAFE_RUN_OPTS_KEYS 白名单 + 路径安全校验）
  */
+// runAgent 可接受的 opts key 白名单（代码级 API，比 resolveAgent 的 SAFE_OPTS_KEYS 更宽松）：
+// ┌─────────────────────┬────────────────────────────────────────────────────────────────────┐
+// │ 来源                │ 说明                                                               │
+// ├─────────────────────┼────────────────────────────────────────────────────────────────────┤
+// │ SAFE_OPTS_KEYS      │ 与 agents.json 配置文件白名单对齐（config + flow 两处都允许）      │
+// │ 以下额外 key         │ 仅 runAgent 代码级调用允许（generated flow 是受信代码，但不是     │
+// │                     │ 外部配置文件——对配置文件保持更严的白名单）                         │
+// └─────────────────────┴────────────────────────────────────────────────────────────────────┘
+// 两套白名单合并成一次扫描，避免对 opts 双重迭代（旧实现冗余且 timeout/allowTools 各出现两次）。
+const RUN_AGENT_ALL_KEYS = new Set([
+  ...SAFE_OPTS_KEYS,
+  // 以下仅代码级 runAgent 允许，不对外开放给 agents.json 配置文件：
+  'provider', 'env', 'bin', 'log', 'onData', 'replayFrom', 'workspace',
+  'apiKey', 'apiBase',
+  'throwOnCritical',  // recursive 专用：true 时 panicked/budgetExceeded/非零退出抛 FlowcastError
+])
+
 export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetries = 1, ...opts } = {}) {
-  // opts 白名单过滤（与 resolveAgent 对齐，防 LLM 生成代码注入 systemPromptFile 等危险参数）。
+  // opts 白名单过滤（防 LLM 生成代码注入 systemPromptFile 等危险参数）。
   // runAgent 由 generated flow 直接调用，flow 本身是 LLM 生成的——同样需要防注入。
   const safeOpts = {}
   for (const [k, v] of Object.entries(opts)) {
-    if (SAFE_OPTS_KEYS.has(k)) safeOpts[k] = v
-  }
-  // 额外透传 recursive 专用安全参数（不在 SAFE_OPTS_KEYS，但 runAgent 作为受信代码级 API 允许）
-  // provider/env/model/timeout 等运行时参数白名单
-  const EXTRA_RUN_KEYS = new Set(['provider', 'env', 'bin', 'log', 'onData', 'replayFrom', 'workspace',
-    'apiKey', 'apiBase', 'allowTools', 'timeout',
-    'throwOnCritical',  // recursive 专用：true 时 panicked/budgetExceeded/非零退出抛 FlowcastError
-  ])
-  for (const [k, v] of Object.entries(opts)) {
-    if (EXTRA_RUN_KEYS.has(k)) safeOpts[k] = v
+    if (RUN_AGENT_ALL_KEYS.has(k)) safeOpts[k] = v
   }
   // extraArgs 元素级白名单（与 resolveAgent 一致）
   if (safeOpts.extraArgs) {
@@ -373,10 +381,11 @@ export async function runAgentChain(prompt, chain, {
 } = {}) {
   const list = Array.isArray(chain) && chain.length ? chain : [{}]
   const now = Date.now()
+  // 始终拷贝（不直接引用 list/chain），防止循环内的 cooldown.delete 等操作意外修改外部数组。
   const order = cooldown
     ? list.map((spec, i) => ({ spec, i, cool: coolRemaining(cooldown, spec, now) }))
         .sort((a, b) => (a.cool - b.cool) || (a.i - b.i)).map(x => x.spec)
-    : list
+    : [...list]
   let lastErr
   for (let i = 0; i < order.length; i++) {
     const spec = order[i]

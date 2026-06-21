@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, ren
 import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
-import { assertSafeIdent } from './helpers.js'
+import { assertSafeIdent, makeEvent } from './helpers.js'
 
 /**
  * pause() 抛出此错误，让 flow 入口点（而非库内部）决定是否 process.exit。
@@ -19,6 +19,18 @@ export class PauseSignal extends Error {
 
 const RESULT_INLINE_LIMIT = 500   // 超出此长度则写旁路文件，state.json 只存摘要
 const RESULT_SIDECAR_MARKER = '\x00flowcast:sidecar\x00'  // state.json 里的占位标记
+
+// FNV-32 hash（比 Java-style 31 倍乘法碰撞率低得多），用于生成旁路文件名后缀。
+// 目的：两个 key sanitize 后若产生相同的 safe 前缀（如 'a/b' 和 'a_b' 都变成 'a_b'），
+// 不同的 hash 后缀能区分它们，防止旁路文件相互覆盖。
+function fnv32(str) {
+  let h = 0x811c9dc5
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h
+}
 
 // 从 agent 结果里提取 _meta（cli/model/token），只挑可观测字段，缺省安全返回 {}。
 function pickAgentMeta(result) {
@@ -69,12 +81,13 @@ export class Checkpoint {
     }
     this._seenKeys.add(key)
     if (this.state.completed[key] !== undefined) {
-      // 续跑时：先尝试从旁路文件还原完整结果，检测 sidecar 损坏
+      // 续跑时：尝试从旁路文件还原完整结果。
+      // _loadResult 在旁路文件丢失或损坏时会清除 completed[key] 并返回 undefined。
       const cached = this._loadResult(key, this.state.completed[key])
-      if (cached === undefined && this.state.completed[key] === undefined) {
-        // sidecar 损坏：_loadResult 已清除 completed[key] 并打了 warn。
+      if (cached === undefined) {
+        // 旁路文件丢失或损坏：_loadResult 已清除 completed[key] 并打了 warn。
         // 不能继续 skip——回落到下方的 _inFlight + fn() 重新执行。
-        this._log({ key, status: 'rerun', reason: 'sidecar-corrupted' })
+        this._log({ key, status: 'rerun', reason: 'sidecar-missing-or-corrupted' })
         // fall through（不 return）
       } else {
         console.log(`  [skip] ${key}`)
@@ -279,10 +292,10 @@ export class Checkpoint {
     const str = isStr ? result : (result == null ? '' : JSON.stringify(result))
     if (str.length <= RESULT_INLINE_LIMIT) return result  // 短结果直接内联
     mkdirSync(this._stepsDir, { recursive: true })
-    // 用 key 的 hash 后缀防止不同 key sanitize 后碰撞（如 'a/b' 和 'a_b'）
+    // 用 FNV-32 hash 后缀防止不同 key sanitize 后碰撞（如 'a/b' 和 'a_b' 都变成 'a_b'）。
+    // FNV-32 比 Java-style 31 倍乘法有更低的碰撞率和更好的雪崩性。
     const safe = key.replace(/[^a-zA-Z0-9._-]/g, '_')
-    const hash = key.split('').reduce((h, c) => (Math.imul(31, h) + c.charCodeAt(0)) | 0, 0)
-    const filename = `${safe}_${(hash >>> 0).toString(36)}`
+    const filename = `${safe}_${fnv32(key).toString(36)}`
     const outPath = join(this._stepsDir, `${filename}.out`)
     const tmpPath = `${outPath}.tmp`
     writeFileSync(tmpPath, (isStr ? 'string\n' : 'json\n') + str, 'utf8')
@@ -291,12 +304,20 @@ export class Checkpoint {
   }
 
   // 读取步骤结果：识别占位标记则从旁路文件还原（含类型反序列化），否则直接返回内联值。
-  // 旁路文件在 SIGKILL 时可能写入不完整——JSON.parse 失败时清除损坏记录，让步骤重新执行。
+  // 旁路文件在 SIGKILL 时可能写入不完整，或被手动删除（跨机器迁移等场景）——
+  // 文件丢失和 JSON.parse 失败都视为"损坏"，清除 completed[key] 让步骤重新执行。
   _loadResult(key, stored) {
     if (typeof stored === 'string' && stored.startsWith(RESULT_SIDECAR_MARKER)) {
       const safe = stored.slice(RESULT_SIDECAR_MARKER.length)
       const p = join(this._stepsDir, `${safe}.out`)
-      if (!existsSync(p)) return stored
+      if (!existsSync(p)) {
+        // 旁路文件丢失（如跨机器复制了 state.json 但没带 steps/ 目录，或文件被手动删除）。
+        // 与损坏情形一致对待：清除 completed[key]，让步骤重新执行，避免返回脏 MARKER 字符串。
+        console.warn(`[checkpoint] 旁路文件丢失，步骤 "${key}" 将重新执行`)
+        delete this.state.completed[key]
+        this._flush()
+        return undefined
+      }
       try {
         const raw = readFileSync(p, 'utf8')
         const nl = raw.indexOf('\n')
@@ -321,7 +342,10 @@ export class Checkpoint {
   _log(entry) {
     // 异步追加日志，通过 _logQueue 串行化（防止并发写乱序）。
     // 吞掉写盘异常——观测日志失败不应影响主流程（与 event() 的 try-catch 原则一致）。
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n'
+    // makeEvent 统一事件格式（写入 event + type 双字段保证向后兼容）。
+    const eventType = entry.event ?? entry.status ?? 'step'
+    const { event: _e, status, ...rest } = entry
+    const line = JSON.stringify(makeEvent(eventType, { status, ...rest }, { runId: this.runId })) + '\n'
     this._logQueue = this._logQueue
       .then(() => appendFile(this.logPath, line))
       .catch(() => { /* 观测日志写失败，静默忽略 */ })

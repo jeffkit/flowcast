@@ -2,6 +2,7 @@ import { Checkpoint } from './checkpoint.js'
 import { runGates } from './quality-gate.js'
 import { buildMemorySection, recordLearning } from './memory.js'
 import { flowcastDir } from './dirs.js'
+import { makeEvent } from './helpers.js'
 
 // ── loop：goal-driven 循环原语 ⭐ ─────────────────────────────────────
 //
@@ -16,6 +17,11 @@ import { flowcastDir } from './dirs.js'
 //
 // 终止：isDone=true → 'completed'；budget（maxTurns / maxRuntimeMs）触顶 → 'budget_exhausted'；
 //       iterate 抛错且无 gate 兜底 → 'failed'（错误上抛，状态已落盘可续跑）。
+//
+// ⚠️ 并发限制：同一 runId 不能被多个进程并发调用 loop()。
+//   Checkpoint._inFlight 只保护单进程内的并发，跨进程无保护——
+//   两个进程对同一 runId 并发 loop 会写入重复 turn，导致步骤记录混乱。
+//   请确保 loop 实例是单进程独占的（通过 orchestrate 锁、外部进程锁或调度方保证）。
 
 /**
  * @param {function} iterate
@@ -61,9 +67,11 @@ export async function loop(iterate, opts = {}) {
 
   const resolvedStateDir = stateDir ?? (flowcastDir(process.cwd()) + '/runs')
   const cp = checkpoint ?? new Checkpoint(runId, resolvedStateDir)
+  // makeEvent 统一格式：emit 同时写 Checkpoint 日志和外部 onEvent 回调
   const emit = (evt) => {
-    cp.event('loop', evt)
-    if (onEvent) { try { onEvent({ event: 'loop', ...evt }) } catch { /* 观测不影响主流程 */ } }
+    const normalized = makeEvent('loop', evt, { runId: cp.runId })
+    cp.event('loop', evt)  // cp.event 内部再 makeEvent 包装，此处传原始 evt 避免双重包裹
+    if (onEvent) { try { onEvent(normalized) } catch { /* 观测不影响主流程 */ } }
   }
 
   const startedAt = Date.now()

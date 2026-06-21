@@ -5,10 +5,13 @@
 // 由 fanOut 限并发 + worktree 隔离执行；任务间若真有依赖，应拆成多次 orchestrate 调用，而非在此引入编排图。
 
 import { resolveGenerateFn } from './agent-helper.js'
+import { assertSafeIdent } from '../helpers.js'
 
 /** 构建分拆提示：要求只输出一个 JSON 数组，每项 {name, goal, agent?}。 */
 export function buildDecomposePrompt(goal, { agentsList = [], priorError } = {}) {
   const agentsLine = agentsList.length ? agentsList.join(', ') : '(无预置 agent，留空 agent 字段即可)'
+  // goal 用代码块包裹：防止 goal 里含 Markdown 标题（如 "# Output format"）
+  // 破坏 prompt 的分节结构，让 LLM 误读约束条件。
   let p = `You are a task decomposer for the flowcast orchestrator.
 Split the BIG GOAL into a flat list of INDEPENDENT sub-tasks that can run in parallel.
 Do NOT introduce ordering or dependencies between tasks (no DAG); if two pieces must be sequential, keep them in ONE task.
@@ -25,7 +28,9 @@ Output ONLY a JSON array, no prose, no code fence. Each element:
 ${agentsLine}
 
 # BIG GOAL
+\`\`\`text
 ${goal}
+\`\`\`
 
 Output ONLY the JSON array.`
   if (priorError) {
@@ -66,6 +71,16 @@ export function parseTasks(text) {
       name = `${base}-${n}`
     }
     usedNames.add(name)
+
+    // assertSafeIdent 校验：name 会被拼入文件路径（worktree 目录 + run 目录），
+    // 必须符合白名单字符要求（字母数字开头结尾，中间允许 . _ -）。
+    // 若 LLM 输出的 name 不合法（如含空格、斜线、中文），上面的 replace 链应已规整，
+    // 但仍做兜底校验：不合法则抛错触发 decompose 回喂重试。
+    try {
+      assertSafeIdent(name, 'task.name')
+    } catch (e) {
+      throw new Error(`任务 ${i} 的 name '${name}' 包含非法字符（${e.message}）`)
+    }
 
     const task = { name, goal }
     if (t.agent) task.agent = String(t.agent)

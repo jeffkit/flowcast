@@ -18,22 +18,30 @@ function defaultPipelineConcurrency() {
  * @param {Array<Function>} thunks
  * @param {object} [o]
  * @param {number}   [o.concurrency]  并发上限；缺省 = 全部一起跑。结果按原下标顺序返回。
- * @param {boolean}  [o.strict=true] 错误处理策略：
- *   - true（默认）：任一失败立即汇总并抛出含 failures 数组的 Error（仍等全部跑完）。
- *     e.failures 是 [{index, error}] 数组，适合「任一失败则整体放弃」场景。
+ * @param {boolean}  [o.strict=true]  错误收集策略：
+ *   - true（默认）：**收集所有失败后**统一抛出含 failures 数组的 Error（所有任务跑完后才抛）。
+ *     注意：不是 fail-fast——第一个任务失败后其余任务仍会继续运行到结束。
+ *     如需 fail-fast（第一个失败立即停止其余任务），请同时传 failFast: true。
  *   - false：失败的 thunk 在对应位置返回 null，其余继续跑；控制台打 [parallel error]。
  *     适合「部分失败可接受」场景（如批量 agent 调用，结果可 fallback）；
  *     调用方务必检查结果数组中的 null，否则失败会被静默丢失。
  *     注意：无法区分「任务失败」和「任务本身返回 null」，如需区分请传 onError。
- * @param {Function} [o.onError]  strict=false 时额外的错误回调 ({index, error}) => void，
- *   用于在保持 null 语义的同时追踪失败（区分失败和任务返回 null 的唯一可靠手段）。
+ * @param {boolean}  [o.failFast=false]  true 时第一个失败立即停止还未开始的任务并抛错。
+ *   - 仅在 concurrency 模式下有效（有并发上限时才有"还未开始的任务"可以停止）。
+ *   - 已经在跑的任务不会被强制中断（需要 AbortController 支持，当前不实现）。
+ *   - 与 strict=true 搭配使用：failFast 控制"是否提前停止排队任务"，strict 控制"是否汇总抛出"。
+ * @param {Function} [o.onError]  额外的错误回调 ({index, error}) => void，
+ *   用于在保持 null 语义（strict=false）的同时追踪失败（区分失败和任务返回 null 的唯一可靠手段）。
+ *   strict=true 时同样有效（在汇总抛出前先触发回调）。
  * @returns {Promise<Array>}
  */
-export async function parallel(thunks, { concurrency, strict = true, onError } = {}) {
+export async function parallel(thunks, { concurrency, strict = true, failFast = false, onError } = {}) {
   const failures = []
+  let aborted = false  // failFast 模式：第一个失败后停止新任务入队
   const guard = (fn, i) => fn().catch(err => {
     console.error(`  [parallel error] ${err.message}`)
     if (strict) failures.push({ index: i, error: err })
+    if (failFast) aborted = true  // 通知 worker 停止继续取新任务
     if (typeof onError === 'function') {
       try { onError({ index: i, error: err }) } catch { /* 观测不影响主流程 */ }
     }
@@ -43,10 +51,11 @@ export async function parallel(thunks, { concurrency, strict = true, onError } =
   if (!concurrency || concurrency >= thunks.length) {
     results = await Promise.all(thunks.map((fn, i) => guard(fn, i)))
   } else {
-    results = new Array(thunks.length)
+    results = new Array(thunks.length).fill(null)
     let next = 0
     const worker = async () => {
       while (next < thunks.length) {
+        if (aborted) break  // failFast：有失败时停止领取新任务
         const i = next++
         results[i] = await guard(thunks[i], i)
       }
@@ -73,7 +82,11 @@ export async function parallel(thunks, { concurrency, strict = true, onError } =
  *
  * @param {Array} items
  * @param {...(Function|object)} stages  每个 stage 是 async (prev, item, index) => next；
- *   末位可传 options 对象 `{ concurrency }` 覆盖并发上限。
+ *   末位可传 options 对象 `{ concurrency, onError }` 覆盖并发上限或注入错误回调。
+ * @param {object} [opts]  末位 options 对象（可选）
+ * @param {number} [opts.concurrency]  并发上限（默认 CPU 核数）
+ * @param {Function} [opts.onError]  错误回调 ({index, item, error}) => void。
+ *   失败的 item 位置为 null，onError 是区分「失败」和「任务本身返回 null」的唯一可靠手段。
  * @returns {Promise<Array>} 与 items 同序的结果数组；失败的 item 位置为 null。
  */
 export async function pipeline(items, ...stages) {
@@ -84,6 +97,7 @@ export async function pipeline(items, ...stages) {
   const list = Array.isArray(items) ? items : []
   if (!list.length || !stages.length) return list.slice()
   const concurrency = Math.max(1, Math.min(opts.concurrency ?? defaultPipelineConcurrency(), list.length))
+  const { onError } = opts
   const results = new Array(list.length)
   let next = 0
   const runItem = async (item, index) => {
@@ -101,6 +115,9 @@ export async function pipeline(items, ...stages) {
       } catch (e) {
         console.error(`  [pipeline error] item[${i}] ${e.message}`)
         results[i] = null
+        if (typeof onError === 'function') {
+          try { onError({ index: i, item: list[i], error: e }) } catch { /* 观测不影响主流程 */ }
+        }
       }
     }
   }

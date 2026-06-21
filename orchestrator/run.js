@@ -398,12 +398,20 @@ function isPidAlive(pid) {
  * 防 PID 复用竞态：通过 `ps -o etime=` 获取进程已运行秒数，
  * 与 lockCreatedAt 对比——若进程实际启动时间晚于锁创建时间，必然是复用了 PID 的新进程。
  * 失败（ps 不可用 / 进程不存在）时保守返回 true（不误删活锁）。
+ *
+ * **平台支持**：仅限 macOS / Linux（依赖 POSIX `ps -o etime=`）。
+ * Windows 无 `ps` 命令，此函数直接保守返回 true（不删锁）——
+ * Windows 上僵尸锁须等 STALE_LOCK_MS 超时自动清理，不影响正确性，只影响恢复速度。
+ * 如需在 Windows 上提前清锁，请手动 rm -rf <lockDir>。
+ *
  * @param {number} pid
  * @param {number} lockCreatedAt  owner.json 里 startedAt（ms since epoch）
  * @returns {boolean}  true = 进程确实是锁持有者（或无法判断），false = 确认是复用 PID 的新进程
  */
 function isPidLockOwner(pid, lockCreatedAt) {
   if (!Number.isFinite(pid) || pid <= 0 || !lockCreatedAt) return true
+  // Windows 没有 POSIX ps，直接保守返回（等待 stale 超时自动清理）
+  if (process.platform === 'win32') return true
   try {
     // 同步调用 ps（macOS/Linux），获取进程已运行秒数 etime = [[DD-]HH:]MM:SS
     const res = spawnSync('ps', ['-o', 'etime=', '-p', String(pid)], { timeout: 2000, encoding: 'utf8' })

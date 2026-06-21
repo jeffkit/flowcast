@@ -12,6 +12,7 @@ import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { spawnCapture, spawnCli, isProviderRetryable } from './spawn.js'
+import { makeEvent } from './helpers.js'
 
 // ── provider 翻译器（claude adapter）────────────────────────────────
 
@@ -46,9 +47,11 @@ export function setAgentEventSink(fn) {
 
 // executor.js 的 runAgentChain 需要 emitAgentEvent 发送 CLI fallback 事件；
 // 从本文件导出，executor.js 直接 import（消除循环依赖的关键）。
+// makeEvent 统一事件格式：外部已有 event 字段的对象直接透传，否则用 type 包装。
 export function emitAgentEvent(e) {
   if (!_agentEventSink) return
-  try { _agentEventSink(e) } catch { /* 观测失败不影响主流程 */ }
+  const normalized = (e && e.event) ? e : makeEvent(e?.type ?? 'agent', e ?? {})
+  try { _agentEventSink(normalized) } catch { /* 观测失败不影响主流程 */ }
 }
 
 // ── 默认超时常量 ─────────────────────────────────────────────────────

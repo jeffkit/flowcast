@@ -1,4 +1,4 @@
-import { mkdirSync, appendFileSync, readFileSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, unlinkSync, existsSync } from 'fs'
 import { join } from 'path'
 import { flowcastDir } from './dirs.js'
 
@@ -135,9 +135,22 @@ export function recordLearning(scope, entry = {}, { baseDir = defaultBase(), max
 
   if (lineCount > maxEntries) {
     const allEntries = _entriesCache.get(p) ?? parseJsonlFile(p)
-    // 保留最新的 ceil(maxEntries/2) 条，下次再触发前还有半箱余量
+    // 保留最新的 ceil(maxEntries/2) 条，下次再触发前还有半箱余量。
+    // 用 write-rename 原子写（先写 .tmp，再 rename 替换）：
+    //   - 防止 SIGKILL 截断产生损坏文件
+    //   - 两个并发进程同时裁剪时，最后一次 rename 原子覆盖（不会产生半截文件）
+    //   - 仍是 best-effort：并发写时后写的进程可能覆盖先写的（不会丢 append 的新记录，
+    //     但两次裁剪各自基于快照，最终保留的条数可能多于或少于预期）
     const kept = allEntries.slice(-Math.ceil(maxEntries / 2))
-    writeFileSync(p, kept.map(e => JSON.stringify(e)).join('\n') + '\n')
+    const tmp = p + '.tmp.' + process.pid
+    try {
+      writeFileSync(tmp, kept.map(e => JSON.stringify(e)).join('\n') + '\n')
+      renameSync(tmp, p)
+    } catch (e) {
+      try { if (existsSync(tmp)) unlinkSync(tmp) } catch { /* 清理 tmp 失败忽略 */ }
+      console.warn(`[memory] LRU 裁剪写入失败（忽略，下次重试）：${e.message}`)
+      return rec  // 不更新缓存计数，让下次 append 再触发
+    }
     _lineCountCache.set(p, kept.length)
     _entriesCache.set(p, kept)  // 缓存同步更新为裁剪后的列表
   }

@@ -7,7 +7,7 @@
 // 续跑由子 flow 自身的 --run-id + Checkpoint 负责；worktree 隔离让并发子 flow 互不污染。
 
 import { spawn } from 'child_process'
-import { mkdirSync, openSync, closeSync, existsSync, cpSync } from 'fs'
+import { mkdirSync, openSync, closeSync, existsSync, cpSync, readdirSync, statSync } from 'fs'
 import { assertSafeIdent } from './helpers.js'
 import { dirname, join } from 'path'
 import { gitWorktreeAdd, gitWorktreeRemove } from './git.js'
@@ -214,6 +214,40 @@ export async function fanOut(tasks, {
   } finally {
     process.setMaxListeners(prevMaxListeners)
   }
+
+  // cleanWorktrees=false 时 worktree 目录会随任务数增长持续积累——打磁盘占用警告提示用户清理。
+  // 只在真的创建了 worktree（isolate='worktree' 且非 dry-run）且有任务完成时才检查。
+  if (isolate === 'worktree' && !dryRun && tasks.length > 0) {
+    const createdWorktrees = results.filter(r => r?.worktree).map(r => r.worktree)
+    if (createdWorktrees.length > 0 && !cleanWorktrees) {
+      try {
+        const totalBytes = createdWorktrees.reduce((sum, wt) => {
+          if (!existsSync(wt)) return sum
+          let size = 0
+          const walk = (dir) => {
+            try {
+              for (const name of readdirSync(dir)) {
+                const full = `${dir}/${name}`
+                try {
+                  const st = statSync(full)
+                  if (st.isDirectory()) walk(full)
+                  else size += st.size
+                } catch { /* 单文件失败跳过 */ }
+              }
+            } catch { /* 目录读取失败忽略 */ }
+          }
+          walk(wt)
+          return sum + size
+        }, 0)
+        const mb = (totalBytes / 1024 / 1024).toFixed(1)
+        console.warn(
+          `  [fanOut] cleanWorktrees=false：${createdWorktrees.length} 个 worktree 保留在磁盘（${mb} MB）。` +
+          `\n  长期运行建议传 cleanWorktrees: true，或手动执行 git worktree prune 清理。`,
+        )
+      } catch { /* 磁盘统计失败不影响主流程 */ }
+    }
+  }
+
   return results
 }
 

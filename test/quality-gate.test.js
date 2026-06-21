@@ -90,10 +90,23 @@ test('onEvent：绿灯 emit gate/pass，红灯 emit gate/fail（埋点）', asyn
   const events = []
   const onEvent = e => events.push(e)
   await runGate({ name: 'ok', cmd: 'true' }, { onEvent })
-  assert.deepEqual(events.at(-1), { event: 'gate', name: 'ok', status: 'pass', attempts: 1 })
+  // makeEvent 统一事件格式后，事件对象额外包含 type 和 ts 字段（向后兼容 event 字段仍保留）。
+  // 使用 subset 匹配而非深度相等，避免 ts 时间戳导致快照测试失败。
+  const passEvt = events.at(-1)
+  assert.equal(passEvt.event, 'gate')
+  assert.equal(passEvt.type, 'gate')
+  assert.equal(passEvt.name, 'ok')
+  assert.equal(passEvt.status, 'pass')
+  assert.equal(passEvt.attempts, 1)
+  assert.ok(typeof passEvt.ts === 'string', 'ts 字段应为 ISO 字符串')
 
   await assert.rejects(runGate({ name: 'bad', cmd: 'exit 7', onFail: 'rollback' }, { onEvent }))
-  assert.deepEqual(events.at(-1), { event: 'gate', name: 'bad', status: 'fail', exitCode: 7 })
+  const failEvt = events.at(-1)
+  assert.equal(failEvt.event, 'gate')
+  assert.equal(failEvt.type, 'gate')
+  assert.equal(failEvt.name, 'bad')
+  assert.equal(failEvt.status, 'fail')
+  assert.equal(failEvt.exitCode, 7)
 })
 
 test('红灯 + onFail=autofix 但无 autofixCmd → 直接抛错，不重跑检查', async () => {

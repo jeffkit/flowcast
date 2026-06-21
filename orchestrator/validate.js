@@ -8,7 +8,7 @@
 // 生成 flow 自循环使用——dashboard 是给宿主看的，不是给被编排对象用的。
 
 import { execFileSync } from 'child_process'
-import { mkdtempSync, rmSync, readFileSync, copyFileSync, existsSync } from 'fs'
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, copyFileSync, existsSync } from 'fs'
 import { tmpdir, homedir } from 'os'
 import { join, dirname } from 'path'
 
@@ -168,11 +168,15 @@ export async function validateFlow(file, { timeout = 60_000, repo, cwd } = {}) {
   // 加 random 后缀防止多个并发校验进程（不同测试文件平行跑）在同一毫秒内
   // 使用相同 timestamp → 共享 ~/.flowcast/dryrun/runs/dryrun-X/ → state.json.tmp 竞态
   const dryRunId = `dryrun-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  // validateFlow 的 dry-run 只做冒烟校验，不需要保留 Checkpoint 状态供后续续跑。
-  // 子进程退出后立即清理，防止 ~/.flowcast/dryrun/runs/ 目录随测试次数无限积累。
-  const dryRunStateDir = join(process.env.HOME ?? homedir(), '.flowcast', 'dryrun', 'runs', dryRunId)
-  const cleanupDryRunState = () => {
-    try { if (existsSync(dryRunStateDir)) rmSync(dryRunStateDir, { recursive: true, force: true }) } catch { /* 清理失败忽略，不影响校验结果 */ }
+  // 临时 HOME：生成的 flow 在验证期间尚未完全信任——若继承真实 HOME，
+  // 它可以读取 ~/.flowcast/providers.json、~/.ssh/ 等敏感文件（dry-run 虽不调真实 API，
+  // 但 flow 可把读到的内容写进 Checkpoint 状态/日志文件，形成间接信息泄露）。
+  // 用独立临时目录作为 HOME：干净、隔离、进程退出后立即清理。
+  const fakeHome = mkdtempSync(join(tmpdir(), 'flowcast-validate-home-'))
+  // Checkpoint 会在 HOME/.flowcast/runs/ 下建目录，预先 mkdir 确保可写（mkdirSync 幂等）。
+  mkdirSync(join(fakeHome, '.flowcast', 'runs'), { recursive: true })
+  const cleanupFakeHome = () => {
+    try { rmSync(fakeHome, { recursive: true, force: true }) } catch { /* 清理失败忽略 */ }
   }
   try {
     if (!repo) {
@@ -185,9 +189,11 @@ export async function validateFlow(file, { timeout = 60_000, repo, cwd } = {}) {
       // 最小 env：dry-run 不调真 API，不需要任何密钥。
       // 不能继承 process.env——生成的 flow 在这里尚未经过完整信任验证，
       // 若传入真实密钥则验证沙箱形同虚设。
+      // HOME 指向临时目录（而非真实 HOME）：防止生成的 flow 读取 ~/.flowcast/providers.json、
+      // ~/.ssh 等敏感文件（即使只是读取，也可能通过日志/Checkpoint 产生间接信息泄露）。
       env: {
         PATH: process.env.PATH,
-        HOME: process.env.HOME,
+        HOME: fakeHome,
         ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}),
         // TMPDIR 影响 os.tmpdir()——生成的 flow 若调 mkdtempSync 需要可写的 tmp 目录
         ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
@@ -197,10 +203,10 @@ export async function validateFlow(file, { timeout = 60_000, repo, cwd } = {}) {
     checks.push('dry-run')
   } catch (e) {
     cleanupRepo()
-    cleanupDryRunState()
+    cleanupFakeHome()
     return fail('dry-run', String(e.stderr ?? e.stdout ?? e.message).trim().slice(0, 500))
   }
   cleanupRepo()
-  cleanupDryRunState()
+  cleanupFakeHome()
   return { ok: true, checks }
 }
