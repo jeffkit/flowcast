@@ -96,10 +96,8 @@ export class PathError extends FlowcastError {
 /** withSelfModGuard 前置检查失败或回滚失败（guard/rollback 错误）*/
 export class GuardError extends FlowcastError {
   constructor(message, code, extra) {
-    super(message)
+    super(message, code || 'GUARD_FAIL', extra ?? {})
     this.name = 'GuardError'
-    this.code = code || 'GUARD_FAIL'
-    if (extra) Object.assign(this, extra)
   }
 }
 
@@ -123,10 +121,8 @@ export class VerifyError extends FlowcastError {
 /** orchestrate 续跑锁相关错误（锁重试超限或锁被活进程持有）*/
 export class LockError extends FlowcastError {
   constructor(message, code, extra) {
-    super(message)
+    super(message, code || 'LOCK_BUSY', extra ?? {})
     this.name = 'LockError'
-    this.code = code || 'LOCK_BUSY'
-    Object.assign(this, extra)
   }
 }
 

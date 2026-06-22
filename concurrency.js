@@ -20,7 +20,7 @@ function defaultPipelineConcurrency() {
  * @param {object} [o]
  * @param {number}   [o.concurrency]  并发上限；缺省 = 全部一起跑。结果按原下标顺序返回。
  * @param {boolean}  [o.strict=true]  错误收集策略：
- *   - true（默认）：等所有任务跑完后，若有失败则统一抛出含 failures 数组的 Error。
+ *   - true（默认）：等所有任务跑完后，若有失败则统一抛出 `ParallelError`（`err.failures`）。
  *     注意：**不是 fail-fast**——第一个任务失败后，其余任务仍会继续运行到结束。
  *     如需提前停止排队中的任务，请同时传 failFast: true（但已在跑的任务不会被中断）。
  *   - false：失败的 thunk 在对应位置返回 null，其余继续跑；控制台打 [parallel error]。

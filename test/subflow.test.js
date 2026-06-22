@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { runFlow, fanOut, sweepStaleTmp } from '../subflow.js'
 import { GOLDEN_SAMPLE } from '../orchestrator/paths.js'
 import { flowcastDir } from '../dirs.js'
-import { PathError } from '../errors.js'
+import { PathError, ConfigError, GitError } from '../errors.js'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const cleanRun = (id) => rmSync(join(flowcastDir(REPO), 'runs', id), { recursive: true, force: true })
@@ -161,6 +161,7 @@ test('fanOut: prepare 抛错（硬失败）→ fanOut reject 且 err.partialResu
       },
     ).then(() => null, e => e)
     assert.ok(err, 'fanOut 应 reject')
+    assert.ok(err instanceof ConfigError, `非 FlowcastError 应被包装为 ConfigError，实际：${err?.constructor?.name}`)
     assert.match(err.message, /prepare boom/)
     assert.ok(Array.isArray(err.partialResults), 'err.partialResults 应为数组')
     // task-ok 先完成（concurrency=1），所以 partialResults 中应有它
@@ -188,6 +189,7 @@ test('fanOut: onResult 抛错（硬失败）→ fanOut reject 且 err.partialRes
       },
     ).then(() => null, e => e)
     assert.ok(err, 'fanOut 应 reject')
+    assert.ok(err instanceof ConfigError, `非 FlowcastError 应被包装为 ConfigError，实际：${err?.constructor?.name}`)
     assert.match(err.message, /onResult boom/)
     assert.ok(Array.isArray(err.partialResults), 'err.partialResults 应为数组')
     // task-0 先完成（concurrency=1），其结果应在 partialResults 中
@@ -292,4 +294,21 @@ test('sweepStaleTmp: 保留其他工具的 tmp 文件', () => {
   sweepStaleTmp({ baseDir: dir, olderThanMs: 60 * 60 * 1000 })
   assert.ok(existsSync(other), '其他工具的 tmp 文件应保留')
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('fanOut: isolate=worktree 但 repo 非 git 仓库时 → 抛 GitError（err.partialResults 含已完成结果）', async () => {
+  // 非 git 目录：gitWorktreeAdd 会抛错，fanOut 将其包装为 GitError 并 reject
+  const flowDir = mkdtempSync(join(tmpdir(), 'flowcast-fo-wt-err-'))
+  const flowFile = join(flowDir, 'ok.mjs')
+  writeFileSync(flowFile, `// noop\n`)
+  try {
+    const err = await fanOut(
+      [{ name: 'task-wt', flow: flowFile }],
+      { repo: flowDir, isolate: 'worktree', dryRun: false, timeout: 10_000 },
+    ).then(() => null, e => e)
+    assert.ok(err, 'fanOut 应 reject')
+    assert.ok(err instanceof GitError, `应为 GitError，实际：${err?.constructor?.name}`)
+    assert.match(err.message, /worktree/)
+    assert.ok(Array.isArray(err.partialResults), 'err.partialResults 应为数组')
+  } finally { rmSync(flowDir, { recursive: true, force: true }) }
 })

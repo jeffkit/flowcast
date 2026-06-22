@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -89,6 +89,36 @@ test('Checkpoint 报告：record 的步骤无 durationMs 时渲染 "-" 而非 "N
     const report = readFileSync(join(dir, 'rnan', 'report.md'), 'utf8')
     assert.ok(!report.includes('NaN'), '报告不应出现 NaN')
     assert.match(report, /\| group\.a \| done \| - \|/)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint.step: sidecar 文件丢失 → 步骤重新执行（不跳过）', async () => {
+  // 模拟跨机器迁移场景：state.json 带过去了，但 steps/ 目录没带过去。
+  // _loadResult 检测到旁路文件丢失时清除 completed[key]，触发步骤重跑。
+  const dir = tempDir()
+  try {
+    const cp = new Checkpoint('r-sidecar', dir)
+    // 产出超过 500 字符的结果，触发旁路文件写入
+    const bigResult = 'x'.repeat(600)
+    await cp.step('work', async () => bigResult)
+
+    // 验证旁路文件已创建
+    const stepsDir = join(dir, 'r-sidecar', 'steps')
+    assert.ok(existsSync(stepsDir), 'steps/ 目录应已创建')
+    const sidecarFiles = readdirSync(stepsDir).filter(f => f.endsWith('.out'))
+    assert.ok(sidecarFiles.length > 0, '应有旁路文件生成')
+
+    // 删除旁路文件，模拟文件丢失
+    const sidecarPath = join(stepsDir, sidecarFiles[0])
+    rmSync(sidecarPath)
+
+    // 续跑：构造新 Checkpoint 实例（读取同一 state.json）
+    const cp2 = new Checkpoint('r-sidecar', dir)
+    // 旁路文件丢失 → _loadResult 清除 completed key → step 应重新执行
+    let ran = false
+    const out = await cp2.step('work', async () => { ran = true; return 'recovered' })
+    assert.equal(ran, true, '旁路文件丢失后步骤应重新执行，而非跳过')
+    assert.equal(out, 'recovered', '应返回重新执行的结果')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

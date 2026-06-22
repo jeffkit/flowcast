@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor, runAgent, setWorkdir } from '../executor.js'
-import { PathError, ConfigError } from '../errors.js'
+import { PathError, ConfigError, FlowcastError } from '../errors.js'
 
 const PROVIDERS = {
   deepseek: { type: 'openai', apiBase: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', apiKey: '${DS_KEY}' },
@@ -368,6 +368,33 @@ test('runAgent: recursive 显式传 throwOnCritical=false 不被覆盖', async (
   try {
     await runAgent('hi', { cli: 'recursive', throwOnCritical: false })
     assert.equal(capturedOpts.throwOnCritical, false, '显式传 false 应保留')
+  } finally {
+    EXECUTORS.recursive.run = orig
+  }
+})
+
+test('runAgent: recursive throwOnCritical=true + 非零退出 → 抛出 FlowcastError（code=RECURSIVE_FAIL）', async () => {
+  // 用 fake adapter 模拟真实 recursive adapter 在 throwOnCritical=true + exitCode!=0 时的行为。
+  // 验证：runAgent 注入 throwOnCritical=true 后，adapter 抛出的 FlowcastError 能正确透传给调用方。
+  const orig = EXECUTORS.recursive.run
+  EXECUTORS.recursive.run = async (_p, opts) => {
+    if (opts.throwOnCritical) {
+      // 模拟真实 adapter（adapters.js:286）在 exitCode !== 0 时抛出的 FlowcastError
+      throw new FlowcastError('[recursive] failed: exit 1\nsome output', 'RECURSIVE_FAIL', {
+        _meta: { cli: 'recursive', exitCode: 1, panicked: false, budgetExceeded: false },
+      })
+    }
+    return Object.assign('ok', { _meta: { cli: 'recursive', exitCode: 0 } })
+  }
+  try {
+    await assert.rejects(
+      () => runAgent('hi', { cli: 'recursive' }),
+      (err) => {
+        assert.ok(err instanceof FlowcastError, `应为 FlowcastError，实际：${err?.constructor?.name}`)
+        assert.equal(err.code, 'RECURSIVE_FAIL', `code 应为 RECURSIVE_FAIL，实际：${err.code}`)
+        return true
+      },
+    )
   } finally {
     EXECUTORS.recursive.run = orig
   }
