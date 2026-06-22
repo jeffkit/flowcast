@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-22
+
+### 新增
+
+- **完整 `FlowcastError` 错误子类体系**：新增 `ParallelError`（`code: PARALLEL_FAIL`）、`VerifyError`（`code: VERIFY_FAIL`，含 `voterErrors`）、`LockError`（`code: LOCK_BUSY / LOCK_RETRY_EXHAUSTED / LOCK_OWNER_PENDING`）、`GitError`（`code: GIT_FAIL`）、`GuardError`（`code: GUARD_FAIL / ROLLBACK_FAIL`）共 5 个新子类，均从 `flowcast` 主入口导出；`PauseSignal` 从 `checkpoint.js` 迁移至 `errors.js` 统一管理并从主入口导出。`isRetryable` 现为唯一 provider 回退判定入口，覆盖全部子类。
+- **`index.js` 补充导出**：新增 `spawnCli`、`emitAgentEvent`、`claudeApplyProvider` 从主入口可用，消除深路径 import 的非稳定依赖。
+- **`fanOut` `err.partialResults`**：`prepare` / `onResult` 钩子硬失败时，`fanOut` 在 reject 的 error 上附加 `err.partialResults`（已完成任务结果），`orchestrateMulti` 同步透传该字段，调用方可恢复部分成功数据。
+
+### 修复
+
+- **`checkpoint.js` `VerifyError.voterErrors` 序列化 bug**：`voterErrors` 元素结构为 `{lens, error: string}`，旧实现 `ve?.message` 持久化为全 undefined 数组，导致看板/续跑诊断丢失 voter 失败信息；已修正为正确提取结构化字段。
+- **`subflow.js` prepare/onResult 抛错时 worktree 泄漏**：prepare 抛错时 finally 清理逻辑不覆盖，导致 `.worktrees/` 累积；引入 `flowSucceeded` 标志区分 flow 成功与钩子失败，确保 worktree 在正确时机清理。
+- **`orchestrator/run.js` `acquireLock` `pid=0` 语义错误**：owner.json 未就绪时返回 `{pid:0}` 被误判为活锁，现改为抛 `LockError(LOCK_OWNER_PENDING)` 并支持 PID 已死即清锁（不再等 `STALE_LOCK_MS`）。
+- **`fanOut` 批量预校验**：非法 `task.name` 在任何 worker 启动前即 fail-fast（`assertSafeIdent` 提前批量执行），避免部分任务完成后因后续名称非法整批中止；`runOne` 内删除重复校验。
+- **`subflow.js` `onResult` 成功后误清 worktree**：`succeeded` 只在 `onResult` 成功后才设为 true，导致 flow 成功但 `onResult` 抛错时 worktree 被错误删除；区分 `flowSucceeded` 与钩子成功独立追踪。
+- **`adapters.js` `claudeOnce` 错误类型**：spawn 失败和非零退出改用 `SpawnError`，与其他 adapter 对齐；`runAgentChain` 兜底改用 `FlowcastError`。
+- **`hitl.js` spawn 相关错误类型化**：`callTool` 中 spawn 失败、超时、非零退出已分别改用 `SpawnError`/`TimeoutError`；配置类错误改用 `ConfigError`。
+- **`checkpoint.js` 错误序列化扩展**：`step()` catch 块除 `message/code/gate` 外，新增序列化 `timedOut`、`exitCode`、`schemaError`、`configError`、`spawnError`、`failures`、`voterErrors` 等结构化字段，看板/续跑诊断不再丢失关键信息。
+- **多模块 plain `Error` 迁移**：`provider.js` / `quality-gate.js` / `git.js` / `memory.js` / `executor.js` / `orchestrator/{decompose,generate,run,agent-helper}.js` / `self-mod-guard.js` / `concurrency.js` 等约 30 处裸 `Error` 迁移为对应 `FlowcastError` 子类，调用方可用 `instanceof` 统一分支处理。
+- **`subflow.js` `archiveChildRun` / `runFlow` 入口安全校验**：`childRunId` 新增 `assertSafeIdent` 校验，防路径穿越；`fanOut` `prepare`/`onResult` 抛出的非 `FlowcastError` 统一包装为 `ConfigError`，worktree 创建失败改用 `GitError`。
+
+### 优化
+
+- **`verify.js`**：直接依赖叶子模块（`executor.js` + `concurrency.js`），消除对 `agent.js` 聚合层的不必要间接依赖。
+- **`FLOW_API.md` 文档同步**：新增 `loop`、`recordLearning`/`recall`/`buildMemorySection` 原语；`parallel` 补充 `failFast`/`onError`/`ParallelError`；`fanOut` 补充 `onData`/`prepare`/`onResult` 及钩子软硬失败语义；`pipeline` 补充 `onError`；`runFlow` 返回形状 `{ok, exitCode, stdout, stderr, timedOut?, spawnError?}` 文档化。
+- **测试覆盖大幅提升**（约 324 个测试，+60 用例）：所有新错误子类均有 `instanceof` 断言回归测试；新增 `parallel.failFast`、`fanOut` 软失败/硬失败/`partialResults`、`Checkpoint` 超时/sidecar 丢失/序列化字段、`orchestrateMulti failFast=false` / 软失败返回形状、`LockError`/`VerifyError`/`GuardError` 场景、`registerExecutor` 非法名、`recursive throwOnCritical` 等关键路径测试。
+
 ## [0.3.0] - 2026-06-17
 
 ### 破坏性变更
