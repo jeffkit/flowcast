@@ -195,17 +195,22 @@ test('onStep: start/done 事件按序触发，携带 key 和 durationMs', async 
 
 test('onStep: skip 事件在续跑跳过时触发', async () => {
   const dir = tempDir()
+  let cp1, cp2
   try {
-    const cp1 = new Checkpoint('hook-skip', dir)
+    cp1 = new Checkpoint('hook-skip', dir)
     await cp1.step('p1', async () => 'cached')
 
     const events = []
-    const cp2 = new Checkpoint('hook-skip', dir, { onStep: (e) => events.push(e) })
+    cp2 = new Checkpoint('hook-skip', dir, { onStep: (e) => events.push(e) })
     await cp2.step('p1', async () => 'fresh')
     assert.equal(events.length, 1)
     assert.equal(events[0].event, 'skip')
     assert.equal(events[0].key, 'p1')
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally {
+    await cp1?.flushLog().catch(() => {})
+    await cp2?.flushLog().catch(() => {})
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('onStep: error 事件在步骤失败时触发，携带 error 信息', async () => {
@@ -323,20 +328,27 @@ test('Checkpoint.step: SpawnError 序列化后 error 对象包含 exitCode 和 s
 
 test('Checkpoint.step: 续跑时 _meta 从步骤记录里还原', async () => {
   const dir = tempDir()
+  let cp1, cp2
   try {
-    const cp1 = new Checkpoint('r-meta-resume', dir)
+    cp1 = new Checkpoint('r-meta-resume', dir)
     const agentResult = Object.assign(String('output'), {
       _meta: { cli: 'claude', model: 'claude-sonnet', inputTokens: 500, outputTokens: 100 },
     })
     await cp1.step('impl', async () => agentResult)
 
-    const cp2 = new Checkpoint('r-meta-resume', dir)
+    cp2 = new Checkpoint('r-meta-resume', dir)
     const cached = await cp2.step('impl', async () => 'fresh')
     assert.equal(String(cached), 'output')
     assert.equal(cached._meta?.cli, 'claude')
     assert.equal(cached._meta?.model, 'claude-sonnet')
     assert.equal(cached._meta?.inputTokens, 500)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally {
+    // _log() 是异步写入，macOS 上日志写入尚未完成时 rmSync 会竞态 ENOTEMPTY
+    // 先等所有异步日志落盘，再清理目录
+    await cp1?.flushLog().catch(() => {})
+    await cp2?.flushLog().catch(() => {})
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('Checkpoint.pause: 抛出 PauseSignal，状态落盘为 paused', () => {
