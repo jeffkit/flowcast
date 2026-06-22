@@ -42,9 +42,9 @@ features:
 flowcast 的核心心智模型是把"自我迭代"拆成三层，每层职责单一、可独立组合：
 
 ```
-L3 编排层 (orchestrator/)         接单 → 动态生成 flow 代码 → 校验 → 执行（续跑锁定）
-L2 引擎   (核心原语)              定义并跑好「单个 flow」：Checkpoint / 自改沙箱 / 质量门 / HITL / dry-run
-L1 执行器 (agent.js + executor.js) 怎么驱动一个 CLI/agent + provider 能力分层 + 路由
+L3 编排层 (orchestrator/)            接单 → 动态生成 flow 代码 → 校验 → 执行（续跑锁定）
+L2 引擎   (核心原语)                 定义并跑好「单个 flow」：Checkpoint / 自改沙箱 / 质量门 / HITL / dry-run
+L1 执行器 (adapters.js + executor.js) 怎么驱动一个 CLI/agent + provider 能力分层 + 路由
 ```
 
 - **L1 执行器**：把各种 coding agent（Claude / Cursor / recursive 内核 …）当作可互换、可路由、可并行的无状态 worker。
@@ -60,12 +60,12 @@ npm install -g flowcast
 # 一行需求，端到端跑通：生成 flow → 校验 → 执行
 flowcast orchestrate "把 README 里的 TODO 清单逐条实现" --repo .
 
-# 安装团队 flow，按名字运行
-flowcast flows install /path/to/force-dev.js
-flowcast run force-dev --feature my-feature --repo .
-
-# 跑自定义 flow（dry-run 不烧 API）
+# 跑自定义 flow（dry-run 不烧 API，先验证骨架）
 FLOWCAST_DRY_RUN=1 flowcast run ./my-flow.js
+
+# 安装并按名字运行团队 flow
+flowcast flows install ./path/to/my-flow.js
+flowcast run my-flow --repo .
 ```
 
 > 想了解 flowcast 的来龙去脉与设计取舍，从 [介绍](/guide/introduction) 开始。

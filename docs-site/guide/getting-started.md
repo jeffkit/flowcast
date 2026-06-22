@@ -149,6 +149,19 @@ flowcast dashboard --repo . --open
 | `flowcast orchestrate "<目标>" --repo .` | L3：一行需求 → 生成 → 校验 → 执行 |
 | `flowcast orchestrate "<大目标>" --split` | L3 接单分拆：拆子任务 → 各自生成 → fanOut 并发 |
 | `flowcast dashboard --repo . [--open]` | 生成只读可观测看板 HTML |
-| `flowcast list` | 列出当前项目所有 run（需安装 force-dev flow） |
+| `flowcast list` | 列出当前项目所有 run |
+
+## v0.4.0 新增亮点
+
+| 能力 | 说明 |
+|------|------|
+| **完整错误层次体系** | `FlowcastError` 基类 + 11 个子类（`ParallelError` / `VerifyError` / `LockError` / `GitError` / `GuardError` 等），所有错误可 `instanceof` 分支处理。 |
+| **`parallel` 行为变更** | 默认 `strict=true`：任一失败等所有完成后汇总抛 `ParallelError`（v0.3.0 起）。新增 `failFast` / `onError` 参数。 |
+| **新主入口导出** | `spawnCli` / `emitAgentEvent` / `claudeApplyProvider` / `makeEvent` / `loadGates` / `mergeGates` / `validateSchema` / `runStructured` / `verifyAdversarial` / `loop` / 所有记忆 API。 |
+| **外置质量门配置** | `loadGates({repo})` + `mergeGates(builtin, project)` 支持项目仓 `.flowcast/gates.json` 声明自定义门。 |
+
+详见 [更新日志](https://github.com/jeffkit/flowcast/commits/main) 与 [错误类型 API](/api/errors)。
+
+---
 
 下一步：理解 [三层架构](/guide/architecture)。

@@ -12,7 +12,7 @@ import { makeEvent } from './helpers.js'
 // 抽象 self-improve.sh 里反复出现的「跑检查 → 红灯按策略处理」模式：
 //   - onFail 'rollback'   红灯直接抛错，交给 withSelfModGuard 硬回滚
 //   - onFail 'resume-fix' 红灯把失败输出喂回 agent 修一次，再重测；仍红则抛错
-//   - onFail 'autofix'    红灯跑确定性修复命令（如 cargo fmt），不重测不回滚
+//   - onFail 'autofix'    红灯跑确定性修复命令（如 cargo fmt），重测验证修复结果，仍失败抛错
 //
 // 对应 cargo test / clippy / fmt / E2E smoke 各自的红灯处理路径。
 

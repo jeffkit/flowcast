@@ -158,15 +158,16 @@ await runGate({
   cwd: repo,
   onFail: 'resume-fix',
   // resume-fix 触发时，把上下文写进 runDir，供下轮 agent 读取
-  resumeFix: async ({ output }) => {
+  resumeFix: async (failureOutput, gate) => {
     writeFailureContext(runDir, 'test', {
       reason: 'npm test 失败',
-      tailLog: output.slice(-2000),
+      tailLog: failureOutput.slice(-2000),
     })
     await runAgent(readAndConsumeFailureContext(runDir, 'test') + '\n\n修复测试失败', {
       cli: 'claude',
       cwd: repo,
     })
+    return true  // 返回 true 告知框架已应用修复，触发重测
   },
 })
 ```
@@ -188,11 +189,15 @@ const ctx = readAndConsumeFailureContext(dir, tag)
 如果一次失败值得长期记住（超过单轮），用 `promoteFailureContext` 把它提升为 memory 条目：
 
 ```js
-import { promoteFailureContext } from 'flowcast'
+import { promoteFailureContext, readAndConsumeFailureContext } from 'flowcast'
 
-promoteFailureContext(runDir, 'test', 'force-dev', {
-  topic: '测试失败：类型不匹配',
-  tags: ['typescript', 'type-error'],
-  runId: cp.runId,
-})
+// 从 failure-context 读出内容，再提升为长期记忆
+const failureContent = readAndConsumeFailureContext(runDir, 'test')
+if (failureContent) {
+  promoteFailureContext('force-dev', failureContent, {
+    topic: '测试失败：类型不匹配',
+    tags: ['typescript', 'type-error'],
+    runId: cp.runId,
+  })
+}
 ```

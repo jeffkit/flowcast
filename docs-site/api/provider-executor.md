@@ -5,7 +5,7 @@
 ```js
 import {
   interpolateEnv, loadProviders, resolveProvider, loadMergedConfig, basenamesFor,
-  EXECUTORS, getExecutor, loadAgents, resolveAgent,
+  EXECUTORS, getExecutor, registerExecutor, loadAgents, resolveAgent,
 } from 'flowcast'
 ```
 
@@ -50,6 +50,45 @@ import {
 ### getExecutor(name)
 
 返回 `{ name, run, applyProvider, acceptsProvider }`；未注册抛错。`acceptsProvider` 由 `applyProvider` 是否存在派生（单一事实来源）。
+
+### registerExecutor(name, run, opts?)
+
+注册自定义执行器。可用于把项目特有的 CLI/agent 纳入 flowcast 统一调度体系。
+
+```js
+import { registerExecutor, runAgent } from 'flowcast'
+
+// 锁定型执行器（不接受外部 provider）
+registerExecutor('my-agent', async (prompt, opts) => {
+  // 调用你的 CLI，返回字符串
+  return '...'
+})
+
+// BYO-LLM 执行器（可注入 provider）
+// applyProvider(bundle) 接收 provider bundle，返回 { env?, model? }
+// executor.js 会将 env 合并到进程环境，model 合并到 opts
+registerExecutor('my-llm-agent', async (prompt, opts) => {
+  // opts.model / opts.env 已由框架注入 applyProvider 的翻译结果
+  return '...'
+}, {
+  applyProvider: (bundle) => ({
+    env: {
+      MY_API_BASE: bundle.apiBase,
+      MY_API_KEY: bundle.apiKey,
+    },
+    model: bundle.model,
+  }),
+})
+
+await runAgent('做某事', { cli: 'my-agent' })
+```
+
+**参数**：
+- `name`：执行器名（字母数字/._-，`assertSafeIdent` 校验）
+- `run`：`async (prompt, opts) => string` — 执行函数
+- `opts.applyProvider`：可选，有则视为 BYO-LLM（可注入 provider）；无则为锁定型（注入 provider 会 fail-fast）
+
+**注意**：注册后立即生效，可通过 `getExecutor(name)` 取回。name 冲突时覆盖已有注册。
 
 ### loadAgents({ repo?, dirs? })
 

@@ -23,7 +23,7 @@ await runGate({
 |------|------|----------|
 | `rollback`（默认） | 红灯直接抛错，交给 `withSelfModGuard` 硬回滚 | `cargo test` / `clippy` |
 | `resume-fix` | 红灯把失败输出喂回 agent 修一次，再重测；仍红则抛错 | 可自动修的失败 |
-| `autofix` | 红灯跑确定性修复命令（如 `cargo fmt`），不重测不回滚 | `fmt` 这类幂等修复 |
+| `autofix` | 跑 `autofixCmd` 修复后**重测验证**；验证通过返回 pass，仍失败抛 `GateError`，不触发回滚 | `fmt` 这类确定性修复 |
 
 ```js
 // resume-fix：把失败输出喂回 agent 修一次

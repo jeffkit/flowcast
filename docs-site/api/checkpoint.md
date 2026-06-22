@@ -17,6 +17,19 @@ new Checkpoint(runId, stateDir = '.flowcast/runs')
 
 构造时会创建 `<stateDir>/<runId>/`，已有 `state.json` 则加载（实现续跑）。
 
+**第三参数 `{ onStep }`（可选）**：step 生命周期横切钩子。
+
+```js
+const cp = new Checkpoint(runId, stateDir, {
+  onStep: ({ event, key, durationMs, result, error }) => {
+    // event: 'start' | 'done' | 'skip' | 'error'
+    console.log(`[${event}] ${key}`, durationMs ? `${durationMs}ms` : '')
+  },
+})
+```
+
+`onStep` 抛出的异常会被吞掉，绝不影响主流程。适用于自定义埋点、调试日志等场景。
+
 ## 方法
 
 ### `await cp.step(key, fn, { meta? })`
@@ -65,7 +78,24 @@ new Checkpoint(runId, stateDir = '.flowcast/runs')
 
 ### `cp.countCompletedTurns() → number`
 
+::: warning 已废弃
+`countCompletedTurns()` 将 `turn-N` 命名约定硬编码在 Checkpoint 里（loop 概念泄漏）。
+请使用通用替代方法 `cp.countCompletedKeysWithPrefix('turn-')`。
+:::
+
 统计已完成 `turn-N` 形式的步骤数（`^turn-\d+$`）。`loop` 原语续跑推断起始 turn 用。
+
+### `cp.countCompletedKeysWithPrefix(prefix) → number`
+
+统计 step key 以指定前缀开头且已完成的步骤数量。通用版本，替代已废弃的 `countCompletedTurns()`。
+
+```js
+// 统计已完成的 turn-N 步骤数（等价于旧 countCompletedTurns()）
+const turns = cp.countCompletedKeysWithPrefix('turn-')
+
+// 统计其他自定义前缀的步骤
+const phases = cp.countCompletedKeysWithPrefix('phase-')
+```
 
 ### `cp.setExpectMaxMs(ms)`
 
@@ -74,6 +104,18 @@ new Checkpoint(runId, stateDir = '.flowcast/runs')
 ### `cp.getPauseContext() → object`
 
 取回 `pause` 时存的 `context`。
+
+### `cp.flush()`
+
+强制同步落盘 `state.json`（正常使用无需手动调用，仅供极少数需要立即持久化的场景）。
+
+### `cp.flushLog()`
+
+返回挂起的日志写入 Promise 队列（用于测试或关键路径等待日志完全落盘）：
+
+```js
+await cp.flushLog()  // 等待所有异步日志写入完成
+```
 
 ### `cp.status → string`
 

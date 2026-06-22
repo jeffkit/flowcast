@@ -24,7 +24,7 @@ export default defineConfig({
       { text: '给 AI 使用', link: '/guide/for-ai', activeMatch: '/guide/for-ai' },
       { text: '速查', link: '/llms.txt', target: '_blank' },
       {
-        text: 'v0.1.0',
+        text: 'v0.4.0',
         items: [
           { text: 'GitHub', link: 'https://github.com/jeffkit/flowcast' },
           { text: '更新日志', link: 'https://github.com/jeffkit/flowcast/commits/main' },
@@ -84,6 +84,8 @@ export default defineConfig({
             { text: 'Provider / Executor', link: '/api/provider-executor' },
             { text: 'Git / Subflow', link: '/api/git-subflow' },
             { text: 'Dashboard', link: '/api/dashboard' },
+            { text: '实用工具', link: '/api/utilities' },
+            { text: '错误类型', link: '/api/errors' },
           ],
         },
       ],

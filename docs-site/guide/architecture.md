@@ -5,7 +5,7 @@ flowcast 的核心心智模型，是把"自我迭代"拆成三层，每层职责
 ```
 L3 编排层 (orchestrator/)          接单 → 动态生成 flow 代码 → 校验 → 执行（续跑锁定）
 L2 引擎   (核心原语)               定义并跑好「单个 flow」：Checkpoint / 自改沙箱 / 质量门 / HITL / dry-run
-L1 执行器 (agent.js + executor.js)  怎么驱动一个 CLI/agent + provider 能力分层 + 路由
+L1 执行器 (adapters.js + executor.js)  怎么驱动一个 CLI/agent + provider 能力分层 + 路由
 ```
 
 ## L1 — 执行器
