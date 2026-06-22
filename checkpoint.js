@@ -3,20 +3,10 @@ import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
 import { assertSafeIdent, makeEvent } from './helpers.js'
-import { TimeoutError, FlowcastError } from './errors.js'
+import { TimeoutError, FlowcastError, PauseSignal } from './errors.js'
 
-/**
- * pause() 抛出此错误，让 flow 入口点（而非库内部）决定是否 process.exit。
- * 这样 finally 块和测试都能正常拦截 pause 信号。
- */
-export class PauseSignal extends Error {
-  constructor(reason, context = {}) {
-    super(reason)
-    this.name = 'PauseSignal'
-    this.pauseReason = reason
-    this.pauseContext = context
-  }
-}
+// PauseSignal 定义已移至 errors.js，此处 re-export 保持向后兼容（已有 import { PauseSignal } from './checkpoint.js' 的代码不受影响）。
+export { PauseSignal }
 
 // 超出此长度则写旁路文件，state.json 只存摘要；可通过 FLOWCAST_RESULT_INLINE_LIMIT 覆盖
 const _envInlineLimit = parseInt(process.env.FLOWCAST_RESULT_INLINE_LIMIT ?? '', 10)
@@ -145,7 +135,7 @@ export class Checkpoint {
         configError: e.configError,
         spawnError: e.spawnError ? String(e.spawnError) : undefined,
         failures: e.failures ? e.failures.map(f => ({ index: f.index, message: f.error?.message })) : undefined,
-        voterErrors: e.voterErrors ? e.voterErrors.map(ve => ve?.message) : undefined,
+        voterErrors: e.voterErrors ? e.voterErrors.map(ve => typeof ve === 'string' ? { error: ve } : { lens: ve?.lens, error: ve?.error }) : undefined,
       }
       Object.keys(error).forEach(k => error[k] === undefined && delete error[k])
       const durationMs = Date.now() - startedAt

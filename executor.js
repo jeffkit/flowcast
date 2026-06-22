@@ -21,7 +21,7 @@ import { isProviderRetryable } from './spawn.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
-import { ConfigError, PathError } from './errors.js'
+import { FlowcastError, ConfigError, PathError } from './errors.js'
 import { assertSafeIdent } from './helpers.js'
 import { resolve, normalize } from 'path'
 
@@ -432,5 +432,5 @@ export async function runAgentChain(prompt, chain, {
   }
   // 防御性兜底：正常路径最后一项失败已在循环内 throw e 退出，此处不可达。
   // 若将来循环逻辑变更导致意外走到这里，确保不静默返回 undefined。
-  throw lastErr ?? new Error('runAgentChain: chain exhausted without result or error')
+  throw lastErr ?? new FlowcastError('runAgentChain: 所有 provider 均失败')
 }

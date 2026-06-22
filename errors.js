@@ -130,6 +130,20 @@ export class LockError extends FlowcastError {
   }
 }
 
+/**
+ * cp.pause() 抛出此信号，让 flow 入口点（而非库内部）决定是否 process.exit。
+ * 这样 finally 块和测试都能正常拦截 pause 信号。
+ * 注意：PauseSignal 继承 Error 而非 FlowcastError——它是流控信号，不是错误。
+ */
+export class PauseSignal extends Error {
+  constructor(reason, context = {}) {
+    super(reason)
+    this.name = 'PauseSignal'
+    this.pauseReason = reason
+    this.pauseContext = context
+  }
+}
+
 /** parallel() strict=true 时汇总多个子任务失败（err.failures 含 {index,error} 数组）*/
 export class ParallelError extends FlowcastError {
   constructor(message, failures) {

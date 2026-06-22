@@ -191,3 +191,44 @@ test('orchestrateMulti: worktree 隔离下子 run 自动归档到主仓 .flowx/r
     assert.equal(existsSync(childA), false, 'dry-run 下不归档（worktree 未创建）')
   } finally { cleanRun(runId) }
 })
+
+// ── orchestrateMulti fanOut 阶段失败时传递 partialResults ────────
+
+test('orchestrateMulti: fanOut 阶段子任务软失败→ ok=false + results 数组（partialResults 字段透传验证）', async () => {
+  // 验证：fanOut 中子任务非零退出（软失败）时，orchestrateMulti 返回 ok=false + results 数组。
+  // Fix 2 修复了硬失败（fanOut throw）时 e.partialResults 被传递给调用方——fanOut 单元测试覆盖了硬失败路径，
+  // 此处通过 beta 非零退出验证 run 阶段的返回形状，确保 r.results 可用。
+  const id = `t-orchm-partial-${Date.now()}`
+  // 预写 tasks.json 跳过分拆阶段（续跑锁定：已存在不重新分拆）
+  const tasksPath = join(flowcastDir(REPO), 'runs', id, 'tasks.json')
+  mkdirSync(dirname(tasksPath), { recursive: true })
+  const tasks = [{ name: 'alpha', goal: 'task alpha' }, { name: 'beta', goal: 'task beta' }]
+  writeFileSync(tasksPath, JSON.stringify(tasks))
+  // 预写 sub/{alpha,beta}/flow.mjs 跳过生成阶段（锁定：已存在不重新生成）
+  const alphaDir = join(flowcastDir(REPO), 'runs', id, 'sub', 'alpha')
+  const betaDir  = join(flowcastDir(REPO), 'runs', id, 'sub', 'beta')
+  mkdirSync(alphaDir, { recursive: true })
+  mkdirSync(betaDir, { recursive: true })
+  writeFileSync(join(alphaDir, 'flow.mjs'), `// noop\n`)
+  writeFileSync(join(betaDir, 'flow.mjs'), `process.exit(1)\n`)  // beta 软失败（非零退出）
+  try {
+    const r = await orchestrateMulti('big goal', {
+      repo: REPO, runId: id, isolate: 'none',
+      dryRun: false, timeout: 10_000, concurrency: 1,
+      generate: async () => fence(goldenCode),
+      decomposeGen: async () => JSON.stringify(tasks),
+    })
+    assert.equal(r.ok, false, '有子任务失败时 ok 应为 false')
+    assert.equal(r.stage, 'run', 'stage 应为 run')
+    assert.ok(Array.isArray(r.results), 'results 应为数组（软失败不 throw，results 始终返回）')
+    assert.equal(r.results.length, 2, 'results 应有 2 个子任务结果')
+    const alphaResult = r.results.find(x => x.task.name === 'alpha')
+    const betaResult  = r.results.find(x => x.task.name === 'beta')
+    assert.ok(alphaResult?.result.ok === true,  'alpha（noop）应成功')
+    assert.ok(betaResult?.result.ok === false,   'beta（exit 1）应失败')
+  } finally {
+    cleanRun(id)
+    cleanRun(`${id}-alpha`)
+    cleanRun(`${id}-beta`)
+  }
+})

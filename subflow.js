@@ -9,7 +9,7 @@
 import { spawn } from 'child_process'
 import { mkdirSync, openSync, closeSync, existsSync, cpSync } from 'fs'
 import { assertSafeIdent } from './helpers.js'
-import { ConfigError } from './errors.js'
+import { ConfigError, FlowcastError, GitError } from './errors.js'
 import { dirname, join } from 'path'
 import { gitWorktreeAdd, gitWorktreeRemove } from './git.js'
 import { isDryRun } from './dry-run.js'
@@ -171,7 +171,7 @@ export async function fanOut(tasks, {
         cwd = dir
       } catch (e) {
         // worktree 创建失败时不能静默降级到主 repo——并发任务会互相污染，直接抛错
-        throw new ConfigError(`fanOut: 任务 '${task.name}' 建 worktree 失败（${e.message}）；` +
+        throw new GitError(`fanOut: 任务 '${task.name}' 建 worktree 失败（${e.message}）；` +
           `请用 isolate='none' 或修复 git worktree 环境`)
       }
     }
@@ -179,7 +179,13 @@ export async function fanOut(tasks, {
     let flowSucceeded = false
     try {
       // prepare 放在 try/finally 内：prepare 抛错时 worktree 也能被清理，不泄漏
-      if (prepare) await prepare(task, { cwd, worktree })
+      if (prepare) {
+        try {
+          await prepare(task, { cwd, worktree })
+        } catch (e) {
+          throw e instanceof FlowcastError ? e : new ConfigError(`fanOut prepare 失败: ${e.message}`)
+        }
+      }
       const result = await runFlow(task.flow, {
         repo: cwd, runId: task.runId ?? task.name, goal: task.goal, agent: task.agent,
         args: task.args ?? [], cwd, timeout, dryRun, logFile,
@@ -190,7 +196,13 @@ export async function fanOut(tasks, {
       const record = { task, result, worktree }
       results[idx] = record
       // onResult 先于 worktree 清理：调用方可在此 archiveChildRun（从 worktree 镜像日志回主仓）。
-      await onResult?.(record)
+      if (onResult) {
+        try {
+          await onResult(record)
+        } catch (e) {
+          throw e instanceof FlowcastError ? e : new ConfigError(`fanOut onResult 失败: ${e.message}`)
+        }
+      }
       return record
     } finally {
       // cleanWorktrees=true 时成功/失败都清理（避免孤儿堆积）；

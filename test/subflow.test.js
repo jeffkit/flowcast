@@ -168,6 +168,36 @@ test('fanOut: prepare 抛错（硬失败）→ fanOut reject 且 err.partialResu
   } finally { rmSync(flowDir, { recursive: true, force: true }) }
 })
 
+test('fanOut: onResult 抛错（硬失败）→ fanOut reject 且 err.partialResults 含已完成结果', async () => {
+  const flowDir = mkdtempSync(join(tmpdir(), 'flowcast-fo-onresult-'))
+  const okFlow = join(flowDir, 'ok.mjs')
+  writeFileSync(okFlow, `// noop\n`)
+  let onResultCalls = 0
+  try {
+    const err = await fanOut(
+      [
+        { name: 'task-0', flow: okFlow },
+        { name: 'task-1', flow: okFlow },
+      ],
+      {
+        repo: flowDir, isolate: 'none', dryRun: false, timeout: 10_000, concurrency: 1,
+        onResult: async () => {
+          onResultCalls++
+          if (onResultCalls >= 2) throw new Error('onResult boom')
+        },
+      },
+    ).then(() => null, e => e)
+    assert.ok(err, 'fanOut 应 reject')
+    assert.match(err.message, /onResult boom/)
+    assert.ok(Array.isArray(err.partialResults), 'err.partialResults 应为数组')
+    // task-0 先完成（concurrency=1），其结果应在 partialResults 中
+    assert.ok(
+      err.partialResults.some(r => r?.task?.name === 'task-0'),
+      '已完成的 task-0 应在 partialResults 中',
+    )
+  } finally { rmSync(flowDir, { recursive: true, force: true }) }
+})
+
 test('fanOut: cleanWorktrees=true 时 fanOut 返回后 worktree 已被清理', async () => {
   const repo = tempRepo()
   const flowFile = join(repo, 'noop.mjs')

@@ -2,7 +2,7 @@
 //
 // "flowcast" 表面（下游 flow 用）：以下 export。稳定契约，semver 保护。
 // "flowcast/internal" 表面（测试/工具脚本用）：见 ./internal.js。无稳定性承诺。
-export { Checkpoint, PauseSignal } from './checkpoint.js'
+export { Checkpoint } from './checkpoint.js'
 export {
   runAgent, runAgentChain, setWorkdir, setAgentEventSink,
   claude, cursor, gemini, codex, aider, recursive, agy,
@@ -28,4 +28,4 @@ export { gitStatus, gitDiff, gitCommitAll, gitHead, gitCurrentBranch, gitCommits
 export { runFlow, fanOut, archiveChildRun } from './subflow.js'  // sweepStaleTmp 是内部工具，从 flowcast/internal 导出
 export { collectRuns, renderHtml, generateDashboard } from './dashboard/index.js'
 export { assertSafeIdent, makeEvent } from './helpers.js'
-export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, LockError, GitError, ParallelError, VerifyError, GuardError, isRetryable } from './errors.js'
+export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, LockError, GitError, ParallelError, VerifyError, GuardError, PauseSignal, isRetryable } from './errors.js'

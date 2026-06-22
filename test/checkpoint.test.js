@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { Checkpoint, PauseSignal } from '../checkpoint.js'
 import { clearFlowcastDirCache, flowcastDir } from '../dirs.js'
-import { TimeoutError, SpawnError } from '../errors.js'
+import { TimeoutError, SpawnError, VerifyError } from '../errors.js'
 
 function tempDir() { return mkdtempSync(join(tmpdir(), 'flowcast-cp-')) }
 
@@ -246,6 +246,32 @@ test('Checkpoint.step: TimeoutError 序列化后 error 对象包含 timedOut: tr
     const errEvt = events.find(e => e.event === 'error')
     assert.ok(errEvt, 'error 事件应触发')
     assert.strictEqual(errEvt.error.timedOut, true, '序列化 error 应包含 timedOut: true')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('Checkpoint.step: VerifyError 序列化后 voterErrors 字段正确（非 undefined 数组）', async () => {
+  const dir = tempDir()
+  try {
+    const events = []
+    const cp = new Checkpoint('r-verify-serial', dir, { onStep: (e) => events.push(e) })
+    const voterErrors = [
+      { lens: 'correctness', error: 'voter 0 failed: bad logic' },
+      { lens: 'security', error: 'voter 1 failed: no issue' },
+    ]
+    const verifyErr = new VerifyError('所有 voter 均失败', voterErrors)
+    await assert.rejects(
+      () => cp.step('verify-step', async () => { throw verifyErr }),
+    )
+    const errEvt = events.find(e => e.event === 'error')
+    assert.ok(errEvt, 'error 事件应触发')
+    assert.ok(Array.isArray(errEvt.error.voterErrors), 'voterErrors 应为数组')
+    assert.ok(errEvt.error.voterErrors.length > 0, 'voterErrors 不应为空')
+    // 每个元素应有 error 字段（非 undefined）
+    for (const ve of errEvt.error.voterErrors) {
+      assert.ok(ve.error !== undefined, `voterErrors 元素 error 字段不应为 undefined，实际：${JSON.stringify(ve)}`)
+    }
+    assert.equal(errEvt.error.voterErrors[0].lens, 'correctness')
+    assert.equal(errEvt.error.voterErrors[1].lens, 'security')
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 

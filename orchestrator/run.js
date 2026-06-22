@@ -219,7 +219,7 @@ export async function orchestrateMulti(goal, {
       d = await decompose(goal, { repo, agent, agents, providers, generate: decomposeGen })
     } catch (e) {
       releaseLock(tasksLockDir)
-      return { ok: false, stage: 'decompose', runId, error: e.message }
+      return { ok: false, stage: 'decompose', runId, error: e.message, errorCode: e.code }
     }
     tasks = d.tasks
     writeFileSync(tasksPath, JSON.stringify(tasks, null, 2), 'utf8')
@@ -285,7 +285,7 @@ export async function orchestrateMulti(goal, {
       },
     })
   } catch (e) {
-    return { ok: false, stage: 'run', runId, error: e.message, errorCode: e.code, tasks: tasks.length }
+    return { ok: false, stage: 'run', runId, error: e.message, errorCode: e.code, partialResults: e.partialResults, tasks: tasks.length }
   }
 
   const allOk = results.every(r => r.result.ok) && generateFailures.length === 0
