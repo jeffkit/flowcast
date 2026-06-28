@@ -86,6 +86,7 @@ Commands:
   orchestrate <goal>   L3: generate a flow from a goal, validate it, then run it
   dashboard            Generate a static observability dashboard (HTML) for all runs
   list                 List all workflow runs in current project (needs force-dev flow installed)
+  rate-limits          Show/clear rate-limit records (~/.flowcast/rate-limits.json)
 
 Examples:
   flowcast flows install /path/to/force-lab/flows/force-dev.js
@@ -97,6 +98,9 @@ Examples:
   flowcast orchestrate "大目标" --split --concurrency 3
   flowcast dashboard --repo . --open
   flowcast list
+  flowcast rate-limits               # 列出所有活跃限流记录
+  flowcast rate-limits clear         # 清空全部限流记录
+  flowcast rate-limits clear agy/glm-4-flash  # 清除指定 cli/model 的记录
 `)
   process.exit(0)
 }
@@ -165,6 +169,59 @@ if (command === 'flows') {
   // L3：一行需求 → 生成 flow → 校验 → 执行（续跑锁定）
   const { runOrchestrate } = await import(join(__dirname, '../orchestrator/cli.js'))
   process.exit(await runOrchestrate(rest))
+
+} else if (command === 'rate-limits') {
+  const sub = rest[0]
+  const { listRateLimits, clearRateLimit } = await import(join(__dirname, '../rate-limiter.js'))
+
+  if (sub === 'clear') {
+    const key = rest[1]  // 可选：cli/model（如 agy/glm-4-flash）；不传则清全部
+    if (key) {
+      const slash = key.indexOf('/')
+      if (slash < 0) {
+        console.error(`格式错误：应为 cli/model（如 agy/glm-4-flash），收到：${key}`)
+        process.exit(1)
+      }
+      clearRateLimit(key.slice(0, slash), key.slice(slash + 1))
+      console.log(`✓ 已清除限流记录：${key}`)
+    } else {
+      // 清空全部：读出所有 key 逐一删除
+      const all = listRateLimits()
+      if (all.length === 0) {
+        console.log('没有活跃的限流记录。')
+      } else {
+        for (const e of all) clearRateLimit(e.cli, e.model)
+        console.log(`✓ 已清除 ${all.length} 条限流记录。`)
+      }
+    }
+    process.exit(0)
+  }
+
+  // 默认：列出
+  const list = listRateLimits()
+  if (list.length === 0) {
+    console.log('没有活跃的限流记录。')
+  } else {
+    const now = Date.now()
+    console.log(`活跃限流记录（共 ${list.length} 条）：\n`)
+    const COL = [20, 26, 10, 8]
+    const header = ['CLI / 模型', '下次可用时间', '来源', '触发次数'].map((h, i) => h.padEnd(COL[i])).join('  ')
+    console.log(header)
+    console.log('-'.repeat(header.length))
+    for (const e of list) {
+      const remainMin = Math.ceil(e.remainingMs / 60_000)
+      const eta = new Date(e.availableAt).toLocaleString() + `（${remainMin}min 后）`
+      const row = [
+        e.key.padEnd(COL[0]),
+        eta.padEnd(COL[1]),
+        (e.source ?? '-').padEnd(COL[2]),
+        String(e.count ?? '-'),
+      ].join('  ')
+      console.log(row)
+    }
+    console.log(`\n提示：flowcast rate-limits clear [cli/model]  清除记录`)
+  }
+  process.exit(0)
 
 } else if (command === 'dashboard') {
   // 可观测看板：扫描 .flowcast/runs + worktree → 生成单文件 HTML（只读快照）

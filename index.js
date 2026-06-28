@@ -29,3 +29,4 @@ export { runFlow, fanOut, archiveChildRun } from './subflow.js'  // sweepStaleTm
 export { collectRuns, renderHtml, generateDashboard } from './dashboard/index.js'
 export { assertSafeIdent, makeEvent } from './helpers.js'
 export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, LockError, GitError, ParallelError, VerifyError, GuardError, PauseSignal, isRetryable } from './errors.js'
+export { recordRateLimit, getAvailableAt, isAvailable, listRateLimits, clearRateLimit, matchPattern, analyzeWithLLM, listPatterns, removePattern, makeKey } from './rate-limiter.js'

@@ -130,6 +130,25 @@ details{margin:6px 0;border:1px solid var(--border);border-radius:6px;background
 summary{cursor:pointer;padding:7px 10px;font-size:12px;font-weight:600}
 pre{margin:0;padding:10px;overflow-x:auto;font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:#c9d1d9;max-height:340px;overflow-y:auto;border-top:1px solid var(--border)}
 a.link{color:var(--accent);cursor:pointer;text-decoration:none}
+.step-item{margin:3px 0;border:1px solid var(--border);border-radius:6px;background:var(--panel2);overflow:hidden}
+.step-item.err{border-color:rgba(245,114,114,.4)}
+.step-item.skip{opacity:.6}
+.step-summary{display:grid;grid-template-columns:200px 1fr 70px;gap:8px;align-items:center;font-size:11px;padding:5px 8px;cursor:pointer;list-style:none;user-select:none}
+.step-summary::-webkit-details-marker{display:none}
+.step-summary::marker{display:none}
+.step-item[open] .step-summary{border-bottom:1px solid var(--border);background:rgba(255,255,255,.03)}
+.step-key{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.step-item.err .step-key{color:var(--err)}
+.step-item.skip .step-key{color:var(--muted);font-style:italic}
+.step-detail{padding:0}
+.step-meta{display:flex;flex-wrap:wrap;gap:6px 14px;padding:7px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);background:var(--panel2)}
+.step-meta span b{color:var(--text);font-weight:600}
+.step-result-wrap{background:var(--bg)}
+.step-result-wrap pre{max-height:480px;border-top:none}
+.step-tabs{display:flex;gap:0;border-bottom:1px solid var(--border)}
+.step-tab{padding:4px 12px;font-size:11px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none}
+.step-tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.step-tab-pane{display:none}.step-tab-pane.on{display:block}
 `
 
 // 浏览器端脚本：纯 DOM，无框架。
@@ -153,10 +172,13 @@ function renderHeader(){
   $('repo').textContent = MODEL.repo;
   $('gen').textContent = '快照 ' + fmtTime(MODEL.generatedAt);
   const s = MODEL.stats;
+  const now0=Date.now();
+  const activeRlCount=Object.values(s.rateLimits||{}).filter(e=>e.availableAt>now0).length;
   const items = [
     ['总计',s.total,''],['运行中',s.running,'running'],['僵尸',s.stale,'stale'],
     ['暂停',s.paused,'paused'],['完成',s.completed,'completed'],
     ['fallback',s.fallback,'warn'],['质量门红灯',s.gateFail,'err'],
+    ...(activeRlCount?[['限流中',activeRlCount,'err']]:[]),
     ...(s.skipped?[['续跑跳过',s.skipped,'']]:[]),
     ['Token',fmtTok(s.totalTokens),''],
   ];
@@ -245,7 +267,26 @@ function renderDetail(r){
   if(sg.gatePass) sigs.push('<span class="sigchip ok"><b>'+sg.gatePass+'</b>质量门通过</span>');
   if(sg.fixRounds) sigs.push('<span class="sigchip warn"><b>'+sg.fixRounds+'</b>fix 轮</span>');
   if(sg.group.done||sg.group.failed) sigs.push('<span class="sigchip"><b>'+sg.group.done+'/'+(sg.group.done+sg.group.failed)+'</b>组完成</span>');
+  const rlEntries=Object.entries(sg.rateLimits||{});
+  if(rlEntries.length){
+    const now2=Date.now();
+    const active=rlEntries.filter(([,e])=>e.availableAt>now2);
+    const chip=active.length
+      ? '<span class="sigchip err" title="'+esc(active.map(([k,e])=>k+' 可用 '+fmtTime(new Date(e.availableAt).toISOString())).join('\n'))+'"><b>'+active.length+'</b>限流中</span>'
+      : '<span class="sigchip" title="'+esc(rlEntries.map(([k,e])=>k+' 触发'+e.count+'次').join('\n'))+'"><b>'+rlEntries.length+'</b>曾限流</span>';
+    sigs.push(chip);
+  }
   if(sigs.length) h+='<div class="sig">'+sigs.join('')+'</div>';
+  // 限流详情（有活跃限流时展开显示）
+  const rlActiveEntries=(Object.entries(sg.rateLimits||{})).filter(([,e])=>e.availableAt>Date.now());
+  if(rlActiveEntries.length){
+    h+='<div class="section-title">限流状态</div>';
+    h+='<table class="events"><thead><tr><th>CLI / 模型</th><th>下次可用</th><th>来源</th><th>触发次数</th></tr></thead><tbody>';
+    for(const [key,e] of rlActiveEntries){
+      h+='<tr><td>'+esc(key)+'</td><td style="color:var(--err)">'+fmtTime(new Date(e.availableAt).toISOString())+'</td><td>'+esc(e.source)+'</td><td>'+e.count+'</td></tr>';
+    }
+    h+='</tbody></table>';
+  }
 
   // 子 run 网格（drain 父）
   const kids=(r.children||[]).map(id=>byId[id]).filter(Boolean);
@@ -265,35 +306,85 @@ function renderDetail(r){
   if(allSteps.length||skipped.length||errSteps.length){
     const max=Math.max(...allSteps.map(s=>s.durationMs||0),1);
     const totalLabel = allSteps.length+(skipped.length?' (续跑跳过 '+skipped.length+')':'');
-    h+='<div class="section-title">步骤时间线（'+totalLabel+'）</div><div class="timeline">';
+    h+='<div class="section-title">步骤（'+totalLabel+'）</div>';
+    // 已完成步骤：可展开详情
     for(const s of allSteps){
       const w=Math.max(2,Math.round((s.durationMs||0)/max*100));
       const tok=(s.inputTokens!=null||s.outputTokens!=null)?(fmtTok((s.inputTokens||0)+(s.outputTokens||0))+' tok'):'';
       const waitLabel = s.waitMs!=null && s.waitMs>100 ? 'wait '+fmtDur(s.waitMs) : '';
-      const tip=esc(s.key)+(s.model?(' · '+s.model):'')+(tok?(' · '+tok):'')+(waitLabel?(' · '+waitLabel):'');
-      h+='<div class="tl-row"><div class="tl-key" title="'+tip+'">'+esc(s.key)
-        +(s.model?'<span class="tl-model">'+esc(s.model)+'</span>':'')+'</div>'
+      const stepId = 'step-'+Math.random().toString(36).slice(2);
+      // summary 行（时间线条形 + 耗时）
+      h+='<details class="step-item">'
+        +'<summary class="step-summary">'
+        +'<div class="step-key">'
+        +esc(s.key)+(s.model?'<span class="tl-model">'+esc(s.model)+'</span>':'')
+        +'</div>'
         +'<div class="tl-bar-wrap"><div class="tl-bar" style="width:'+w+'%"></div></div>'
         +'<div class="tl-dur">'+fmtDur(s.durationMs)
         +(tok?'<span class="tl-tok">'+tok+'</span>':'')
         +(waitLabel?'<span class="tl-wait">'+esc(waitLabel)+'</span>':'')
-        +'</div></div>';
+        +'</div>'
+        +'</summary>'
+        // 详情面板
+        +'<div class="step-detail">';
+      // 元数据行
+      const metaParts=[];
+      if(s.cli) metaParts.push('<span>CLI <b>'+esc(s.cli)+'</b></span>');
+      if(s.model) metaParts.push('<span>模型 <b>'+esc(s.model)+'</b></span>');
+      if(s.inputTokens!=null) metaParts.push('<span>输入 <b>'+fmtTok(s.inputTokens)+'</b> tok</span>');
+      if(s.outputTokens!=null) metaParts.push('<span>输出 <b>'+fmtTok(s.outputTokens)+'</b> tok</span>');
+      if(s.startedAt) metaParts.push('<span>开始 <b>'+fmtTime(s.startedAt)+'</b></span>');
+      if(s.completedAt) metaParts.push('<span>完成 <b>'+fmtTime(s.completedAt)+'</b></span>');
+      if(s.waitMs!=null&&s.waitMs>100) metaParts.push('<span>等待 <b>'+fmtDur(s.waitMs)+'</b></span>');
+      if(metaParts.length) h+='<div class="step-meta">'+metaParts.join('')+'</div>';
+      // tabs: result / rawLog
+      const hasResult = s.result!=null && s.result!=='';
+      const hasLog = s.rawLog&&s.rawLog.length>0;
+      if(hasResult||hasLog){
+        h+='<div class="step-tabs">'
+          +(hasResult?'<button class="step-tab on" onclick="stepTab(this,\''+stepId+'\',\'r\')">输出</button>':'')
+          +(hasLog?'<button class="step-tab'+(hasResult?'':' on')+'" onclick="stepTab(this,\''+stepId+'\',\'l\')">日志</button>':'')
+          +'</div>';
+        if(hasResult){
+          h+='<div id="'+stepId+'-r" class="step-tab-pane on step-result-wrap"><pre>'+esc(s.result)+'</pre></div>';
+        }
+        if(hasLog){
+          const logJson = esc(JSON.stringify(s.rawLog,null,2));
+          h+='<div id="'+stepId+'-l" class="step-tab-pane'+(hasResult?'':' on')+' step-result-wrap"><pre>'+logJson+'</pre></div>';
+        }
+      } else {
+        h+='<div style="padding:8px 10px;font-size:11px;color:var(--muted)">（无输出记录）</div>';
+      }
+      h+='</div></details>';
     }
-    // 续跑跳过的步骤（灰显斜体）
+    // 续跑跳过的步骤（灰显，可展开查看 rawLog）
     if(skipped.length){
-      h+='<div style="margin-top:6px;font-size:10px;color:var(--muted)">↩ 续跑跳过（已完成）：</div>';
+      h+='<div style="margin:8px 0 4px;font-size:10px;color:var(--muted)">↩ 续跑跳过（已完成）：</div>';
       for(const s of skipped){
-        h+='<div class="tl-row skip"><div class="tl-key" title="skip: '+esc(s.key)+'">'+esc(s.key)+'</div>'
+        h+='<details class="step-item skip">'
+          +'<summary class="step-summary">'
+          +'<div class="step-key">'+esc(s.key)+'</div>'
           +'<div class="tl-bar-wrap"><div class="tl-bar skip" style="width:15%"></div></div>'
-          +'<div class="tl-dur">skip</div></div>';
+          +'<div class="tl-dur">skip</div>'
+          +'</summary>'
+          +'<div class="step-detail"><div style="padding:8px 10px;font-size:11px;color:var(--muted)">续跑时已跳过，结果来自上次存档</div></div>'
+          +'</details>';
       }
     }
     // 失败步
     for(const e of errSteps){
-      h+='<div class="tl-row err" style="margin-top:4px"><div class="tl-key">✗ '+esc(e.key)+'</div>'
-        +'<div style="color:var(--err);font-size:11px">'+esc(e.error||'error')+'</div><div></div></div>';
+      const errJson = e.error ? esc(typeof e.error==='string'?e.error:JSON.stringify(e.error,null,2)) : 'error';
+      h+='<details class="step-item err">'
+        +'<summary class="step-summary">'
+        +'<div class="step-key">✗ '+esc(e.key)+'</div>'
+        +'<div style="color:var(--err);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+        +esc((typeof e.error==='string'?e.error:e.error?.message)||'error').slice(0,80)
+        +'</div>'
+        +'<div class="tl-dur">'+(e.durationMs!=null?fmtDur(e.durationMs):'-')+'</div>'
+        +'</summary>'
+        +'<div class="step-detail"><div class="step-result-wrap"><pre style="color:var(--err)">'+errJson+'</pre></div></div>'
+        +'</details>';
     }
-    h+='</div>';
   }
 
   // 事件表
@@ -322,6 +413,16 @@ function renderDetail(r){
   $('detail').querySelectorAll('.cell').forEach(el=>el.onclick=()=>select(el.dataset.id));
 }
 function kv(k,v){return '<div><span>'+esc(k)+'</span><b>'+esc(v)+'</b></div>';}
+
+function stepTab(btn, stepId, pane){
+  const tabs = btn.closest('.step-tabs').querySelectorAll('.step-tab');
+  tabs.forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+  ['r','l'].forEach(p=>{
+    const el=document.getElementById(stepId+'-'+p);
+    if(el) el.classList.toggle('on', p===pane);
+  });
+}
 
 $('search').addEventListener('input',e=>{search=e.target.value;renderList();});
 renderHeader(); renderFilters(); renderList();

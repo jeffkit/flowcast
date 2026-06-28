@@ -18,6 +18,7 @@ import {
   recursiveProviderEnv, claudeApplyProvider, emitAgentEvent,
 } from './adapters.js'
 import { isProviderRetryable } from './spawn.js'
+import { recordRateLimit, getAvailableAt, makeKey } from './rate-limiter.js'
 import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
@@ -382,10 +383,19 @@ function backoffMs(fails, base = AGENT_COOLDOWN_BASE_MS, cap = AGENT_COOLDOWN_MA
 }
 
 function coolRemaining(cooldown, spec, now) {
-  if (!cooldown) return 0
+  // 持久化限流状态（跨进程）：只在 spec 明确指定了 model 时查询，
+  // 避免用 cli/default 这个过宽的 key 误判没有指定模型的 spec。
+  let persistedMs = 0
+  if (spec.model) {
+    const persisted = getAvailableAt(spec.cli ?? 'claude', spec.model)
+    persistedMs = persisted ? persisted.remainingMs : 0
+  }
+  // 内存 cooldown（指数退避，仅当前进程）
+  if (!cooldown) return persistedMs
   const entry = cooldown.get(specLabel(spec))
   const until = entry && typeof entry === 'object' ? entry.until : entry
-  return until && until > now ? until - now : 0
+  const memMs = until && until > now ? until - now : 0
+  return Math.max(persistedMs, memMs)
 }
 
 /**
@@ -398,11 +408,15 @@ export async function runAgentChain(prompt, chain, {
 } = {}) {
   const list = Array.isArray(chain) && chain.length ? chain : [{}]
   const now = Date.now()
-  // 始终拷贝（不直接引用 list/chain），防止循环内的 cooldown.delete 等操作意外修改外部数组。
-  const order = cooldown
-    ? list.map((spec, i) => ({ spec, i, cool: coolRemaining(cooldown, spec, now) }))
-        .sort((a, b) => (a.cool - b.cool) || (a.i - b.i)).map(x => x.spec)
-    : [...list]
+  // 排序：持久化限流状态（跨进程）+ 内存 cooldown（当前进程）合并后升序排，让可用的 CLI 优先。
+  // 无论 cooldown 是否传入，只要有持久化限流就重排（不再依赖 cooldown 非空才排序）。
+  const order = (() => {
+    const withCool = list.map((spec, i) => ({ spec, i, cool: coolRemaining(cooldown, spec, now) }))
+    const hasAnyBlock = withCool.some(x => x.cool > 0)
+    return hasAnyBlock
+      ? withCool.sort((a, b) => (a.cool - b.cool) || (a.i - b.i)).map(x => x.spec)
+      : [...list]
+  })()
   let lastErr
   for (let i = 0; i < order.length; i++) {
     const spec = order[i]
@@ -415,6 +429,16 @@ export async function runAgentChain(prompt, chain, {
       if (isProviderRetryable(e)) {
         const from = specLabel(spec)
         const reason = e.timedOut ? 'timeout' : String(e.apiStatus ?? e.message).slice(0, 80)
+        // 持久化限流状态（异步，不阻塞回退流程）
+        if (isProviderRetryable(e) && !e.timedOut) {
+          const rawOutput = e.output ?? e.message ?? ''
+          const useLLM = Boolean(process.env.FLOWCAST_RATE_LIMIT_LLM)
+          recordRateLimit(spec.cli ?? 'claude', spec.model, rawOutput, { useLLM }).then(({ source, availableAt }) => {
+            const eta = new Date(availableAt).toLocaleString()
+            console.warn(`  [rate-limit] ${makeKey(spec.cli ?? 'claude', spec.model)} 限流，下次可用：${eta}（来源：${source}）`)
+            emitAgentEvent({ event: 'rate-limit', cli: spec.cli, model: spec.model, availableAt, source })
+          }).catch(() => { /* 记录失败不影响主流程 */ })
+        }
         if (cooldown) {
           const prev = cooldown.get(from)
           const fails = (prev && typeof prev === 'object' ? prev.fails ?? 0 : 0) + 1

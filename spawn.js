@@ -114,7 +114,7 @@ export async function spawnCli(cli, args, cwd, timeout, env) {
     throw new TimeoutError(`[${cli}] timeout after ${timeout}ms`)
   }
   if (r.exitCode !== 0) {
-    throw new SpawnError(`[${cli}] exit ${r.exitCode}\n${r.stdout.trim()}`, null, { exitCode: r.exitCode })
+    throw new SpawnError(`[${cli}] exit ${r.exitCode}\n${r.stdout.trim()}`, null, { exitCode: r.exitCode, output: r.stdout })
   }
   return r.stdout
 }

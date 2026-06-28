@@ -21,6 +21,8 @@ export const DEFAULT_STALE_MS = 10 * 60 * 1000   // 10 分钟无活动且仍 run
 const DEFAULT_LOG_TAIL_LINES = 120               // 每个 .log 只嵌入尾部 N 行
 const DEFAULT_LOG_TAIL_BYTES = 12_000            // 且不超过 N 字节（防 HTML 膨胀）
 const MAX_RESULT_CHARS = 600                     // 步骤 result 嵌入上限（state.json 里可能很大）
+const MAX_STEP_RESULT_CHARS = 50_000             // 步骤详情 result 全文上限（50KB，防 HTML 过大）
+const RESULT_SIDECAR_MARKER = '\x00flowcast:sidecar\x00'
 
 /** 读 jsonl 文件 → 解析每行；坏行跳过。返回 [] 表示文件不存在或全坏。 */
 function readJsonl(path) {
@@ -71,6 +73,11 @@ export const EVENT_TYPES = {
     writer: 'agent.js（emitAgentEvent，触发于 provider/CLI 限额回退）',
     reader: 'dashboard/collect.js summarizeEvents（按 scope 分桶）',
   },
+  'rate-limit': {
+    schema: { cli: 'string', model: 'optional string', availableAt: 'number', source: "'parsed'|'llm'|'rule'" },
+    writer: 'executor.js runAgentChain（触发于 isRateLimitError 判定后，recordRateLimit 完成后 emit）',
+    reader: 'dashboard/collect.js summarizeEvents（按 cli/model key 聚合，取最晚 availableAt）',
+  },
   gate: {
     schema: { name: 'string', status: "'pass'|'fail'", exitCode: 'number' },
     writer: 'quality-gate.js runGates 的 onEvent 回调',
@@ -106,12 +113,21 @@ function summarizeEvents(events, steps) {
       budgetExhausted: 0,   // budget 触顶的次数
       failed: 0,            // iterate 抛错的次数
     },
+    rateLimits: {},         // { 'cli/model': { availableAt, source, count } } 每次限流最晚时间
   }
   for (const e of events) {
     if (e.event === 'fallback') {
       signals.fallback++
       // scope: 'provider'（同 CLI 换 provider）或 'cli'（跨 CLI 回退）
       signals.fallbackByScope[e.scope ?? 'unknown'] = (signals.fallbackByScope[e.scope ?? 'unknown'] ?? 0) + 1
+    } else if (e.event === 'rate-limit') {
+      const key = `${e.cli ?? '?'}/${e.model ?? 'default'}`
+      const prev = signals.rateLimits[key]
+      signals.rateLimits[key] = {
+        availableAt: prev ? Math.max(prev.availableAt, e.availableAt) : e.availableAt,
+        source: e.source ?? 'unknown',
+        count: (prev?.count ?? 0) + 1,
+      }
     } else if (e.event === 'gate') {
       if (e.status === 'pass') signals.gatePass++
       else if (e.status === 'fail') signals.gateFail++
@@ -175,9 +191,44 @@ export function readRun(dir, runId, {
   // 从 jsonl 建 start 时间戳索引（onStep 钩子写入），用于计算步骤等待时间。
   const startTsMap = new Map()
   const skipKeys = new Set()
+  // stepLogMap：key → jsonl 里各状态条目（start/done/skip/error），供详情面板展示
+  const stepLogMap = new Map()
   for (const e of logEntries) {
     if (e.key && e.status === 'start' && e.ts) startTsMap.set(e.key, e.ts)
     if (e.key && e.status === 'skip') skipKeys.add(e.key)
+    if (e.key && e.status) {
+      if (!stepLogMap.has(e.key)) stepLogMap.set(e.key, [])
+      stepLogMap.get(e.key).push(e)
+    }
+  }
+
+  // 读步骤完整 result：优先从 jsonl done 条目取（已在内存），若是 sidecar 占位则读文件。
+  const stepsDir = join(dir, 'steps')
+  function readStepResult(key) {
+    // 先从 jsonl done 条目拿 result
+    const entries = stepLogMap.get(key) ?? []
+    const doneEntry = entries.find(e => e.status === 'done')
+    let raw = doneEntry?.result
+    // fallback 到 state.completed（兼容旧版或 jsonl 没写 result 的场景）
+    if (raw === undefined) raw = state.completed?.[key]
+    if (raw === undefined) return null
+    // 处理 sidecar 占位标记：读实际文件
+    if (typeof raw === 'string' && raw.startsWith(RESULT_SIDECAR_MARKER)) {
+      const filename = raw.slice(RESULT_SIDECAR_MARKER.length)
+      const p = join(stepsDir, `${filename}.out`)
+      try {
+        const content = readFileSync(p, 'utf8')
+        const nl = content.indexOf('\n')
+        const type = nl >= 0 ? content.slice(0, nl) : 'string'
+        const body = nl >= 0 ? content.slice(nl + 1) : content
+        raw = type === 'json' ? JSON.parse(body) : body
+      } catch { return null }
+    }
+    // 序列化为字符串，截断超大内容
+    const str = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2)
+    return str.length > MAX_STEP_RESULT_CHARS
+      ? str.slice(0, MAX_STEP_RESULT_CHARS) + `\n…(+${str.length - MAX_STEP_RESULT_CHARS} 字符，已截断)`
+      : str
   }
 
   const steps = (state.steps ?? []).map(s => ({
@@ -190,6 +241,12 @@ export function readRun(dir, runId, {
     model: s.model ?? null,
     inputTokens: Number.isFinite(s.inputTokens) ? s.inputTokens : null,
     outputTokens: Number.isFinite(s.outputTokens) ? s.outputTokens : null,
+    result: readStepResult(s.key),
+    rawLog: (stepLogMap.get(s.key) ?? []).map(e => {
+      // result 字段可能很大，详情面板单独展示，rawLog 里不重复嵌入
+      const { result: _r, ...rest } = e
+      return rest
+    }),
   }))
 
   // 按 run 汇总 token 与用到的模型（仅 claude/cursor adapter 透出 token；其余为 null）。
@@ -407,6 +464,7 @@ function computeStats(runs) {
     fallback: 0, gateFail: 0, gatePass: 0,
     skipped: 0,
     inputTokens: 0, outputTokens: 0, totalTokens: 0,
+    rateLimits: {},  // 跨所有 run 聚合：{ 'cli/model': { availableAt, source, count } }
   }
   for (const r of runs) {
     if (r.stale) stats.stale++
@@ -421,6 +479,15 @@ function computeStats(runs) {
     if (r.usage?.hasTokens) {
       stats.inputTokens += r.usage.inputTokens
       stats.outputTokens += r.usage.outputTokens
+    }
+    // 聚合跨 run 的限流信号（取最晚 availableAt，累计次数）
+    for (const [key, entry] of Object.entries(r.signals.rateLimits ?? {})) {
+      const prev = stats.rateLimits[key]
+      stats.rateLimits[key] = {
+        availableAt: prev ? Math.max(prev.availableAt, entry.availableAt) : entry.availableAt,
+        source: entry.source,
+        count: (prev?.count ?? 0) + entry.count,
+      }
     }
   }
   stats.totalTokens = stats.inputTokens + stats.outputTokens
