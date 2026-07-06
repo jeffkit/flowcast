@@ -75,6 +75,74 @@ test('validateSchema: 数组元素逐个校验', () => {
   assert.equal(ok, false)
 })
 
+// ── validateSchema: 数值 / 字符串 / 数组约束 ─────────────────────
+
+test('validateSchema: minimum — 低于下界报错', () => {
+  const { ok, errors } = validateSchema(4, { type: 'number', minimum: 5 })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => /minimum/.test(e)))
+})
+
+test('validateSchema: minimum — 等于下界通过', () => {
+  const { ok } = validateSchema(5, { type: 'number', minimum: 5 })
+  assert.ok(ok)
+})
+
+test('validateSchema: maximum — 超过上界报错', () => {
+  const { ok, errors } = validateSchema(11, { type: 'integer', maximum: 10 })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => /maximum/.test(e)))
+})
+
+test('validateSchema: maximum — 等于上界通过', () => {
+  const { ok } = validateSchema(10, { type: 'integer', maximum: 10 })
+  assert.ok(ok)
+})
+
+test('validateSchema: minLength — 字符串太短报错', () => {
+  const { ok, errors } = validateSchema('ab', { type: 'string', minLength: 3 })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => /minLength/.test(e)))
+})
+
+test('validateSchema: minLength — 满足下限通过', () => {
+  const { ok } = validateSchema('abc', { type: 'string', minLength: 3 })
+  assert.ok(ok)
+})
+
+test('validateSchema: maxLength — 字符串太长报错', () => {
+  const { ok, errors } = validateSchema('abcde', { type: 'string', maxLength: 4 })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => /maxLength/.test(e)))
+})
+
+test('validateSchema: maxLength — 满足上限通过', () => {
+  const { ok } = validateSchema('abcd', { type: 'string', maxLength: 4 })
+  assert.ok(ok)
+})
+
+test('validateSchema: minItems — 数组太短报错', () => {
+  const { ok, errors } = validateSchema([1], { type: 'array', minItems: 2 })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => /minItems/.test(e)))
+})
+
+test('validateSchema: minItems — 满足下限通过', () => {
+  const { ok } = validateSchema([1, 2], { type: 'array', minItems: 2 })
+  assert.ok(ok)
+})
+
+test('validateSchema: maxItems — 数组太长报错', () => {
+  const { ok, errors } = validateSchema([1, 2, 3], { type: 'array', maxItems: 2 })
+  assert.equal(ok, false)
+  assert.ok(errors.some(e => /maxItems/.test(e)))
+})
+
+test('validateSchema: maxItems — 满足上限通过', () => {
+  const { ok } = validateSchema([1, 2], { type: 'array', maxItems: 2 })
+  assert.ok(ok)
+})
+
 // ── stubFromSchema ───────────────────────────────────────────────
 
 test('stubFromSchema: 造出符合 schema 的占位对象', () => {
@@ -83,6 +151,37 @@ test('stubFromSchema: 造出符合 schema 的占位对象', () => {
   assert.equal(typeof stub.count, 'number')
   const { ok } = validateSchema(stub, ITEM_SCHEMA)
   assert.ok(ok, 'stub 自身应通过校验')
+})
+
+test('stubFromSchema: minimum 约束 — stub >= minimum', () => {
+  const schema = { type: 'number', minimum: 5 }
+  const stub = stubFromSchema(schema)
+  assert.ok(stub >= 5, `stub 应 >= 5，实际：${stub}`)
+  const { ok } = validateSchema(stub, schema)
+  assert.ok(ok, 'stub 应通过 minimum 约束')
+})
+
+test('stubFromSchema: integer minimum — stub 是满足下限的整数', () => {
+  const schema = { type: 'integer', minimum: 3.5 }
+  const stub = stubFromSchema(schema)
+  assert.ok(Number.isInteger(stub), 'stub 应是整数')
+  assert.ok(stub >= 3.5)
+})
+
+test('stubFromSchema: minLength — stub.length >= minLength', () => {
+  const schema = { type: 'string', minLength: 4 }
+  const stub = stubFromSchema(schema)
+  assert.ok(stub.length >= 4, `stub.length=${stub.length} 应 >= 4`)
+  const { ok } = validateSchema(stub, schema)
+  assert.ok(ok)
+})
+
+test('stubFromSchema: minItems — stub.length >= minItems', () => {
+  const schema = { type: 'array', minItems: 3, items: { type: 'string' } }
+  const stub = stubFromSchema(schema)
+  assert.equal(stub.length, 3)
+  const { ok } = validateSchema(stub, schema)
+  assert.ok(ok, 'stub 应通过 minItems 约束')
 })
 
 // ── runStructured ────────────────────────────────────────────────

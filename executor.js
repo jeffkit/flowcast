@@ -23,7 +23,7 @@ import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
 import { FlowcastError, ConfigError, PathError } from './errors.js'
-import { assertSafeIdent } from './helpers.js'
+import { assertSafeIdent, makeAgentResult } from './helpers.js'
 import { resolve, normalize } from 'path'
 
 // ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
@@ -253,8 +253,10 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
 /** dry-run 假执行器：不调真 CLI，返回成功占位 + _meta。 */
 function makeFakeRun(executor) {
   return async (goal, _opts = {}) => {
-    const out = `[dry-run] ${executor} would run: ${String(goal ?? '').slice(0, 80)}`
-    return Object.assign(out, { _meta: { cli: executor, dryRun: true, exitCode: 0 } })
+    return makeAgentResult(
+      `[dry-run] ${executor} would run: ${String(goal ?? '').slice(0, 80)}`,
+      { cli: executor, dryRun: true, exitCode: 0 },
+    )
   }
 }
 
@@ -271,10 +273,13 @@ let _defaultCwd = process.cwd()
 /**
  * 设置全局默认工作目录，flow 启动时调用一次，之后所有 runAgent 自动继承。
  *
- * ⚠️ 并发安全提示：`_defaultCwd` 是进程级单例。
- *   - fanOut / orchestrateMulti 的并发子任务跑在独立 node 子进程里，各自有自己的 `_defaultCwd`，安全。
- *   - 同一进程内若并发调用多次 `setWorkdir` + `runAgent`，则 `_defaultCwd` 会被竞争覆盖。
- *     避免方法：每次 `runAgent` 调用时显式传 `cwd` 参数，不依赖全局默认值。
+ * @deprecated `_defaultCwd` 是进程级单例，并发不安全：
+ *   同一进程内若并发调用多次 `setWorkdir` + `runAgent`，`_defaultCwd` 会被竞争覆盖。
+ *   **推荐做法**：每次 `runAgent` 调用时显式传 `cwd` 参数，彻底避免对全局状态的依赖。
+ *   本函数保留是为了向后兼容（生成的 flow 骨架仍然调它）；future major 版本将移除。
+ *
+ * ✅ 安全场景：fanOut / orchestrateMulti 的并发子任务跑在独立 node 子进程里，各自有独立的
+ *   `_defaultCwd`，不受跨进程竞态影响。
  *
  * @param {string} dir  全局默认工作目录（绝对路径）
  */
@@ -340,7 +345,7 @@ export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetr
 
   if (isDryRun()) {
     if (schema) return stubFromSchema(schema)
-    return Object.assign(`[dry-run] ${cli} 未真实执行`, { _meta: { cli, dryRun: true } })
+    return makeAgentResult(`[dry-run] ${cli} 未真实执行`, { cli, dryRun: true })
   }
   const entry = EXECUTORS[cli]
   if (!entry) {

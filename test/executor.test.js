@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { EXECUTORS, getExecutor, loadAgents, resolveAgent, registerExecutor, runAgent, setWorkdir } from '../executor.js'
 import { PathError, ConfigError, FlowcastError } from '../errors.js'
+import { makeAgentResult } from '../helpers.js'
 
 const PROVIDERS = {
   deepseek: { type: 'openai', apiBase: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', apiKey: '${DS_KEY}' },
@@ -295,7 +296,7 @@ test('runAgent: 合法相对路径 transcriptOut 通过白名单后进入 safeOp
   let capturedOpts
   registerExecutor('test-runner', async (_prompt, opts) => {
     capturedOpts = opts
-    return Object.assign('ok', { _meta: { cli: 'test-runner' } })
+    return makeAgentResult('ok', { cli: 'test-runner' })
   })
   try {
     await runAgent('hi', { cli: 'test-runner', transcriptOut: 'out/run.json' })
@@ -309,7 +310,7 @@ test('runAgent: opts 白名单外字段被静默丢弃（防 LLM 注入）', asy
   let capturedOpts
   registerExecutor('test-runner2', async (_prompt, opts) => {
     capturedOpts = opts
-    return Object.assign('ok', { _meta: { cli: 'test-runner2' } })
+    return makeAgentResult('ok', { cli: 'test-runner2' })
   })
   try {
     await runAgent('hi', { cli: 'test-runner2', model: 'sonnet', DANGER: 'evil', __proto__: {} })
@@ -324,7 +325,7 @@ test('runAgent: dry-run 模式不调 CLI，返回占位字符串', async () => {
   process.env.FLOWCAST_DRY_RUN = '1'
   try {
     const r = await runAgent('hi', { cli: 'claude' })
-    // runAgent 返回 Object.assign(String(...), {_meta}) — 用 String() 转为原始类型后 assert.match
+    // runAgent 返回 makeAgentResult(...)，用 String() 转为原始字符串后 assert.match
     assert.match(String(r), /\[dry-run\]/)
     assert.equal(r._meta.dryRun, true)
   } finally {
@@ -348,7 +349,7 @@ test('runAgent: recursive cli 默认注入 throwOnCritical=true', async () => {
   const orig = EXECUTORS.recursive.run
   EXECUTORS.recursive.run = async (_p, opts) => {
     capturedOpts = opts
-    return Object.assign('ok', { _meta: { cli: 'recursive', exitCode: 0 } })
+    return makeAgentResult('ok', { cli: 'recursive', exitCode: 0 })
   }
   try {
     await runAgent('hi', { cli: 'recursive' })
@@ -363,7 +364,7 @@ test('runAgent: recursive 显式传 throwOnCritical=false 不被覆盖', async (
   const orig = EXECUTORS.recursive.run
   EXECUTORS.recursive.run = async (_p, opts) => {
     capturedOpts = opts
-    return Object.assign('ok', { _meta: { cli: 'recursive', exitCode: 0 } })
+    return makeAgentResult('ok', { cli: 'recursive', exitCode: 0 })
   }
   try {
     await runAgent('hi', { cli: 'recursive', throwOnCritical: false })
@@ -384,7 +385,7 @@ test('runAgent: recursive throwOnCritical=true + 非零退出 → 抛出 Flowcas
         _meta: { cli: 'recursive', exitCode: 1, panicked: false, budgetExceeded: false },
       })
     }
-    return Object.assign('ok', { _meta: { cli: 'recursive', exitCode: 0 } })
+    return makeAgentResult('ok', { cli: 'recursive', exitCode: 0 })
   }
   try {
     await assert.rejects(

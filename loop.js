@@ -3,6 +3,7 @@ import { runGates } from './quality-gate.js'
 import { buildMemorySection, recordLearning } from './memory.js'
 import { flowcastDir } from './dirs.js'
 import { makeEvent } from './helpers.js'
+import { join } from 'path'
 
 // ── loop：goal-driven 循环原语 ⭐ ─────────────────────────────────────
 //
@@ -25,7 +26,7 @@ import { makeEvent } from './helpers.js'
 
 /**
  * @param {function} iterate
- *   async ({ turn, goal, memorySection, lastVerdict, lastResult, signal }) => result
+ *   async ({ turn, goal, memorySection, lastVerdict, lastResult }) => result
  *   单轮工作体。fresh context 语义由调用方保证（通常每轮 spawn 新 agent 进程）。
  *   loop 只负责注入 goal + 跨-run 记忆 + 上轮结论，并在轮间落盘。
  * @param {object} opts
@@ -65,7 +66,7 @@ export async function loop(iterate, opts = {}) {
   if (typeof iterate !== 'function') throw new TypeError('loop: iterate must be a function')
   if (typeof isDone !== 'function') throw new TypeError('loop: isDone must be a function')
 
-  const resolvedStateDir = stateDir ?? (flowcastDir(process.cwd()) + '/runs')
+  const resolvedStateDir = stateDir ?? join(flowcastDir(process.cwd()), 'runs')
   const cp = checkpoint ?? new Checkpoint(runId, resolvedStateDir)
   // makeEvent 统一格式：emit 同时写 Checkpoint 日志和外部 onEvent 回调
   const emit = (evt) => {

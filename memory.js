@@ -21,9 +21,12 @@ const _lineCountCache = new Map()
 // 进程重启后首次 recall 触发惰性加载（此时缓存为空）。
 const _entriesCache = new Map()
 
-/** 通用 LRU 淘汰：Map 超过 maxSize 时删除最早插入的条目。 */
+/**
+ * 通用 LRU 淘汰：Map 超过 maxSize 时批量删除最早插入的条目，直到不超限。
+ * 使用 while 循环而非单次删除，避免突发写入大量不同 scope 时缓存显著超出上限。
+ */
 function evictMapIfNeeded(map, maxSize) {
-  if (map.size > maxSize) {
+  while (map.size > maxSize) {
     const oldestKey = map.keys().next().value
     map.delete(oldestKey)
   }

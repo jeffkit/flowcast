@@ -13,6 +13,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { spawnCapture } from './spawn.js'
 
 // ── 文件路径 ─────────────────────────────────────────────────────────
 
@@ -159,8 +160,11 @@ export async function analyzeWithLLM(cli, model, output, { llmCli } = {}) {
   const parserCli = llmCli ?? process.env.FLOWCAST_RATE_LIMIT_LLM_CLI ?? 'gemini'
   const parserModel = parserCli === 'gemini' ? 'gemini-2.0-flash' : null
 
+  // 循环依赖防护：被限流的 CLI 就是解析用的 LLM 时，再调它等于用已限流的 CLI 解析自己，
+  // 必然失败且可能引发二次限流。直接返回 false，让上层走 default 1h 冷却兜底。
+  if (cli === parserCli) return { rateLimited: false, availableAt: null }
+
   try {
-    const { spawnCapture } = await import('./spawn.js')
     const prompt = LLM_PROMPT(cli, model, output)
     const args = parserModel
       ? ['-p', prompt, '--model', parserModel]
@@ -222,17 +226,20 @@ export async function analyzeWithLLM(cli, model, output, { llmCli } = {}) {
  *
  * 流程：
  *   1. 跑特征库 → 命中则直接计算可用时间
- *   2. 未命中 → 调 LLM 解析（沉淀特征到库）
+ *   2. 未命中且 useLLM=true → 调 LLM 解析（沉淀特征到库）
  *   3. 两者都没拿到时间 → 默认 1h 冷却
  *
  * @param {string} cli
  * @param {string} [model]
  * @param {string} [output]   原始错误输出
  * @param {object} [opts]
- * @param {string} [opts.llmCli]  指定解析用的 LLM CLI
+ * @param {string} [opts.llmCli]   指定解析用的 LLM CLI
+ * @param {boolean} [opts.useLLM=true]  是否允许 LLM 解析（特征库未命中时）；
+ *                                       设 false 可节省 API 调用，适合批量/低优先级场景。
+ *                                       通过 FLOWCAST_RATE_LIMIT_LLM=1 环境变量从 executor 控制。
  * @returns {Promise<{key:string, availableAt:number, source:'pattern'|'llm'|'default'}>}
  */
-export async function recordRateLimit(cli, model, output, { llmCli } = {}) {
+export async function recordRateLimit(cli, model, output, { llmCli, useLLM = true } = {}) {
   const key = makeKey(cli, model)
   const now = Date.now()
   let availableAt = null
@@ -245,8 +252,8 @@ export async function recordRateLimit(cli, model, output, { llmCli } = {}) {
     source = 'pattern'
   }
 
-  // 2. LLM 解析（特征库未命中时）
-  if (!availableAt && output) {
+  // 2. LLM 解析（特征库未命中时，且调用方已显式启用 LLM）
+  if (!availableAt && output && useLLM) {
     const llmResult = await analyzeWithLLM(cli, model, output, { llmCli })
     if (llmResult.rateLimited && llmResult.availableAt) {
       availableAt = llmResult.availableAt

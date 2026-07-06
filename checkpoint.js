@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, ren
 import { appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { flowcastDir } from './dirs.js'
-import { assertSafeIdent, makeEvent } from './helpers.js'
+import { assertSafeIdent, makeEvent, makeAgentResult } from './helpers.js'
 import { TimeoutError, FlowcastError, PauseSignal } from './errors.js'
 
 // PauseSignal 定义已移至 errors.js，此处 re-export 保持向后兼容（已有 import { PauseSignal } from './checkpoint.js' 的代码不受影响）。
@@ -36,6 +36,33 @@ function pickAgentMeta(result) {
   if (Number.isFinite(m.outputTokens)) out.outputTokens = m.outputTokens
   return out
 }
+
+/**
+ * Checkpoint 持久化状态的正式 schema。
+ *
+ * 这是 state.json 中所有「官方字段」的类型声明——任何模块写 cp.state.* 之前，
+ * 字段必须在这里登记；未登记字段视为「野字段」，可能在 major 版本被清除。
+ *
+ * 新增字段：先在此处加 @property，再通过专属窄方法（如 setLoopState）读写，
+ * 不允许外部直接写 cp.state 任意属性——这是本 schema 存在的意义。
+ *
+ * @typedef {object} CheckpointState
+ * @property {string}   runId             运行 ID（与构造参数一致）
+ * @property {'running'|'paused'|'completed'} status  当前状态
+ * @property {Record<string, *>} completed  已完成步骤的结果（key → 内联值或旁路标记）
+ * @property {Array<{key:string, status:string, durationMs?:number, completedAt:string, cli?:string, model?:string, inputTokens?:number, outputTokens?:number}>} steps  步骤摘要列表（看板 / 报告用）
+ * @property {string}   startedAt         ISO 时间，run 开始时间
+ * @property {string}   [completedAt]     ISO 时间，run 完成时间（done() 时写入）
+ * @property {string|null} [currentStep]  当前正在执行的步骤 key（步骤间为 null）
+ * @property {Record<string, *>} [summary] 业务摘要（done() 时传入）
+ * @property {string}   [pauseReason]     暂停原因（pause() 时写入）
+ * @property {Record<string, *>} [pauseContext] 暂停上下文（pause() 时写入）
+ * @property {'pass'|'fail'|'abort'|string} [loopVerdict]  loop 原语：最终裁决
+ * @property {'iterating'|'done'|string}   [loopStatus]   loop 原语：当前循环状态
+ * @property {number}   [loopTurns]       loop 原语：已完成轮次数
+ * @property {string}   [loopReason]      loop 原语：停止原因说明
+ * @property {number}   [expectMaxMs]     dashboard 自适应僵尸阈值（ms）
+ */
 
 export class Checkpoint {
   /**
@@ -90,11 +117,9 @@ export class Checkpoint {
         const stepRecord = this.state.steps.find(s => s.key === key)
         if (stepRecord && (stepRecord.cli || stepRecord.model || stepRecord.inputTokens)) {
           const { cli, model, inputTokens, outputTokens } = stepRecord
-          return Object.assign(String(cached), {
-            _meta: Object.fromEntries(
-              Object.entries({ cli, model, inputTokens, outputTokens }).filter(([, v]) => v != null)
-            ),
-          })
+          return makeAgentResult(cached, Object.fromEntries(
+            Object.entries({ cli, model, inputTokens, outputTokens }).filter(([, v]) => v != null)
+          ))
         }
         return cached
       }
@@ -153,8 +178,8 @@ export class Checkpoint {
     this.state.currentStep = null
 
     // 自动捕获 agent 结果上挂的 _meta（cli/model/inputTokens/outputTokens）——
-    // adapter 用 Object.assign(String(result), {_meta}) 挂在 String 包装对象上，
-    // 存进 completed 时会序列化成纯字符串而丢失，这里显式提进步骤元数据，供看板汇总 token/模型。
+    // adapter 用 makeAgentResult(text, meta) 构造 String 包装对象，_meta 不可枚举；
+    // 存进 completed 时序列化为纯字符串（_meta 丢失），这里显式提进步骤元数据，供看板汇总 token/模型。
     const autoMeta = pickAgentMeta(result)
     // 记录到 steps 列表（摘要用）和 jsonl 日志（完整审计用）；显式 meta 优先级最高。
     const stepRecord = { key, status: 'done', durationMs, completedAt: new Date().toISOString(), ...autoMeta, ...meta }
@@ -285,17 +310,17 @@ export class Checkpoint {
   // ── 内部工具 ────────────────────────────────────────────────────
 
   _loadState(runId) {
-    const fresh = () => ({ runId, status: 'running', completed: {}, steps: [], startedAt: new Date().toISOString() })
+    const fresh = () => this._normalizeState({ runId, status: 'running', completed: {}, steps: [], startedAt: new Date().toISOString() })
     if (!existsSync(this.path)) return fresh()
     try {
-      return JSON.parse(readFileSync(this.path, 'utf8'))
+      return this._normalizeState(JSON.parse(readFileSync(this.path, 'utf8')))
     } catch {
       // state.json 损坏：旧版还有 .bak 恢复路径（pre-rename 时代的残留兼容），尝试回退。
       // 新版 _flush 改用 rename 原子写，没有 .bak；但用户从旧版本升级可能留有 .bak。
       const bak = this.path + '.bak'
       if (existsSync(bak)) {
         try {
-          return JSON.parse(readFileSync(bak, 'utf8'))
+          return this._normalizeState(JSON.parse(readFileSync(bak, 'utf8')))
         } catch {
           // fall through
         }
@@ -303,6 +328,23 @@ export class Checkpoint {
       console.warn(`[checkpoint] state.json corrupted, starting fresh (run ${runId})`)
       return fresh()
     }
+  }
+
+  /**
+   * 将从磁盘读取（或新建）的 state 规范化为 CheckpointState 完整形状：
+   * - 必填字段缺失时补默认值（向后兼容旧版 state.json）
+   * - 不删除未知字段（外部业务代码可能临时存了自定义字段，强删会破坏续跑）
+   * @param {object} raw
+   * @returns {CheckpointState}
+   */
+  _normalizeState(raw) {
+    if (!raw || typeof raw !== 'object') raw = {}
+    if (typeof raw.runId !== 'string') raw.runId = this.runId ?? 'unknown'
+    if (!['running', 'paused', 'completed'].includes(raw.status)) raw.status = 'running'
+    if (!raw.completed || typeof raw.completed !== 'object' || Array.isArray(raw.completed)) raw.completed = {}
+    if (!Array.isArray(raw.steps)) raw.steps = []
+    if (typeof raw.startedAt !== 'string') raw.startedAt = new Date().toISOString()
+    return raw
   }
 
   // 存储步骤结果：短结果内联进 state.json；长结果写旁路文件，state.json 存占位标记。

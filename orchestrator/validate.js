@@ -20,6 +20,14 @@ const IMPORT_WHITELIST = new Set(['flowcast', 'util', 'node:util'])
 // dashboard 是宿主观测，不该被编排对象自循环调用。
 const FORBIDDEN_FLOWCAST_SUBPATHS = ['flowcast/dashboard', 'flowcast/dashboard/index']
 
+// 禁止从 flowcast 解构导入的底层进程原语：
+// 这些函数虽在 flowcast 公开 API 中（供外层 harness/脚本使用），
+// 但 FLOW_API 契约要求生成的 flow 通过受控原语（runGate/runFlow）实现等效功能，
+// 不得直接驱动任意子进程。
+// 注意：`import * as fc from 'flowcast'; fc.spawnCapture(...)` 形式无法静态拦截（命名空间解构）；
+// 此检查覆盖最常见的具名 import { spawnCapture } from 'flowcast' 形式。
+const FORBIDDEN_FLOWCAST_SYMBOLS = new Set(['spawnCapture', 'spawnCli'])
+
 // 把 specifier 规范化：'node:util' → 'util'，其他不变。
 // Node 20 对内置模块 bare 和 node: 前缀完全等价，白名单检查必须一致。
 function normalizeSpecifier(s) {
@@ -126,6 +134,30 @@ export function scanImports(source) {
     .replace(/\b(?:import|require)\s*\(\s*['"][^'"]+['"]\s*\)/g, '__safe_dynamic_import__()')
   if (/\b(?:import|require)\s*\(/.test(withoutLiteralDynamic)) {
     violations.push('[non-literal-dynamic-import: import()/require() must use a string literal argument]')
+  }
+
+  // ── ③ flowcast 中禁用符号的具名导入检查 ─────────────────────────────
+  //
+  // 即使 flowcast 整体在白名单内，部分底层进程原语（spawnCapture/spawnCli）也不允许
+  // 被生成的 flow 直接导入——这些函数可以执行任意子进程，绕过护栏目的。
+  // FLOW_API 契约要求 flow 通过受控原语（runGate/runFlow）完成等效功能。
+  //
+  // 覆盖最常见的具名 import 形式：
+  //   import { spawnCapture } from 'flowcast'
+  //   import { spawnCli, spawnCapture as sc } from 'flowcast'
+  // 注：import * as fc from 'flowcast'; fc.spawnCapture() 无法静态拦截（已在 FLOW_API 文档中禁止）。
+  const namedFromFlowcastRe = /\bimport\s*\{([^}]+)\}\s*from\s*['"]flowcast['"]/g
+  let m3
+  while ((m3 = namedFromFlowcastRe.exec(code))) {
+    const names = m3[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean)
+    for (const sym of names) {
+      if (FORBIDDEN_FLOWCAST_SYMBOLS.has(sym)) {
+        violations.push(
+          `[forbidden-symbol] '${sym}' cannot be imported in generated flows ` +
+          `(low-level process primitive; use runGate/runFlow for subprocess execution)`,
+        )
+      }
+    }
   }
 
   return [...new Set(violations)]

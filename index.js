@@ -27,6 +27,6 @@ export { flowcastDir } from './dirs.js'  // 内部 helper 见 ./internal.js
 export { gitStatus, gitDiff, gitCommitAll, gitHead, gitCurrentBranch, gitCommitsAhead, gitCreateBranch, gitWorktreeAdd, gitWorktreeRemove } from './git.js'
 export { runFlow, fanOut, archiveChildRun } from './subflow.js'  // sweepStaleTmp 是内部工具，从 flowcast/internal 导出
 export { collectRuns, renderHtml, generateDashboard } from './dashboard/index.js'
-export { assertSafeIdent, makeEvent } from './helpers.js'
+export { assertSafeIdent, makeEvent, makeAgentResult, agentText, agentMeta } from './helpers.js'
 export { FlowcastError, TimeoutError, SpawnError, GateError, SchemaError, ConfigError, PathError, LockError, GitError, ParallelError, VerifyError, GuardError, PauseSignal, isRetryable } from './errors.js'
 export { recordRateLimit, getAvailableAt, isAvailable, listRateLimits, clearRateLimit, matchPattern, analyzeWithLLM, listPatterns, removePattern, makeKey } from './rate-limiter.js'

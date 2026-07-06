@@ -1,8 +1,9 @@
 // schema.js — 轻量 JSON Schema 校验 + agent 结构化输出包装（零依赖）
 //
-// 只支持 FLOW_API few-shot 实际用到的子集：type(object/array/string/number/integer/boolean/null)、
-// properties、required、items、enum、additionalProperties:false。够覆盖「让 agent 返回结构化数据」
-// 这一场景，不追求完整 JSON Schema 规范——保持零运行时依赖 + 可读。
+// 支持以下子集：type(object/array/string/number/integer/boolean/null)、
+// properties、required、items、enum、additionalProperties:false、
+// minimum、maximum、minLength、maxLength、minItems、maxItems。
+// 够覆盖「让 agent 返回结构化数据」场景，不追求完整 JSON Schema 规范——保持零运行时依赖 + 可读。
 
 import { isDryRun } from './dry-run.js'
 import { SchemaError } from './errors.js'
@@ -65,7 +66,9 @@ export function validateSchema(value, schema, path = '$', opts = {}) {
 
 function walk(value, schema, path, errors, opts = {}) {
   if (!schema || typeof schema !== 'object') return
-  // 本实现只支持 type/properties/required/items/enum/additionalProperties 子集。
+    // 本实现支持以下 JSON Schema 子集：
+  //   type / properties / required / items / enum / additionalProperties /
+  //   minimum / maximum / minLength / maxLength / minItems / maxItems
   // oneOf/anyOf/allOf 是 P1-A4 修复点：旧实现静默忽略，可能导致校验「假通过」。
   // 新行为：
   //   - schema 未标记 allowPartialSchema=true → 抛错，让调用方知道 schema 超出了本实现的支持范围
@@ -92,6 +95,24 @@ function walk(value, schema, path, errors, opts = {}) {
   if (schema.enum && !schema.enum.includes(value)) {
     errors.push(`${path}: 值 ${JSON.stringify(value)} 不在 enum [${schema.enum.join(', ')}]`)
   }
+  // 数值范围约束
+  if (typeof value === 'number') {
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      errors.push(`${path}: 值 ${value} 小于 minimum ${schema.minimum}`)
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      errors.push(`${path}: 值 ${value} 大于 maximum ${schema.maximum}`)
+    }
+  }
+  // 字符串长度约束
+  if (typeof value === 'string') {
+    if (schema.minLength !== undefined && value.length < schema.minLength) {
+      errors.push(`${path}: 字符串长度 ${value.length} 小于 minLength ${schema.minLength}`)
+    }
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+      errors.push(`${path}: 字符串长度 ${value.length} 大于 maxLength ${schema.maxLength}`)
+    }
+  }
   const isObj = value !== null && typeof value === 'object' && !Array.isArray(value)
   if ((t === 'object' || (!t && isObj)) && isObj) {
     const props = schema.properties || {}
@@ -107,8 +128,16 @@ function walk(value, schema, path, errors, opts = {}) {
       if (k in value) walk(value[k], sub, `${path}.${k}`, errors, opts)
     }
   }
-  if ((t === 'array' || (!t && Array.isArray(value))) && Array.isArray(value) && schema.items) {
-    value.forEach((el, i) => walk(el, schema.items, `${path}[${i}]`, errors, opts))
+  if ((t === 'array' || (!t && Array.isArray(value))) && Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      errors.push(`${path}: 数组长度 ${value.length} 小于 minItems ${schema.minItems}`)
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      errors.push(`${path}: 数组长度 ${value.length} 大于 maxItems ${schema.maxItems}`)
+    }
+    if (schema.items) {
+      value.forEach((el, i) => walk(el, schema.items, `${path}[${i}]`, errors, opts))
+    }
   }
 }
 
@@ -143,9 +172,17 @@ export function stubFromSchema(schema) {
       for (const k of keys) if (props[k]) o[k] = stubFromSchema(props[k])
       return o
     }
-    case 'array': return []
-    case 'string': return ''
-    case 'number': case 'integer': return 0
+    case 'array': {
+      const len = schema.minItems ?? 0
+      if (len === 0) return []
+      return Array.from({ length: len }, () => schema.items ? stubFromSchema(schema.items) : null)
+    }
+    case 'string': {
+      const min = schema.minLength ?? 0
+      return min > 0 ? 'a'.repeat(min) : ''
+    }
+    case 'number': return schema.minimum != null ? schema.minimum : 0
+    case 'integer': return schema.minimum != null ? Math.ceil(schema.minimum) : 0
     case 'boolean': return false
     case 'null': return null
     default: return null

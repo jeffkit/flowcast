@@ -98,15 +98,29 @@ export function spawnCapture(cmd, args, { cwd = process.cwd(), timeout, env, onD
 // 所有超时/kill/缓冲区逻辑只有 spawnCapture 一份。
 
 /**
+ * 期望成功的子进程调用——非零退出 / 超时 / spawn 失败时抛错。
+ *
+ * 支持两种调用约定（向后兼容）：
+ *   - 旧式位置参数：`spawnCli(cli, args, cwd, timeout, env)`
+ *   - 新式 options 对象：`spawnCli(cli, args, { cwd, timeout, env, onData, stdin })`
+ *
+ * 新代码应使用 options 对象签名，与 spawnCapture 保持一致，避免漏传 env。
+ *
  * @param {string}   cli
  * @param {string[]} args
- * @param {string}   cwd
- * @param {number}   timeout
- * @param {object}   [env]  额外环境变量
+ * @param {string | {cwd?:string, timeout?:number, env?:object, onData?:Function, stdin?:string}} [cwdOrOpts]
+ * @param {number}   [timeout]  仅位置参数模式有效
+ * @param {object}   [env]      仅位置参数模式有效
  * @returns {Promise<string>} stdout
  */
-export async function spawnCli(cli, args, cwd, timeout, env) {
-  const r = await spawnCapture(cli, args, { cwd, timeout, env })
+export async function spawnCli(cli, args, cwdOrOpts, timeout, env) {
+  let opts
+  if (cwdOrOpts !== null && typeof cwdOrOpts === 'object') {
+    opts = cwdOrOpts
+  } else {
+    opts = { cwd: cwdOrOpts, timeout, env }
+  }
+  const r = await spawnCapture(cli, args, opts)
   if (r.spawnError) {
     throw new SpawnError(`[${cli}] spawn failed: ${r.spawnError}`, r.spawnError)
   }

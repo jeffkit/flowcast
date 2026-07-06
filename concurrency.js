@@ -43,7 +43,7 @@ export async function parallel(thunks, { concurrency, strict = true, failFast = 
   const failures = []
   let aborted = false  // failFast 模式：第一个失败后停止新任务入队
   const guard = (fn, i) => fn().catch(err => {
-    console.error(`  [parallel error] ${err.message}`)
+    console.warn(`  [parallel error] ${err.message}`)
     if (strict) failures.push({ index: i, error: err })
     if (failFast) aborted = true  // 通知 worker 停止继续取新任务
     if (typeof onError === 'function') {
@@ -115,7 +115,7 @@ export async function pipeline(items, ...stages) {
       try {
         results[i] = await runItem(list[i], i)
       } catch (e) {
-        console.error(`  [pipeline error] item[${i}] ${e.message}`)
+        console.warn(`  [pipeline error] item[${i}] ${e.message}`)
         results[i] = null
         if (typeof onError === 'function') {
           try { onError({ index: i, item: list[i], error: e }) } catch { /* 观测不影响主流程 */ }

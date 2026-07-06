@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { Checkpoint, PauseSignal } from '../checkpoint.js'
 import { clearFlowcastDirCache, flowcastDir } from '../dirs.js'
 import { TimeoutError, SpawnError, VerifyError } from '../errors.js'
+import { makeAgentResult } from '../helpers.js'
 
 function tempDir() { return mkdtempSync(join(tmpdir(), 'flowcast-cp-')) }
 
@@ -64,10 +65,7 @@ test('Checkpoint.step：自动捕获 agent 结果的 _meta(model/token) 进步�
   const dir = tempDir()
   try {
     const cp = new Checkpoint('rmeta', dir)
-    // 模拟 adapter 返回：字符串 + 挂在 String 包装对象上的 _meta
-    const agentResult = Object.assign(String('done'), {
-      _meta: { cli: 'claude', model: 'claude-sonnet', inputTokens: 1200, outputTokens: 340 },
-    })
+    const agentResult = makeAgentResult('done', { cli: 'claude', model: 'claude-sonnet', inputTokens: 1200, outputTokens: 340 })
     await cp.step('p1.impl', async () => agentResult)
     const onDisk = JSON.parse(readFileSync(join(dir, 'rmeta', 'state.json'), 'utf8'))
     const step = onDisk.steps.find(s => s.key === 'p1.impl')
@@ -331,9 +329,7 @@ test('Checkpoint.step: 续跑时 _meta 从步骤记录里还原', async () => {
   let cp1, cp2
   try {
     cp1 = new Checkpoint('r-meta-resume', dir)
-    const agentResult = Object.assign(String('output'), {
-      _meta: { cli: 'claude', model: 'claude-sonnet', inputTokens: 500, outputTokens: 100 },
-    })
+    const agentResult = makeAgentResult('output', { cli: 'claude', model: 'claude-sonnet', inputTokens: 500, outputTokens: 100 })
     await cp1.step('impl', async () => agentResult)
 
     cp2 = new Checkpoint('r-meta-resume', dir)

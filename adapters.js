@@ -13,7 +13,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { spawnCapture, spawnCli, isProviderRetryable } from './spawn.js'
 import { TimeoutError, SpawnError, FlowcastError } from './errors.js'
-import { makeEvent } from './helpers.js'
+import { makeEvent, makeAgentResult } from './helpers.js'
 
 // ── provider 翻译器（claude adapter）────────────────────────────────
 
@@ -85,7 +85,7 @@ async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
   } catch {
     if (exitCode !== 0) throw new SpawnError('[claude]', null, { exitCode, output: stdout.trim() })
     console.warn(`[claude] warn: output is not JSON (exit 0), falling back to raw stdout — check claude CLI version`)
-    return Object.assign(String(stdout.trim()), { _meta: { cli: 'claude' } })
+    return makeAgentResult(stdout.trim(), { cli: 'claude' })
   }
   const item = Array.isArray(data) ? data.find(x => x.type === 'result') : data
   if (item?.is_error) {
@@ -96,9 +96,7 @@ async function claudeOnce(prompt, { cwd, effModel, extraArgs, timeout, env }) {
   }
   const usage = item?.usage ?? {}
   const result = item?.result ?? stdout.trim()
-  return Object.assign(String(result), {
-    _meta: { cli: 'claude', model: item?.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens },
-  })
+  return makeAgentResult(result, { cli: 'claude', model: item?.model, inputTokens: usage.input_tokens, outputTokens: usage.output_tokens })
 }
 
 /**
@@ -138,7 +136,7 @@ export async function gemini(prompt, { cwd = process.cwd(), model, timeout = GEM
   if (model) args.push('--model', model)
   args.push(...extraArgs)
   const raw = await spawnCli('gemini', args, cwd, timeout)
-  return Object.assign(String(raw.trim()), { _meta: { cli: 'gemini', model } })
+  return makeAgentResult(raw.trim(), { cli: 'gemini', model })
 }
 
 // ── CLI adapter：codex ───────────────────────────────────────────────
@@ -158,7 +156,7 @@ export async function codex(prompt, { cwd = process.cwd(), model, timeout = CODE
         if (msg) text = msg
       }
     } catch { /* 读临时文件失败则回退 stdout */ }
-    return Object.assign(String(text), { _meta: { cli: 'codex', model } })
+    return makeAgentResult(text, { cli: 'codex', model })
   } finally {
     try { if (existsSync(outFile)) unlinkSync(outFile) } catch { /* 清理失败忽略 */ }
   }
@@ -172,7 +170,7 @@ export async function agy(prompt, { cwd = process.cwd(), model, timeout = AGY_DE
   if (model) args.push('--model', model)
   args.push(...extraArgs)
   const raw = await spawnCli('agy', args, cwd, timeout)
-  return Object.assign(String(raw.trim()), { _meta: { cli: 'agy', model } })
+  return makeAgentResult(raw.trim(), { cli: 'agy', model })
 }
 
 // ── CLI adapter：aider ───────────────────────────────────────────────
@@ -183,7 +181,7 @@ export async function aider(prompt, { cwd = process.cwd(), model, files = [], ti
   if (model) args.push('--model', model)
   args.push(...files, ...extraArgs)
   const raw = await spawnCli('aider', args, cwd, timeout)
-  return Object.assign(String(raw.trim()), { _meta: { cli: 'aider', model } })
+  return makeAgentResult(raw.trim(), { cli: 'aider', model })
 }
 
 // ── CLI adapter：cursor ──────────────────────────────────────────────
@@ -196,12 +194,10 @@ export async function cursor(prompt, { cwd = process.cwd(), timeout = CURSOR_DEF
     const data = JSON.parse(raw)
     if (data.is_error) throw new SpawnError(`cursor agent error: ${data.result}`, null)
     const result = data.result ?? raw.trim()
-    return Object.assign(String(result), {
-      _meta: { cli: 'cursor', inputTokens: data.usage?.inputTokens, outputTokens: data.usage?.outputTokens }
-    })
+    return makeAgentResult(result, { cli: 'cursor', inputTokens: data.usage?.inputTokens, outputTokens: data.usage?.outputTokens })
   } catch (e) {
     if (e instanceof SpawnError) throw e
-    return Object.assign(String(raw.trim()), { _meta: { cli: 'cursor' } })
+    return makeAgentResult(raw.trim(), { cli: 'cursor' })
   }
 }
 
@@ -292,7 +288,7 @@ export async function recursive(goal, {
     )
   }
 
-  return Object.assign(String(stdout), { _meta: meta })
+  return makeAgentResult(stdout, meta)
 }
 
 /**

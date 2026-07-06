@@ -78,6 +78,6 @@ ${claim}`
   return {
     verdict: survived >= need,
     survived, total: lensList.length, threshold: need, votes: valid,
-    ...(voterErrors.length > 0 ? { voterErrors } : {}),
+    voterErrors,
   }
 }

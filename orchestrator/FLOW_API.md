@@ -58,6 +58,9 @@
   `net`/`http`/`os` 等——需要文件/进程/git 操作时只能通过 flowcast 原语。
 - import `flowcast` 的子路径（如 `flowcast/dashboard`）。`flowcast` 必须作为整体被 import，
   子路径视为「宿主 CLI/SDK 才用、不该被编排对象自循环」的能力（dashboard 等）。
+- 从 `flowcast` 导入底层进程原语 **`spawnCapture`**/**`spawnCli`**。这两个函数可以执行任意子进程，
+  绕过 flow 的受控执行边界；需要子进程功能时使用 `runGate`（质量门）或 `runFlow`（子 flow）。
+  ⚠️ `import * as fc from 'flowcast'; fc.spawnCapture(...)` 形式静态检查无法拦截，但同样被本契约禁止。
 - 直接调 `process.exit` 之外的进程控制、动态 `require`/`import()` 任意模块。
 - 在 `main()` 外写副作用逻辑（骨架结构之外）。
 
