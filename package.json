@@ -42,6 +42,7 @@
     "subflow.js",
     "loop.js",
     "memory.js",
+    "events.js",
     "orchestrator/",
     "dashboard/",
     "examples/",

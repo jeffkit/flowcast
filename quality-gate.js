@@ -6,6 +6,7 @@ import { realpathSync, existsSync } from 'fs'
 import { resolve } from 'path'
 import { GateError, ConfigError } from './errors.js'
 import { makeEvent } from './helpers.js'
+import { EVENT } from './events.js'
 
 // ── qualityGate：声明式质量门 ⭐ ───────────────────────────────────
 //
@@ -47,7 +48,7 @@ export async function runGate(gate, deps = {}) {
   // 观测回调：把质量门 pass/fail 写进 jsonl（看板据此标红灯）。gate 级优先于 deps 级。
   const onEvent = gate.onEvent ?? deps.onEvent
   // makeEvent 统一事件格式（event + type 双字段）
-  const emit = (data) => { if (onEvent) { try { onEvent(makeEvent('gate', { name, ...data })) } catch { /* 观测不影响主流程 */ } } }
+  const emit = (data) => { if (onEvent) { try { onEvent(makeEvent(EVENT.GATE, { name, ...data })) } catch { /* 观测不影响主流程 */ } } }
 
   // cwd 安全校验（P1-A5 修复）：
   // 当 deps.repo 已知时，确保 gate 的 cwd 不逃逸 repo 目录（防止 gates.json 被篡改后

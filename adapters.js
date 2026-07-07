@@ -14,6 +14,7 @@ import { tmpdir } from 'os'
 import { spawnCapture, spawnCli, isProviderRetryable } from './spawn.js'
 import { TimeoutError, SpawnError, FlowcastError } from './errors.js'
 import { makeEvent, makeAgentResult } from './helpers.js'
+import { EVENT } from './events.js'
 
 // ── provider 翻译器（claude adapter）────────────────────────────────
 
@@ -119,7 +120,7 @@ export async function claude(prompt, {
         const to = chain[i + 1]?.name ?? 'default'
         const reason = String(e.apiStatus ?? e.message).slice(0, 80)
         console.warn(`  [provider fallback] ${from} 不可用（${reason}），切换 → ${to}`)
-        emitAgentEvent({ event: 'fallback', scope: 'provider', cli: 'claude', from, to, reason })
+        emitAgentEvent({ event: EVENT.FALLBACK, scope: 'provider', cli: 'claude', from, to, reason })
         continue
       }
       throw e

@@ -16,6 +16,10 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { flowcastDir } from '../dirs.js'
+// EVENT_TYPES 已迁到顶层 events.js（事件 schema 中央注册表）。
+// 本文件 re-export 以保留 dashboard/index.js 的旧导入路径，向后兼容。
+export { EVENT_TYPES } from '../events.js'
+import { EVENT } from '../events.js'
 
 export const DEFAULT_STALE_MS = 10 * 60 * 1000   // 10 分钟无活动且仍 running → 僵尸
 const DEFAULT_LOG_TAIL_LINES = 120               // 每个 .log 只嵌入尾部 N 行
@@ -58,69 +62,25 @@ function summarizeResult(result) {
 }
 
 /**
- * run.log.jsonl 事件 schema 字典（中央注册表）。
- *
- * 事件由 cp.event(type, data) 写入 jsonl，dashboard summarizeEvents 按这里读。
- * 新增事件 type 时务必：(1) 在此表登记 schema；(2) 在 summarizeEvents 加 case。
- *
- * schema: { fieldName: 'type' | 'optional type' }
- * writer: 负责写入的源（哪个模块 + 哪行）
- * reader: 负责读的源（通常是 dashboard summarizeEvents）
- */
-export const EVENT_TYPES = {
-  fallback: {
-    schema: { scope: "'provider'|'cli'", cli: 'string', from: 'string', to: 'string', reason: 'string' },
-    writer: 'agent.js（emitAgentEvent，触发于 provider/CLI 限额回退）',
-    reader: 'dashboard/collect.js summarizeEvents（按 scope 分桶）',
-  },
-  'rate-limit': {
-    schema: { cli: 'string', model: 'optional string', availableAt: 'number', source: "'parsed'|'llm'|'rule'" },
-    writer: 'executor.js runAgentChain（触发于 isRateLimitError 判定后，recordRateLimit 完成后 emit）',
-    reader: 'dashboard/collect.js summarizeEvents（按 cli/model key 聚合，取最晚 availableAt）',
-  },
-  gate: {
-    schema: { name: 'string', status: "'pass'|'fail'", exitCode: 'number' },
-    writer: 'quality-gate.js runGates 的 onEvent 回调',
-    reader: 'dashboard/collect.js summarizeEvents（gatePass / gateFail 计数）',
-  },
-  group: {
-    schema: { name: 'string', status: "'done'|'failed'", reason: 'optional string' },
-    writer: 'subflow.js fanOut onResult（每组完成后写）',
-    reader: 'dashboard/collect.js summarizeEvents（按 status 计数）',
-  },
-  loop: {
-    schema: { phase: "'start'|'iterate'|'turn-done'|'budget'|'failed'", turn: 'number', fromTurn: 'optional number', maxTurns: 'optional number', reason: 'optional string', done: 'optional boolean', error: 'optional string' },
-    writer: 'loop.js emit()（每个阶段发一条）',
-    reader: 'dashboard/collect.js summarizeEvents（统计 turn 数 / 预算触发 / 失败）',
-  },
-}
-
-/**
  * 把 jsonl 事件流归并成可观测信号（fallback 率 / 质量门红灯 / fanOut 分组 / 修复轮数 / loop 周期）。
- * 事件由 cp.event 写入：{event: EVENT_TYPES key, ...}。
+ * 事件类型由顶层 events.js 的 EVENT 常量定义；新增事件类型时务必在那里登记。
  */
 function summarizeEvents(events, steps) {
   const signals = {
-    fallback: 0,            // provider/CLI 回退次数（429 等）
-    fallbackByScope: {},    // {provider:n, cli:n}（按回退类型分类，供看板钻取）
+    fallback: 0,
+    fallbackByScope: {},
     gatePass: 0,
     gateFail: 0,
     group: { done: 0, failed: 0 },
-    fixRounds: 0,           // fix-loop 轮数（从 step key 推断）
-    loop: {                 // loop 周期统计
-      turns: 0,             // 总 turn 数
-      done: 0,              // 达到 isDone 的次数
-      budgetExhausted: 0,   // budget 触顶的次数
-      failed: 0,            // iterate 抛错的次数
-    },
-    rateLimits: {},         // { 'cli/model': { availableAt, source, count } } 每次限流最晚时间
+    fixRounds: 0,
+    loop: { turns: 0, done: 0, budgetExhausted: 0, failed: 0 },
+    rateLimits: {},
   }
   for (const e of events) {
-    if (e.event === 'fallback') {
+    if (e.event === EVENT.FALLBACK) {
       signals.fallback++
-      // scope: 'provider'（同 CLI 换 provider）或 'cli'（跨 CLI 回退）
       signals.fallbackByScope[e.scope ?? 'unknown'] = (signals.fallbackByScope[e.scope ?? 'unknown'] ?? 0) + 1
-    } else if (e.event === 'rate-limit') {
+    } else if (e.event === EVENT.RATE_LIMIT) {
       const key = `${e.cli ?? '?'}/${e.model ?? 'default'}`
       const prev = signals.rateLimits[key]
       signals.rateLimits[key] = {
@@ -128,22 +88,19 @@ function summarizeEvents(events, steps) {
         source: e.source ?? 'unknown',
         count: (prev?.count ?? 0) + 1,
       }
-    } else if (e.event === 'gate') {
+    } else if (e.event === EVENT.GATE) {
       if (e.status === 'pass') signals.gatePass++
       else if (e.status === 'fail') signals.gateFail++
-    } else if (e.event === 'group') {
+    } else if (e.event === EVENT.GROUP) {
       if (e.status === 'failed') signals.group.failed++
       else signals.group.done++
-    } else if (e.event === 'loop') {
-      // loop 阶段：start / iterate / turn-done / budget / failed
+    } else if (e.event === EVENT.LOOP) {
       if (e.phase === 'turn-done') signals.loop.turns++
       else if (e.phase === 'budget') signals.loop.budgetExhausted++
       else if (e.phase === 'failed') signals.loop.failed++
-      // 兼容 done 字段（end-of-loop marker）
       if (e.done === true) signals.loop.done++
     }
   }
-  // fix-loop 轮数：force-dev 的修复步形如 p3.<m>.fix-1 / fix-2…
   signals.fixRounds = steps.filter(s => /\.fix-\d+$/.test(s.key)).length
   return signals
 }

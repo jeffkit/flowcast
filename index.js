@@ -2,6 +2,7 @@
 //
 // "flowcast" 表面（下游 flow 用）：以下 export。稳定契约，semver 保护。
 // "flowcast/internal" 表面（测试/工具脚本用）：见 ./internal.js。无稳定性承诺。
+export { EVENT, EVENT_TYPES, listEventTypes } from './events.js'
 export { Checkpoint } from './checkpoint.js'
 export {
   runAgent, runAgentChain, setWorkdir, setAgentEventSink,

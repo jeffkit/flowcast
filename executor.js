@@ -24,6 +24,7 @@ import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
 import { FlowcastError, ConfigError, PathError } from './errors.js'
 import { assertSafeIdent, makeAgentResult } from './helpers.js'
+import { EVENT } from './events.js'
 import { resolve, normalize } from 'path'
 
 // ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
@@ -441,7 +442,7 @@ export async function runAgentChain(prompt, chain, {
           recordRateLimit(spec.cli ?? 'claude', spec.model, rawOutput, { useLLM }).then(({ source, availableAt }) => {
             const eta = new Date(availableAt).toLocaleString()
             console.warn(`  [rate-limit] ${makeKey(spec.cli ?? 'claude', spec.model)} 限流，下次可用：${eta}（来源：${source}）`)
-            emitAgentEvent({ event: 'rate-limit', cli: spec.cli, model: spec.model, availableAt, source })
+            emitAgentEvent({ event: EVENT.RATE_LIMIT, cli: spec.cli, model: spec.model, availableAt, source })
           }).catch(() => { /* 记录失败不影响主流程 */ })
         }
         if (cooldown) {
@@ -452,7 +453,7 @@ export async function runAgentChain(prompt, chain, {
         if (i < order.length - 1) {
           const to = specLabel(order[i + 1])
           console.warn(`  [agent fallback] ${from} 不可用（${reason}），切换 → ${to}`)
-          emitAgentEvent({ event: 'fallback', scope: 'cli', from, to, reason })
+          emitAgentEvent({ event: EVENT.FALLBACK, scope: 'cli', from, to, reason })
           continue
         }
       }
