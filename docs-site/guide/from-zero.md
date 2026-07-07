@@ -2,6 +2,8 @@
 
 本页是一条**端到端、可复制**的路径：从一台没装过 flowcast 的机器，到第一次成功跑通 `flowcast orchestrate`。照着做即可，每步都给了"怎么确认成功"。
 
+> **只想自己写一条 5 步 flow？** 本页是 L3 路径。如果你不想让 agent 替你生成 flow，跳到 [快速上手 · 第一个 flow](/guide/getting-started#第一个-flow)，配好后直接 `flowcast run ./my-flow.js`。
+
 ## 前置条件
 
 - **Node ≥ 20**：`node --version` 确认。

@@ -24,7 +24,8 @@ export default defineConfig({
       { text: '给 AI 使用', link: '/guide/for-ai', activeMatch: '/guide/for-ai' },
       { text: '速查', link: '/llms.txt', target: '_blank' },
       {
-        text: 'v0.4.0',
+        // 与 ../../package.json 的 "version" 同步；改包版本时一并改这里。
+        text: 'v0.5.0',
         items: [
           { text: 'GitHub', link: 'https://github.com/jeffkit/flowcast' },
           { text: '更新日志', link: 'https://github.com/jeffkit/flowcast/commits/main' },

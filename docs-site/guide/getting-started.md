@@ -151,7 +151,7 @@ flowcast dashboard --repo . --open
 | `flowcast dashboard --repo . [--open]` | 生成只读可观测看板 HTML |
 | `flowcast list` | 列出当前项目所有 run |
 
-## v0.4.0 新增亮点
+## v0.5.0 新增亮点
 
 | 能力 | 说明 |
 |------|------|

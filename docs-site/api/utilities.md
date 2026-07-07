@@ -57,6 +57,24 @@ const evt = makeEvent('gate', { name: 'test', passed: true }, { runId: 'run-123'
 
 调用方直接用 `makeEvent`，不再手动构造 `{ event: ..., ts: ... }`。
 
+## `makeAgentResult(text, meta?)` / `agentText(r)` / `agentMeta(r)`
+
+```js
+import { makeAgentResult, agentText, agentMeta } from 'flowcast'
+```
+
+agent 结果的构造与安全提取。
+
+- `makeAgentResult(text, meta?)` — 构造一个 `String` 包装对象，行为上与字符串兼容（模板字面量/`String(r)`/`JSON.stringify`/字符串方法都正常），并挂了 `._meta`（不可枚举，序列化时不会出现）。
+- `agentText(r)` — 类型安全地从结果里提取文本。兼容：`string` primitive / `String` 对象 / `{text}` 对象 / `null`/`undefined`。
+- `agentMeta(r)` — 提取 `_meta`，不存在返回 `{}`。
+
+```js
+const r = await runAgent('实现 X', { cli: 'claude' })
+const text = agentText(r)        // 比 `typeof r === 'string'` 可靠（见 [Agent API 警告](/api/agent)）
+const cli  = agentMeta(r).cli
+```
+
 ## `loop(iterate, opts)`
 
 goal-driven 循环原语。详见 [loop · memory · failure-context 指南](/guide/loop-memory)。

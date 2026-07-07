@@ -60,18 +60,44 @@ cd <目标仓> && npm install flowcast
 
 **修法**：用**同一个 `--run-id`** 再跑一次，已完成的 step 会 `[skip]`，从断点继续。
 
+### `LockError: LOCK_BUSY`
+
+**含义**：另一个进程正持有这个 `run-id` 的续跑锁（`.flowcast/runs/<run-id>/.lock/`）。通常出现在上一轮 orchestrate 还活着、或意外残留了锁目录。
+
+**修法**：
+
+```bash
+# 先确认不是活跃进程占着
+ps -ef | grep -E "flowcast.*<run-id>"
+
+# 确认进程已死后，清锁重跑
+rm -rf .flowcast/runs/<run-id>/.lock
+flowcast orchestrate "..." --run-id <run-id> --repo .
+```
+
+### `LockError: LOCK_RETRY_EXHAUSTED`
+
+**含义**：等了 1 秒（10 × 100ms）也没看到锁对应的 `owner.json` 写盘——通常是上一进程在拿锁后、写 owner 之前被 `SIGKILL`，锁目录留下但无 owner。
+
+**修法**：同 `LOCK_BUSY`，手动 `rm -rf .flowcast/runs/<run-id>/.lock` 后重跑。如果**反复**出现，说明有进程被系统性 kill（OOM/CI 超时），检查上游调度是否给够了 headroom。
+
+### `LockError: LOCK_OWNER_PENDING`
+
+**含义**：锁目录存在但 `owner.json` 缺失且 mtime 还很新——框架在犹豫这是"刚拿到锁还没写 owner"还是"上次进程崩了"。默认会再观察几分钟；超时就走 `LOCK_BUSY` 路径。
+
+**修法**：先用 `stat .flowcast/runs/<run-id>/.lock` 看 mtime，若超过几分钟仍无 owner，按 `LOCK_BUSY` 处理。
+
 ## FAQ
 
 ### dry-run 通过了，就代表能真跑成功吗？
 
 不。dry-run 只验证**结构 / 骨架 / 配置**（执行器与质量门被 fake，不烧 API、不跑构建）。它**不**验证真实 LLM 产出质量与真实构建结果。上线前务必跑一次真的。
 
-### `orchestrate`、`orchestrate --split`、手写 flow、`force-dev` 我该用哪个？
+### `orchestrate`、`orchestrate --split`、手写 flow 我该用哪个？
 
 - 一行需求、单目标 → `orchestrate`
 - 大目标可拆成多个独立子任务 → `orchestrate --split`
 - 流程固定、要精细控制（条件分支/重试/特定 HITL 点）→ 手写 flow，`flowcast run ./my-flow.js`
-- 标准开发流（建分支→写码→审查→PR）→ `flowcast run force-dev`（需先 `flowcast flows install`）
 
 详见 [L3 编排](/guide/orchestration) 与 [给 AI 使用](/guide/for-ai) 的决策树。
 

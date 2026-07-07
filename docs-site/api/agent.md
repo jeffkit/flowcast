@@ -26,6 +26,21 @@ await runAgent(prompt, { cli = 'claude', cwd, ...opts })
 - 未知 `cli` 抛错。
 - `cwd` 缺省用 `setWorkdir` 设的默认工作目录。
 
+::: warning 取文本请用 `agentText(r)`，别信 `typeof`
+返回值是 `String` 包装对象，`typeof r === 'object'`、`r instanceof String === true`。
+模板字面量 / `String(r)` / `r + ''` / `JSON.stringify(r)` / 字符串方法（`includes`/`length`/...）都正常；
+但写 `typeof r === 'string'` 会**静默 false**，走错分支。
+
+推荐两种取法：
+
+```js
+import { agentText } from 'flowcast'
+
+const text = agentText(result)        // 类型安全：string primitive / String 对象 / {text} 对象 都接
+const cli  = result._meta?.cli        // 或直接读 _meta
+```
+:::
+
 ### setWorkdir(dir)
 
 设置 `runAgent` 的默认工作目录。flow 启动时调一次即可。
