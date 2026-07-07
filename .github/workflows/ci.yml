@@ -14,6 +14,7 @@ jobs:
   test:
     # v0.2.0 macOS realpath / tmpdir 行为需要 macOS runner 覆盖
     # （cf3b415 dirs.js mtime 守护 + git.js realpathSync 兜底）
+    timeout-minutes: 30 # 兜底：即使回归出 hang，也 30min 内 fail-fast，不再占满 360min 默认上限
     strategy:
       fail-fast: false
       matrix:
@@ -33,5 +34,11 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      # CI runner 只有 ~2 vCPU，而 test/*.test.js 里多个文件会 spawn
+      # 完整导入 flowcast 的重型 node 子进程（orchestrator-cli / subflow 的
+      # GOLDEN_SAMPLE dry-run）。默认 --test-concurrency 按核数拉满，会让多个
+      # 重型子进程同时抢 CPU → 事件循环饥饿 → 测试 hang / 超时变红。
+      # --test-concurrency=1 串行跑文件（文件内测试本就顺序），避免跨文件争抢；
+      # --test-timeout 作为兜底，任何真实 hang 都会在 120s 内明确失败而非拖垮整 job。
       - name: Run tests
-        run: npm test
+        run: node --test --test-concurrency=1 --test-timeout=120000 test/*.test.js
