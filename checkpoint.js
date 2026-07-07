@@ -192,22 +192,30 @@ export class Checkpoint {
 
   // HITL：暂停并落盘，抛 PauseSignal 让 flow 入口点决定是否 process.exit(0)。
   // 不在库内直接 process.exit——这样 finally 块能跑、测试能拦截信号。
-  pause(reason, context = {}) {
+  //
+  // async 是契约：pause 是终止路径的最后一道，调用方若直接 return/throw 走人，
+  // run.log.jsonl 会被进程退出打断丢几行。这里 await _logQueue 强制同步落盘，
+  // 调用方不 await 也能保证在 PauseSignal 抛出前日志已落盘（await 在 throw 前）。
+  // 旧同步调用方不 await 也无害——Promise resolve 后跑完才 throw。
+  async pause(reason, context = {}) {
     console.log(`\n[paused] ${reason}`)
     this.state.status = 'paused'
     this.state.pauseReason = reason
     this.state.pauseContext = context
     this._log({ key: '__pause__', status: 'paused', reason })
     this._flush()
+    await this._logQueue  // 同步落盘：终止路径不让日志丢
     throw new PauseSignal(reason, context)
   }
 
-  // 标记整个 workflow 完成，生成可读报告
-  done(summary = {}) {
+  // 标记整个 workflow 完成，生成可读报告。
+  // 同 pause：async + await _logQueue，强制同步落盘后再返回。
+  async done(summary = {}) {
     this.state.status = 'completed'
     this.state.completedAt = new Date().toISOString()
     this.state.summary = summary
     this._flush()
+    await this._logQueue  // 同步落盘：终止路径不让日志丢
     this._writeReport()
   }
 

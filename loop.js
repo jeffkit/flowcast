@@ -3,6 +3,7 @@ import { runGates } from './quality-gate.js'
 import { buildMemorySection, recordLearning } from './memory.js'
 import { flowcastDir } from './dirs.js'
 import { makeEvent } from './helpers.js'
+import { EVENT } from './events.js'
 import { join } from 'path'
 
 // ── loop：goal-driven 循环原语 ⭐ ─────────────────────────────────────
@@ -70,8 +71,8 @@ export async function loop(iterate, opts = {}) {
   const cp = checkpoint ?? new Checkpoint(runId, resolvedStateDir)
   // makeEvent 统一格式：emit 同时写 Checkpoint 日志和外部 onEvent 回调
   const emit = (evt) => {
-    const normalized = makeEvent('loop', evt, { runId: cp.runId })
-    cp.event('loop', evt)  // cp.event 内部再 makeEvent 包装，此处传原始 evt 避免双重包裹
+    const normalized = makeEvent(EVENT.LOOP, evt, { runId: cp.runId })
+    cp.event(EVENT.LOOP, evt)  // cp.event 内部再 makeEvent 包装，此处传原始 evt 避免双重包裹
     if (onEvent) { try { onEvent(normalized) } catch { /* 观测不影响主流程 */ } }
   }
 
@@ -98,7 +99,7 @@ export async function loop(iterate, opts = {}) {
     if (maxRuntimeMs && Date.now() - startedAt >= maxRuntimeMs) {
       emit({ phase: 'budget', reason: 'maxRuntimeMs', turn })
       cp.setLoopState({ status: 'budget_exhausted', turns: turn, reason: 'maxRuntimeMs' })
-      cp.done({ loopStatus: 'budget_exhausted', turns: turn, reason: 'maxRuntimeMs' })
+      await cp.done({ loopStatus: 'budget_exhausted', turns: turn, reason: 'maxRuntimeMs' })
       return { status: 'budget_exhausted', turns: turn, lastResult, runId: cp.runId }
     }
 
@@ -176,13 +177,13 @@ export async function loop(iterate, opts = {}) {
 
     if (done) {
       cp.setLoopState({ status: 'completed', turns: turnNo })
-      cp.done({ loopStatus: 'completed', turns: turnNo })
+      await cp.done({ loopStatus: 'completed', turns: turnNo })
       return { status: 'completed', turns: turnNo, lastResult, runId: cp.runId }
     }
   }
 
   emit({ phase: 'budget', reason: 'maxTurns', turn })
   cp.setLoopState({ status: 'budget_exhausted', turns: turn, reason: 'maxTurns' })
-  cp.done({ loopStatus: 'budget_exhausted', turns: turn, reason: 'maxTurns' })
+  await cp.done({ loopStatus: 'budget_exhausted', turns: turn, reason: 'maxTurns' })
   return { status: 'budget_exhausted', turns: turn, lastResult, runId: cp.runId }
 }
