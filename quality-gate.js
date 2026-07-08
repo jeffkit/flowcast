@@ -37,14 +37,20 @@ async function runShell(cmd, cwd, timeout) {
  *   - onFail      'rollback' | 'resume-fix' | 'autofix'（默认 rollback）
  *   - autofixCmd  onFail=autofix 时的修复命令
  *   - resumeFix   onFail=resume-fix 时的修复回调（覆盖 deps.resumeFix）
+ *   - maxResumeAttempts  onFail=resume-fix 时的最大修复尝试次数（默认 1，向后兼容；
+ *                        设为 ≥2 时 resume-fix 路径会循环：每次 resumeFix 后重测，
+ *                        通过即 return pass，全部用尽才走 onExhausted）
+ *   - onExhausted 'throw'（默认）| 'return-fail'（retries 用尽后返回 {passed:false} 而非抛 GateError）
  *   - timeout     单命令超时 ms
  * @param {object} deps
- *   - resumeFix   async (failureOutput, gate) => boolean（是否已应用修复）
+ *   - resumeFix   async (failureOutput, gate, attempt) => boolean（是否已应用修复）
  * @returns {Promise<{name,passed,attempts,output,autofixed?,resumeFixed?}>}
  */
 export async function runGate(gate, deps = {}) {
   const { name, cmd, cwd = process.cwd(), onFail = 'rollback', autofixCmd, timeout } = gate
   const resumeFix = gate.resumeFix ?? deps.resumeFix
+  const maxResumeAttempts = gate.maxResumeAttempts ?? deps.maxResumeAttempts ?? 1
+  const onExhausted = gate.onExhausted ?? deps.onExhausted ?? 'throw'
   // 观测回调：把质量门 pass/fail 写进 jsonl（看板据此标红灯）。gate 级优先于 deps 级。
   const onEvent = gate.onEvent ?? deps.onEvent
   // makeEvent 统一事件格式（event + type 双字段）
@@ -126,16 +132,27 @@ export async function runGate(gate, deps = {}) {
   }
 
   if (onFail === 'resume-fix' && typeof resumeFix === 'function') {
-    const applied = await resumeFix(stdout, gate)
-    if (applied) {
+    // maxResumeAttempts 默认 1（向后兼容）；≥2 时进入多轮修复循环：
+    //   resumeFix(stdout, gate, attempt) → 重测 → 通过即 return pass；仍失败则下一轮
+    //   所有轮用尽走 onExhausted（throw 或 return-fail）
+    for (let attempt = 1; attempt <= maxResumeAttempts; attempt++) {
+      const applied = await resumeFix(stdout, gate, attempt)
+      if (!applied) break // 回调显式放弃修复
       const re = await runShell(cmd, cwd, timeout)
-      if (re.exitCode === 0) { emit({ status: 'pass', attempts: 2, resumeFixed: true }); return { name, passed: true, attempts: 2, resumeFixed: true, output: re.stdout } }
+      if (re.exitCode === 0) {
+        emit({ status: 'pass', attempts: attempt + 1, resumeFixed: true })
+        return { name, passed: true, attempts: attempt + 1, resumeFixed: true, output: re.stdout }
+      }
       stdout = re.stdout
       exitCode = re.exitCode
+      timedOut = re.timedOut
     }
   }
 
   emit({ status: 'fail', exitCode })
+  if (onExhausted === 'return-fail') {
+    return { name, passed: false, attempts: maxResumeAttempts + 1, output: stdout, exitCode, timedOut }
+  }
   throw new GateError(name, exitCode, stdout, timedOut ? 'timeout' : undefined)
 }
 
@@ -148,6 +165,7 @@ export async function runGate(gate, deps = {}) {
  *               注意：resume-fix 门依赖 agent 修复上下文，并发时多个门同时修复可能冲突，
  *               建议只对 rollback/autofix 策略的门开并发，resume-fix 门保持串行。
  *               默认 false（保持向后兼容）。
+ *   - resumeFix / maxResumeAttempts / onExhausted  透传给每个 gate（详见 runGate）
  * @returns {Promise<Array>}
  */
 export async function runGates(gates, deps = {}) {

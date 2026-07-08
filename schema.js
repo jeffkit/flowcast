@@ -198,9 +198,12 @@ export function stubFromSchema(schema) {
  * @param {object} [o]
  *   - schema    JSON Schema（子集）；缺省时退化为直接 runner(prompt)
  *   - retries   不匹配重试次数（默认 1，即最多跑 2 次）
- * @returns {Promise<any>} 解析并校验后的值
+ *   - onFail    'throw'（默认，向后兼容）| 'return-null'（retries 用尽后返回 null 而不抛错，
+ *               让 caller 自己判断 null 决定怎么办，例如 pge.flow.js 把 evaluator 输出失败
+ *               当作 verdict-fail 处理而非 kill flow）
+ * @returns {Promise<any>} 解析并校验后的值；onFail='return-null' 且 retries 用尽时返回 null
  */
-export async function runStructured(runner, prompt, { schema, retries = 1 } = {}) {
+export async function runStructured(runner, prompt, { schema, retries = 1, onFail = 'throw' } = {}) {
   if (!schema) return runner(prompt)
   if (isDryRun()) return stubFromSchema(schema)
   let priorError
@@ -215,6 +218,7 @@ export async function runStructured(runner, prompt, { schema, retries = 1 } = {}
     if (ok) return parsed
     priorError = `JSON 不符合 schema：\n${errors.join('\n')}`
   }
+  if (onFail === 'return-null') return null
   throw new SchemaError(
     `runStructured: ${retries + 1} 次尝试后仍不符合 schema — ${priorError}`,
     priorError,

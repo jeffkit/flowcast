@@ -224,6 +224,34 @@ test('runStructured: 无 schema 时退化为直接 runner', async () => {
   assert.equal(r, 'plain text')
 })
 
+test('runStructured: onFail=return-null 在 retries 用尽后返回 null', async () => {
+  const runner = async () => '{"title":"x"}'  // 永远缺 count
+  const r = await runStructured(runner, 'do it', {
+    schema: ITEM_SCHEMA,
+    retries: 1,
+    onFail: 'return-null',
+  })
+  assert.equal(r, null, 'return-null 模式应返回 null 而非抛错')
+})
+
+test('runStructured: onFail=return-null 时合法输出正常返回', async () => {
+  const runner = async () => '{"title":"ok","count":3}'
+  const r = await runStructured(runner, 'do it', {
+    schema: ITEM_SCHEMA,
+    retries: 1,
+    onFail: 'return-null',
+  })
+  assert.deepEqual(r, { title: 'ok', count: 3 })
+})
+
+test('runStructured: onFail 默认 throw，向后兼容', async () => {
+  const runner = async () => 'not json'
+  await assert.rejects(
+    () => runStructured(runner, 'do it', { schema: ITEM_SCHEMA, retries: 0 }),
+    (e) => { assert.ok(e instanceof SchemaError); return true },
+  )
+})
+
 test('runStructured: dry-run 返回 stub，不调 runner', async () => {
   process.env.FLOWCAST_DRY_RUN = '1'
   try {

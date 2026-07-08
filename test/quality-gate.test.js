@@ -89,6 +89,51 @@ test('红灯 + resume-fix 仍失败 → 抛错', async () => {
   )
 })
 
+test('maxResumeAttempts=3 → resumeFix 最多被调 3 次，全部用尽抛错', async () => {
+  let calls = 0
+  await assert.rejects(
+    runGate(
+      { name: 'test', cmd: 'exit 1', onFail: 'resume-fix', maxResumeAttempts: 3 },
+      { resumeFix: async () => { calls++; return true } },
+    ),
+    /quality gate 'test' failed/,
+  )
+  assert.equal(calls, 3, 'resumeFix 应被调 3 次（不是默认 1 次）')
+})
+
+test('maxResumeAttempts=3 + onExhausted=return-fail → 不抛错，返回 passed:false', async () => {
+  let calls = 0
+  const r = await runGate(
+    { name: 'test', cmd: 'exit 1', onFail: 'resume-fix', maxResumeAttempts: 2, onExhausted: 'return-fail' },
+    { resumeFix: async () => { calls++; return true } },
+  )
+  assert.equal(r.passed, false)
+  assert.equal(r.exitCode, 1)
+  assert.equal(calls, 2)
+})
+
+test('maxResumeAttempts=3 第 2 次成功 → 通过，attempts=3', async () => {
+  const fs = await import('fs')
+  const path = await import('path')
+  const marker = path.join(fs.mkdtempSync('/tmp/gate-'), 'done')
+  // 模拟：检查命令前 2 次失败、第 3 次通过。用文件存在性判定。
+  const cmd = `sh -c 'if [ -f "${marker}" ]; then exit 0; else touch "${marker}"; exit 1; fi'`
+  try {
+    const r = await runGate(
+      { name: 'test', cmd, onFail: 'resume-fix', maxResumeAttempts: 3 },
+      { resumeFix: async () => true },
+    )
+    assert.equal(r.passed, true)
+    assert.equal(r.attempts, 2, 'build(1) + resume1(2); 第 1 次 resumeFix 后 marker 已存在，第 2 次重测通过')
+    assert.equal(r.resumeFixed, true)
+  } finally {
+    try {
+      const dir = path.dirname(marker)
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch { /* 忽略 */ }
+  }
+})
+
 test('onEvent：绿灯 emit gate/pass，红灯 emit gate/fail（埋点）', async () => {
   const events = []
   const onEvent = e => events.push(e)
