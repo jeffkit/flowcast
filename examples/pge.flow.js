@@ -219,13 +219,13 @@ ${read(`sprint-${idx}-contract.md`) ?? ''}
   }
 }
 
-async function structured(agentName, taskGoal, schema) {
+async function structured(agentName, taskGoal, schema, opts = {}) {
   if (isDryRun()) return dryRunStruct(taskGoal, schema)
   const a = resolveAgent(agentName, agents, { providers })
   return runStructured(
     (p) => a.run(p, { cwd: repo, ...a.opts }),
     taskGoal,
-    { schema, retries: 2 },
+    { schema, retries: 2, ...opts },
   )
 }
 
@@ -289,11 +289,23 @@ ${read('spec.md') ? `（注意：spec 已存在，可能是续跑。若存在请
   console.log(`\n[planner] ${spec.title} — ${spec.sprints.length} sprint(s)`)
 
   // ── Phase 2: per-sprint build-eval-repair loop ──
+  // Sprint 依赖门：当前 sprint verdict 失败时不进下一个 sprint（避免越滚越大的烂代码）。
+  // 之前 pge 会静默进下一个 sprint 累积半成品代码，是 pge-p2b 翻车的核心原因。
+  // 现在：verdict fail → raise 清晰错误，main 捕获后停止整个 flow，让用户决定（手动
+  // 接管 / 改 spec / 修 prompt）。
   for (let i = 0; i < spec.sprints.length && i < maxSprints; i++) {
     const sprint = spec.sprints[i]
     const tag = `sprint-${i + 1}-${sprint.name.replace(/\s+/g, '_').slice(0, 30)}`
 
-    await cp.step(tag, () => runSprint(sprint, i + 1))
+    try {
+      await cp.step(tag, () => runSprint(sprint, i + 1))
+    } catch (e) {
+      console.log(`  [abort] sprint ${i + 1} (${sprint.name}) 失败：${e.message?.slice(0, 200) ?? e}`)
+      cp.done({ sprints: spec.sprints.length, maxRounds, abortedAt: i + 1, reason: e.message })
+      await notify(`pge 中止：sprint ${i + 1} 失败\n\n${e.message?.slice(0, 500) ?? e}`)
+      console.log(`\n✗ pge 中止在 sprint ${i + 1}。worktree 留给你手动接管。`)
+      throw e
+    }
   }
 
   cp.done({ sprints: spec.sprints.length, maxRounds })
@@ -379,7 +391,8 @@ agreed=true 仅当你真的满意。`,
           GENERATOR,
           `你是 Generator。按 sprint contract 实现。
 - 每个验收点都要落到代码
-- 实现完成后自评一遍，确保覆盖所有 criteria
+- 实现完成后**自评一遍 + 必须先跑 \`PATH="$HOME/.cargo/bin:$PATH" cargo build\` 确认编译过**，
+  再交回（这是修法 C：让 generator 在 quality gate 之前发现编译错，省一次 evaluator 调用）
 - 改动提交到 git（如果可用）
 
 ## 卫生铁律（违反即视为失败）
@@ -394,6 +407,8 @@ agreed=true 仅当你真的满意。`,
   - 写 serde 测试时，JSON 字面量字段名/必填字段必须按真实 schema 来
 - **Cargo.toml 新依赖按项目惯例**：参考已有 optional 依赖（如 \`agui-protocol = { ..., optional = true }\`），
   仅在协议地基（被所有后续模块依赖的纯数据层）时才用非 optional，且要在 spec 里说明。
+- **eval 写代码时若已读 \`sprint-${idx}-bugs.md\`**，先看清上一轮 bug 列表（gate 失败 / evaluator 失败 / findings fail），
+  按列表修，不要重做不相关的部分。
 
 sprint：${sprint.name}
 contract：
@@ -423,42 +438,46 @@ ${read(`sprint-${idx}-contract.md`) ?? JSON.stringify(contract)}`,
       maxTurns: maxRounds,
       runId: `${runId}-sprint-${idx}`,
       stateDir: flowcastDir(repo) + '/runs',
-      // 注意：gates 不传给 loop——quality-gate.js 的 resume-fix 路径只允许 1 次重试，
-      // 失败仍抛错，和 pge 的多轮 repair loop 模型不兼容。这里在 isDone 里自己跑门，
-      // 失败时把 stdout 写进 sprint-<idx>-bugs.md，return false 让 pge loop 进下一轮。
-      isDone: async ({ turn }) => {
-        if (turn === 0 && maxRounds === 0) return true // 仅跑 build，不验收（异常配置兜底）
-        // build 完一轮后才开始验收（turn 0 是 build，turn 1 开始才 eval）
+      // 走 loop 内置的 quality gate 机制（flowcast 0.5.1+）：
+      //   - maxResumeAttempts: 3 → 失败最多 3 轮 resume-fix
+      //   - onExhausted: 'return-fail' → 用尽返回 {passed:false} 而非 throw，
+      //     isDone 看到后写 bugs.md + return false，让 pge loop 进入下一轮 generator
+      //   - resumeFix callback 写 gate report + spawn generator 修
+      // 这样 pge 能用上 flowcast 原生多轮 gate 修复，不需 isDone 自己跑门。
+      gates: await sprintGates(),
+      gateDeps: {
+        resumeFix: makeResumeFix(idx),
+        maxResumeAttempts: 3,
+        onExhausted: 'return-fail',
+      },
+      isDone: async ({ turn, gateResults = [] }) => {
+        if (turn === 0 && maxRounds === 0) return true
         if (turn === 0) return false
 
-        // ── 1. 质量门（cargo test / clippy / fmt / e2e / tui-mutants …）──
-        // 失败的 stdout 写进 bugs.md 供下一轮 generator 修，不抛错。
-        try {
-          const gates = await sprintGates()
-          if (gates.length) {
-            await runGates(gates) // 任一门 fail → throw GateError
-          }
-        } catch (e) {
-          const gateName = e.gate ?? 'unknown'
-          console.log(`  [gate-fail] ${gateName}: ${e.message}`)
-          write(
-            `sprint-${idx}-bugs.md`,
-            `Quality gate "${gateName}" failed (exit ${e.exitCode ?? 'n/a'}):\n\n` +
-            '```\n' + (e.output ?? e.message ?? '').slice(0, 4000) + '\n```\n',
+        // ── 1. 质量门（已被 loop 跑过）──
+        // loop 已经调过 runGates：gateResults 数组里每项 {name, passed, ...}
+        const failed = gateResults.filter(r => !r.passed)
+        if (failed.length) {
+          // 兜底：loop 应该已经把失败 stdout 写进 bugs.md（resumeFix callback 里），
+          // 这里再加一个综合报告让 generator 一眼看到。
+          const report = failed.map(f =>
+            `## Gate "${f.name}" failed (exit ${f.exitCode ?? 'n/a'})\n\n` +
+            '```\n' + (f.output ?? '').slice(0, 2000) + '\n```',
+          ).join('\n\n')
+          write(`sprint-${idx}-bugs.md`,
+            (read(`sprint-${idx}-bugs.md`) ?? '') +
+            '\n\n## Gate summary\n\n' + report,
           )
-          return false // 让 loop 进下一轮 generator 修
+          return false
         }
 
         // ── 2. Evaluator 按 contract 验收 ──
-        // 包 try/catch：evaluator 模型偶尔会输出非 JSON（把推理过程也吐出来），
-        // runStructured 重试 3 次仍失败时抛错——这里捕获后当作「evaluator 自己
-        // 出问题」处理：写 bugs.md 让下一轮 generator 看到，return false 继续
-        // repair loop。不让整个 flow 因 evaluator 输出格式问题崩溃。
-        let verdict
-        try {
-          verdict = await structured(
-            EVALUATOR,
-            `你是 Evaluator（skeptical QA）。按 contract 逐条验收当前实现。
+        // 用 onFail: 'return-null'：evaluator 模型偶尔输出非 JSON 不再 throw，
+        // 返回 null；这里把 null 当作「evaluator 自己出问题」处理，return false
+        // 让下一轮 generator 重新自评。
+        const verdict = await structured(
+          EVALUATOR,
+          `你是 Evaluator（skeptical QA）。按 contract 逐条验收当前实现。
 - 对每个验收点：实际运行/检查代码后判 pass/fail
 - fail 必须给 file/line/note/repro（让 Generator 无需重新调查就能修）
 - 默认怀疑，不许「看起来还行就放水」
@@ -469,16 +488,18 @@ ${read(`sprint-${idx}-contract.md`) ?? JSON.stringify(contract)}
 spec 参考：
 ${read('spec.md') ?? ''}
 输出严格符合 schema。`,
-            verdictSchema,
-          )
-        } catch (e) {
-          console.log(`  [evaluator-fail] ${e.message?.slice(0, 200) ?? e}`)
-          write(
-            `sprint-${idx}-bugs.md`,
-            `Evaluator 跑结构化输出失败（3 次重试仍非合法 JSON）。` +
-            `这通常是 evaluator 模型自身的输出格式问题，不一定是代码错。\n\n` +
-            `请 generator 重新自评一遍 contract 各验收点，确认实现无误；` +
-            `下一轮 evaluator 会重试。\n\n错误：${e.message ?? e}\n`,
+          verdictSchema,
+          { onFail: 'return-null' },
+        )
+
+        if (verdict === null) {
+          console.log(`  [evaluator-fail] runStructured 3 次后仍非合法 JSON`)
+          write(`sprint-${idx}-bugs.md`,
+            (read(`sprint-${idx}-bugs.md`) ?? '') +
+            '\n\n## Evaluator 输出失败\n\n' +
+            'Evaluator 跑结构化输出失败（3 次重试仍非合法 JSON）。' +
+            '这通常是 evaluator 模型自身的输出格式问题，不一定是代码错。\n' +
+            '请 generator 重新自评一遍 contract 各验收点，确认实现无误。',
           )
           return false
         }
@@ -487,7 +508,7 @@ ${read('spec.md') ?? ''}
 
         const fails = verdict.findings.filter(f => f.status === 'fail')
         if (verdict.overall === 'pass' || fails.length === 0) {
-          write(`sprint-${idx}-bugs.md`, '') // 清空 bug list
+          write(`sprint-${idx}-bugs.md`, '')
           return true
         }
 
@@ -506,7 +527,18 @@ ${read('spec.md') ?? ''}
   // 兜底：loop 跑完仍未 pass，记一笔让外层知道
   const finalVerdict = read(`sprint-${idx}-verdict.json`)
   if (result.status === 'budget_exhausted' && finalVerdict && JSON.parse(finalVerdict).overall !== 'pass') {
-    console.log(`  [warn] sprint ${idx} 未在 ${maxRounds} 轮内通过验收，最终 verdict: ${JSON.parse(finalVerdict).overall}`)
+    // 修法 A（sprint 依赖门）：verdict fail 时不再静默进下一个 sprint。
+    // 抛错让 main 的 try/catch 捕获，停止整个 flow；用户可以选择手动接管 / 改 prompt / 改 spec。
+    const err = new Error(
+      `sprint ${idx} (${sprint.name}) 在 ${maxRounds} 轮内未通过验收。` +
+      `verdict.overall = ${JSON.parse(finalVerdict).overall}。` +
+      `\nworkdir: ${workdir}\n` +
+      `查看 ${workdir}/sprint-${idx}-verdict.json 和 sprint-${idx}-bugs.md 了解详情。`,
+    )
+    err.sprint = idx
+    err.sprintName = sprint.name
+    err.verdict = JSON.parse(finalVerdict)
+    throw err
   }
 }
 
