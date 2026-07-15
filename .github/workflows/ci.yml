@@ -33,6 +33,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # 安装依赖：v0.6 起 flowcast 依赖 agentproc SDK，测试运行前必须先装。
+      # 有 package-lock.json，用 npm ci 做可复现安装。
+      - name: Install dependencies
+        run: npm ci
 
       # CI runner 只有 ~2 vCPU，而 test/*.test.js 里多个文件会 spawn
       # 完整导入 flowcast 的重型 node 子进程（orchestrator-cli / subflow 的

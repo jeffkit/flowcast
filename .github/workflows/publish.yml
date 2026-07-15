@@ -25,6 +25,11 @@ jobs:
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      # 发布前跑测试同样需要先装依赖（agentproc SDK）。
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run tests
         run: npm test
