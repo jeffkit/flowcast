@@ -142,15 +142,17 @@ flowcast 现在**开箱支持 14 个 CLI**(无需写任何 adapter):
 
 **v0.5 之前**:只有 `claude`(--resume 隐式 args)和 `recursive`(transcript 文件续接),其他 CLI 没会话概念。
 
-**v0.6**:agentproc 协议级 `session_id` 字段,所有能 emit `session_id` 的 CLI 自动续接。`runAgent` 加了 `sessionId` opts:
+**v0.6**:agentproc 协议级 `session_id` 字段,**NDJSON-style CLI(claude / codex / gemini 等)自动续接**。`runAgent` 加了 `sessionId` opts:
 
 ```js
-const r1 = await runAgent('tell me a joke', { cli: 'agy' })
-const sid = agentMeta(r1).sessionId  // 当 CLI 支持时
-const r2 = await runAgent('now laugh at it', { cli: 'agy', sessionId: sid })
+const r1 = await runAgent('tell me a joke', { cli: 'claude' })
+const sid = agentMeta(r1).sessionId  // claude --stream-json NDJSON 里 system/init event 的 session_id 字段
+const r2 = await runAgent('now laugh at it', { cli: 'claude', sessionId: sid })
 ```
 
 `runStructured(runner, prompt, {schema})` 路径也走 agentproc(因为 `runner(prompt)` 返回 `String & {_meta}`,agentproc 调用结果兼容)。
+
+**已知缺口**:agentproc SDK 里 `plain: true` 的执行器(agy / aider / deepseek / pi)**不会**把 sessionId 传给 CLI argv,`RunResult.sessionId` 永远是空串——即使底层 CLI(如 agy --conversation)支持续接。详见 [未决问题 #1](#未决问题) 和 [agentproc#4](https://github.com/jeffkit/agentproc/issues/4)。flowcast v0.6 在 plain CLI 上的 session 续接**目前无法保证**,需要等 agentproc 修复或 flowcast 在 plain CLI 路径上自己做 session state 持久化。
 
 ### `env_allowlist` 安全护栏
 
@@ -290,10 +292,12 @@ npm install agentproc@^0.10.0  # 保留依赖,因为 v0.5.2 不需要
 
 ## 未决问题
 
-1. **`env_allowlist` 自动化**:profile env 字段目前不强制声明 allowlist,建议下个版本在 `loadAgents` 自动从 env 字段里推断 — 这样可以保护环境
-2. **recursive 进入 agentproc SDK EXECUTORS 表**:现在的 special-case 路径很丑;如果未来 agentproc 把 session-dir 状态管理抽象成 `Executor.makeHandlers()` 工厂,我们能直接复用
-3. **`runProfile` agent name → executor 解析**:L3 codegen 现在生成 `runProfile(agentName, ...)` 调用,内部 `resolveAgent` 通过 `executor` 字段找到对应 adapter。后续可以让 `runProfile` 接受 agentproc profile YAML 作为替代输入,但需要先把 generated flow schema 拓展
-4. **dry-run 增广**:现在 dry-run 给所有 CLI 返回相同 stub;agentproc SDK 的 fake executors 应该可以驱动真实 dry-run 流(见 [AgentProc issue #?](#))
+1. **`plain: true` 执行器的 session_id 缺口**([agentproc#4](https://github.com/jeffkit/agentproc/issues/4)):agentproc SDK 里 agy / aider / deepseek / pi 都是 `plain: true`——`buildArgs` 拿到 `sessionId` 但**完全没用**(看 `executors.js` 里的 `agy = { buildArgs(message, _sessionId, env) {...} }`)。agy CLI 本身支持 `--conversation <id>` 续接(已验证),但 agentproc 不传 sessionId 给 CLI,导致 `RunResult.sessionId` 永远是空串。修复需要: (a) 让 plain executors 把 sessionId 拼进 argv(agy → `--conversation`,aider → 看 CLI 是否支持),(b) spec 文档化 plain-CLI 的 session_id 语义(CLI 自己管内部状态时,host 负责持久化它发出的 sessionId)。flowcast v0.6 因此**只能给 NDJSON-style CLI(claude / codex / gemini 等)宣告 unified session continuity**,plain CLI 的会话续接需要 agentproc 修后才能完整
+
+2. **`env_allowlist` 自动化**:profile env 字段目前不强制声明 allowlist,建议下个版本在 `loadAgents` 自动从 env 字段里推断 — 这样可以保护环境
+3. **recursive 进入 agentproc SDK EXECUTORS 表**:现在的 special-case 路径很丑;如果未来 agentproc 把 session-dir 状态管理抽象成 `Executor.makeHandlers()` 工厂,我们能直接复用
+4. **`runProfile` agent name → executor 解析**:L3 codegen 现在生成 `runProfile(agentName, ...)` 调用,内部 `resolveAgent` 通过 `executor` 字段找到对应 adapter。后续可以让 `runProfile` 接受 agentproc profile YAML 作为替代输入,但需要先把 generated flow schema 拓展
+5. **dry-run 增广**:现在 dry-run 给所有 CLI 返回相同 stub;agentproc SDK 的 fake executors 应该可以驱动真实 dry-run 流
 
 ## 参考
 
