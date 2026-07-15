@@ -2,14 +2,14 @@
 //
 // "flowcast" 表面（下游 flow 用）：以下 export。稳定契约，semver 保护。
 // "flowcast/internal" 表面（测试/工具脚本用）：见 ./internal.js。无稳定性承诺。
+//
+// v0.6：adapters.js 已删除。CLI adapter（claude/cursor/gemini/codex/...）由 agentproc SDK 提供，
+// 通过 agentproc.run 内部调用。用户调 flowcast 时不再需要直接 import adapter 函数。
 export { EVENT, EVENT_TYPES, listEventTypes } from './events.js'
 export { Checkpoint } from './checkpoint.js'
 export {
   runAgent, runAgentChain, setWorkdir, setAgentEventSink,
-  claude, cursor, gemini, codex, aider, recursive, agy,
-  CLAUDE_DEFAULT_TIMEOUT, GEMINI_DEFAULT_TIMEOUT, CODEX_DEFAULT_TIMEOUT,
-  AGY_DEFAULT_TIMEOUT, CURSOR_DEFAULT_TIMEOUT, AIDER_DEFAULT_TIMEOUT, RECURSIVE_DEFAULT_TIMEOUT,
-  spawnCapture, spawnCli, resolveRecursiveBin, recursiveProviderEnv, claudeProviderEnv, claudeApplyProvider, isProviderRetryable,
+  spawnCapture, spawnCli, resolveRecursiveBin, recursiveProviderEnv, claudeProviderEnv, aiderProviderEnv, applyProviderToProfile, isProviderRetryable,
   emitAgentEvent,
   parallel, pipeline,
   waitForInput, notify, setHitlBackend, getHitlBackend,

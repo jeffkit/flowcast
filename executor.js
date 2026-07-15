@@ -1,82 +1,122 @@
 // executor.js — 执行器能力分层 + agent profile 绑定层
 //
-// 「执行器（怎么驱动一个 CLI/agent）」与「provider（用哪个 LLM）」是正交的两件事：
-//   - 有些执行器是 BYO-LLM（recursive/aider/claude）：可以注入 provider（端点/模型/密钥）。
-//   - 有些执行器自管鉴权、路由到自家后端（cursor/gemini/codex 等）：不接受外部 provider，
-//     只能用它自带的 model 选择。
+// v0.6 重构（基于 AgentProc v0.10.0 in-process executor）：
+//   - 不再维护 per-CLI adapter（adapters.js 已删除）。
+//   - EXECUTORS 注册表现在是「flowcast CLI 名 → agentproc executor 描述符」的映射；
+//     实际 CLI 调用走 agentproc SDK 的 in-process executor（agentproc.runViaExecutor 路径）。
+//   - 所有 buildArgs / parseEvent / env 翻译 / session_id 处理由 agentproc SDK 提供，
+//     单一事实来源。
 //
-// 一个执行器是否「接受外部 provider」由 adapter 自己有没有 applyProvider 翻译器决定（能力即翻译器）。
-// applyProvider(bundle) 把通用 provider bundle 翻译成该执行器的调用选项 { env?, model? }。
-// 本文件只做「按名字拿 adapter + 派生 acceptsProvider」的薄编排——翻译器在 adapter 里维护。
+// 「执行器（怎么驱动一个 CLI/agent）」与「provider（用哪个 LLM）」仍然正交：
+//   - BYO-LLM（recursive/aider/claude）：profile 可指定 provider，env 翻译在 provider.js
+//   - 锁定型（cursor/gemini/codex/agy）：不接受外部 provider，用自带 model 选择
 //
-// agent profile（agents.{json,yaml,…}）把「执行器 + 可选 provider + 调用配置」打包成具名引用，
-// flow / L3 编排层按名字引用它。resolveAgent 负责校验 + 解析 + 绑定。
+// acceptsProvider 由 CLI_TO_EXECUTOR 的能力决定（与 agentproc 那边对应 executor 的 flag 翻译对齐）。
 
-// 从 adapters.js 直接导入（不再经由 agent.js），打破 executor.js ↔ agent.js ESM 循环依赖。
 import {
-  claude, cursor, gemini, codex, aider, recursive, agy,
-  recursiveProviderEnv, claudeApplyProvider, emitAgentEvent,
-} from './adapters.js'
+  runViaAgentProc, cliToExecutorName, CLI_TO_EXECUTOR, KNOWN_EXECUTORS,
+} from './executor/agentproc-adapter.js'
+import { maybeThrowRecursiveCritical } from './executor/recursive-extras.js'
 import { isProviderRetryable } from './spawn.js'
 import { recordRateLimit, getAvailableAt, makeKey } from './rate-limiter.js'
-import { resolveProvider, loadMergedConfig, basenamesFor } from './provider.js'
+import {
+  resolveProvider, loadMergedConfig, basenamesFor,
+  applyProviderToProfile,
+  claudeProviderEnv, recursiveProviderEnv, aiderProviderEnv,
+} from './provider.js'
 import { isDryRun } from './dry-run.js'
 import { runStructured, stubFromSchema } from './schema.js'
-import { FlowcastError, ConfigError, PathError } from './errors.js'
-import { assertSafeIdent, makeAgentResult } from './helpers.js'
+import { FlowcastError, ConfigError, PathError, TimeoutError, SpawnError } from './errors.js'
+import { assertSafeIdent, makeAgentResult, makeEvent } from './helpers.js'
 import { EVENT } from './events.js'
-import { resolve, normalize } from 'path'
+import { normalize } from 'path'
 
-// ── provider 翻译器（adapter 各自管自己的，本文件只做装配）──────────
+// ── CLI → executor 映射（flowcast 视角） ───────────────────────────────
 //
-// 设计选择：翻译器不挂到 adapter 函数上（避免 ESM 模块初始化时序坑），
-// 改成 export 翻译器函数，本文件装配 EXECUTORS 时挂上去。
-// 单一事实来源仍是 adapter 自带的 provider 逻辑，只是「挂载点」在本文件。
+// 历史原因，flowcast CLI 名不一定等于 agentproc executor 名（如 'claude' → 'claude-code'）。
+// EXECUTORS 注册表的每个 entry 携带：
+//   - executorName: agentproc executor 名
+//   - acceptsProvider: 派生自 CLI_TO_EXECUTOR 是否在 BYO-LLM 列表
+//
+// 单 fork：agentproc.runViaExecutor 直接 spawn CLI 二进制，不走 bridge 子进程。
 
-function recursiveApply(bundle) {
-  return { env: recursiveProviderEnv(bundle) }
+const BYO_LLM_CLIS = new Set(['claude', 'recursive', 'aider'])
+
+function buildExecutorEntry(flowcastCli) {
+  const executorName = CLI_TO_EXECUTOR[flowcastCli]
+  if (!executorName) {
+    return null
+  }
+  return {
+    executorName,
+    acceptsProvider: BYO_LLM_CLIS.has(flowcastCli),
+  }
 }
 
-function aiderApply(bundle) {
-  const env = {}
-  if (bundle.apiBase) env.OPENAI_API_BASE = bundle.apiBase
-  if (bundle.apiKey) env.OPENAI_API_KEY = bundle.apiKey
-  return { env, model: bundle.model }
+function buildBuiltinExecutors() {
+  const entries = {}
+  for (const cli of Object.keys(CLI_TO_EXECUTOR)) {
+    const entry = buildExecutorEntry(cli)
+    if (entry) {
+      entries[cli] = entry
+    } else {
+      // agentproc SDK 不收录（如 recursive）；保留 cli 名作为「flowcast 内部处理」标记
+      entries[cli] = { executorName: null, acceptsProvider: BYO_LLM_CLIS.has(cli) }
+    }
+  }
+  return entries
 }
 
-// ── 执行器注册表 ──────────────────────────────────────────────────
-// acceptsProvider 由 applyProvider 是否存在派生（单一事实来源）。
-
-export const EXECUTORS = {
-  recursive: { run: recursive, applyProvider: recursiveApply },
-  aider:     { run: aider,     applyProvider: aiderApply },
-  claude:    { run: claude,    applyProvider: claudeApplyProvider },
-  cursor:    { run: cursor },   // 自管鉴权/路由，不接受外部 provider
-  agent:     { run: cursor },   // cursor-agent CLI（二进制名 agent）的别名
-  gemini:    { run: gemini },
-  codex:     { run: codex },
-  agy:       { run: agy },      // 自带鉴权的编译型 agent CLI
-}
+/**
+ * 执行器注册表：flowcast CLI 名 → {executorName, acceptsProvider, run?}。
+ *
+ * - 内置 entry 由 CLI_TO_EXECUTOR + agentproc SDK 派生（无 run，因为实际调用走 agentproc）。
+ * - registerExecutor() 允许注入自定义 entry（含 run 函数），用于 backward-compat
+ *   （用户写 `EXECUTORS.myCli = {run: async (p,o) => ...}` 这种老代码）。
+ *
+ * 注意：acceptsProvider 是关键约束——锁定型 CLI 配 provider 必须在 resolveAgent 抛错。
+ */
+export const EXECUTORS = buildBuiltinExecutors()
 
 /** 取执行器描述符；未注册抛 ConfigError。 */
 export function getExecutor(name) {
   const e = EXECUTORS[name]
-  if (!e) throw new ConfigError(`未知执行器 '${name}'（已注册：${Object.keys(EXECUTORS).join(' / ')}）`)
-  return { name, run: e.run, applyProvider: e.applyProvider, acceptsProvider: typeof e.applyProvider === 'function' }
+  if (!e) {
+    throw new ConfigError(`未知执行器 '${name}'（已知：${Object.keys(EXECUTORS).join(' / ')}）`)
+  }
+  return {
+    name,
+    executorName: e.executorName,
+    acceptsProvider: !!e.acceptsProvider,
+    applyProvider: e.applyProvider,  // 仅自定义 entry 可能提供；内置走 provider.js 的 BYO 翻译器
+    run: e.run,
+  }
 }
 
 /**
  * 注册自定义执行器，之后 runAgent({cli: name}) 和 resolveAgent 都能识别。
+ *
+ * 自定义执行器必须提供 run(prompt, opts) 函数，跟旧 adapter 接口一致：
+ *   async (prompt, opts) => String & {text, _meta}
+ *
  * @param {string}   name           执行器名（如 'my-cli'）
- * @param {Function} run            adapter 函数 async (prompt, opts) => string
+ * @param {Function} run            adapter 函数
  * @param {object}   [opts]
  * @param {Function} [opts.applyProvider]  provider 翻译器 (bundle) => {env?, model?}；
  *                                         提供则表示该执行器接受外部 provider（BYO-LLM）。
+ * @param {boolean}  [opts.acceptsProvider]  同义于 applyProvider 存在；二者取一
  */
-export function registerExecutor(name, run, { applyProvider } = {}) {
+export function registerExecutor(name, run, { applyProvider, acceptsProvider } = {}) {
   assertSafeIdent(name, 'executor')
   if (typeof run !== 'function') throw new TypeError(`registerExecutor: run 必须是函数`)
-  EXECUTORS[name] = applyProvider ? { run, applyProvider } : { run }
+  const entry = { run }
+  if (applyProvider) {
+    entry.applyProvider = applyProvider
+    entry.acceptsProvider = true
+  } else if (acceptsProvider) {
+    entry.acceptsProvider = true
+  }
+  EXECUTORS[name] = entry
 }
 
 /** 加载并合并多层 agent profile 配置（~/.flowcast + <repo>/.flowcast，向后兼容 .flowx/）。 */
@@ -87,20 +127,19 @@ export async function loadAgents({ repo, dirs } = {}) {
 const META_KEYS = new Set(['executor', 'provider'])
 
 // 顶层 opts 字段白名单：profile 里允许出现的「调用选项」key。
-// 透传给 adapter 的所有字段必须在这里声明——白名单外的字段被静默丢弃（防 LLM 注入
-// `systemPromptFile: '/etc/shadow'`、`workspace: '/etc'` 等任意文件路径）。
-// 注：这是 L2 配置文件（agents.json）的白名单；generated flow 调的
-// `runProfile(agentName, goal, opts)` 走的是另一条 surface（runAgent chain），
-// 不受本表约束——runProfile 的 opts 校验在 agent.js 入口处。
+// 透传给 adapter 的所有字段必须在这里声明——白名单外的字段被静默丢弃（防 LLM 注入）。
 const SAFE_OPTS_KEYS = new Set([
   'cwd', 'timeout', 'model', 'maxSteps', 'allowTools',
-  'extraArgs',  // 数组里每个 arg 仍要走 EXTRA_ARGS_WHITELIST 二次过滤
-  'transcriptOut', 'pricingFile',  // recursive 专用，路径约束在 adapter 内部
-  'files',  // aider 专用：要操作的文件列表（string[]）；路径安全由 aider CLI 自身保证
+  'extraArgs',
+  'transcriptOut', 'pricingFile',
+  'files',
 ])
 
 // extraArgs 元素级白名单：只允许 BYO-LLM adapter 已知安全的 flag。
 // LLM/配置文件若注入 `--system-prompt-file /etc/shadow` 这种 flag，会被这里拦掉。
+//
+// 注：v0.6 之后，extraArgs 会通过 agentproc 的 env / args 机制传给 CLI。
+// 白名单仍由 flowcast 维护——因为 agentproc 没有「per-CLI flag 白名单」概念。
 const EXTRA_ARGS_WHITELIST = {
   claude: new Set([
     '--model', '--output-format', '--max-steps', '--allowedTools', '--system-prompt',
@@ -108,64 +147,44 @@ const EXTRA_ARGS_WHITELIST = {
   ]),
   recursive: new Set([
     '--max-steps', '--model',
-    '--workspace',  // 路径值由 sanitizeExtraArgs 校验：必须相对且不逃逸（见 PATH_FLAGS）
+    '--workspace',
   ]),
-  // aider 是 BYO-LLM 执行器，接受模型/编辑格式等配置 flag
   aider: new Set([
     '--model', '--edit-format', '--no-auto-commits', '--no-dirty-commits', '--read',
   ]),
-  // 锁定型执行器只允许运行时安全 flag（workspace 信任/宽松权限），不允许注入 LLM 配置 flag
   cursor: new Set(['--trust', '--force', '--yolo', '--dangerously-skip-permissions']),
   gemini: new Set(),
   codex:  new Set(),
   agy:    new Set(['--dangerously-skip-permissions']),
 }
 
-// path 型 flag：其值必须是相对路径且不能逃逸当前工作目录（防路径遍历）。
 const PATH_FLAGS = new Set(['--workspace'])
 
-/**
- * 判断路径值是否安全：必须是相对路径（不以 / 开头），且规范化后不以 `..` 开头。
- * @param {string} val
- */
 function isSafePath(val) {
   if (typeof val !== 'string') return false
-  if (val.startsWith('/')) return false  // 绝对路径拒绝
+  if (val.startsWith('/')) return false
   const norm = normalize(val)
-  return !norm.startsWith('..')  // 规范化后的相对路径不能逃逸
+  return !norm.startsWith('..')
 }
 
-/**
- * 过滤 extraArgs 数组：只保留白名单内 flag 的元素，且校验 flag 后的 value 不带危险字符。
- * 对 path 型 flag（如 --workspace），额外校验路径不含路径遍历（不允许绝对路径或 `..`）。
- * @param {string} executor  执行器名
- * @param {string[]} args
- * @returns {string[]} 过滤后的数组（白名单外的、路径遍历的均被丢弃）
- */
 export function sanitizeExtraArgs(executor, args) {
   if (!Array.isArray(args)) return []
   const allowed = EXTRA_ARGS_WHITELIST[executor]
-  if (!allowed) return []  // 未知执行器：拒绝任何 extraArgs（保守）
+  if (!allowed) return []
   const out = []
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
-    if (typeof a !== 'string' || !a.startsWith('--')) continue  // 跳过非 flag 形如（值会跟在前一个 flag 一起处理）
-    // 解析 flag 名：支持 --flag value / --flag=value 两种
+    if (typeof a !== 'string' || !a.startsWith('--')) continue
     const eq = a.indexOf('=')
     const flag = eq >= 0 ? a.slice(0, eq) : a
-    if (!allowed.has(flag)) continue  // 丢弃非白名单 flag
-
-    // 提取 value（两种形式：--flag=val 或 --flag val）
+    if (!allowed.has(flag)) continue
     let value = eq >= 0 ? a.slice(eq + 1) : null
     let nextConsumed = false
     if (eq < 0 && i + 1 < args.length && !args[i + 1].startsWith('--')) {
       value = args[i + 1]
       nextConsumed = true
     }
-
-    // path 型 flag：校验值不逃逸工作目录
     if (PATH_FLAGS.has(flag) && value !== null && !isSafePath(value)) continue
-
     out.push(a)
     if (nextConsumed) { out.push(value); i++ }
   }
@@ -174,17 +193,20 @@ export function sanitizeExtraArgs(executor, args) {
 
 /**
  * 解析具名 agent profile 为可直接喂给执行器的 { executor, run, opts }。
- * @param {string} name      agent profile 名
- * @param {Record<string,object>} agents     已加载的 agents map
+ *
+ * v0.6：opts 不再透传给 per-CLI adapter（已删除），而是描述「agentproc profile + RunOptions」。
+ * opts.env 来自 provider 翻译；opts.model 来自 provider 或 profile 显式；其余字段进入 ctx。
+ *
+ * @param {string} name
+ * @param {Record<string,object>} agents
  * @param {object} [ctx]
- * @param {Record<string,object>} [ctx.providers]  已加载的 providers map（provider 解析用）
- * @param {object} [ctx.env]                       插值用 env（默认 process.env）
+ * @param {Record<string,object>} [ctx.providers]
+ * @param {object} [ctx.env]
  * @returns {{executor:string, run:Function, opts:object}}
  */
 export function resolveAgent(name, agents = {}, { providers = {}, env = process.env } = {}) {
   const profile = agents[name]
   if (!profile) {
-    // dry-run 是结构冒烟，不校验 agent 配置是否齐全 → 给个 fake runner 让 flow 跑下去
     if (isDryRun()) return { executor: name, run: makeFakeRun(name), opts: {} }
     const known = Object.keys(agents)
     const hint = known.length ? `已定义：${known.join(' / ')}` : '当前无任何 agent 配置，请创建 ~/.flowcast/agents.json'
@@ -194,61 +216,73 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
 
   const ex = getExecutor(profile.executor)
 
-  // 透传业务无关的调用选项（maxSteps / cwd / timeout / allowTools / model / workspace …）
-  // 白名单外字段静默丢弃——防 LLM 注入 systemPromptFile/workspace 等任意路径字段。
+  // 透传业务调用选项（白名单外的字段静默丢弃）
   const opts = {}
   for (const [k, v] of Object.entries(profile)) {
     if (META_KEYS.has(k)) continue
-    if (!SAFE_OPTS_KEYS.has(k)) continue  // 丢弃非白名单字段
+    if (!SAFE_OPTS_KEYS.has(k)) continue
     opts[k] = v
   }
-  // extraArgs 内部元素级白名单过滤（防 `--system-prompt-file /etc/shadow` 注入）
+  // extraArgs 元素级白名单过滤
   if (opts.extraArgs) {
     opts.extraArgs = sanitizeExtraArgs(profile.executor, opts.extraArgs)
   }
-
-  // 路径型白名单字段：transcriptOut / pricingFile / files 里的路径元素。
-  // 这些字段允许通过 agents.json 配置——若配置文件被篡改或注入，未校验的路径
-  // 可能导致 CLI 写入/读取任意系统文件（路径穿越）。
-  // 复用 isSafePath 守卫：必须是相对路径、规范化后不以 `..` 开头。
+  // 路径型白名单字段
   for (const pathKey of ['transcriptOut', 'pricingFile']) {
     if (opts[pathKey] != null && !isSafePath(String(opts[pathKey]))) {
       throw new PathError(
-        `agent '${name}': ${pathKey} 必须是相对路径且不能逃逸工作目录` +
-        `（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
+        `agent '${name}': ${pathKey} 必须是相对路径且不能逃逸工作目录（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
       )
     }
   }
-  // files 数组（aider 专用）：每个元素单独校验
   if (Array.isArray(opts.files)) {
     for (const f of opts.files) {
       if (typeof f === 'string' && !isSafePath(f)) {
-        throw new PathError(
-          `agent '${name}': files 数组包含不安全路径（绝对路径或 ..）：${f}`,
-        )
+        throw new PathError(`agent '${name}': files 数组包含不安全路径（绝对路径或 ..）：${f}`)
       }
     }
   }
 
+  // provider 翻译 → opts.env（与旧 EXECUTORS.acceptsProvider 行为一致）
   if (profile.provider) {
     if (!ex.acceptsProvider) {
       throw new ConfigError(
-        `执行器 '${profile.executor}' 不接受外部 provider（自管鉴权/路由）；` +
-        `请从 agent '${name}' 去掉 provider，改用它自带的 model 选择`,
+        `执行器 '${profile.executor}' 不接受外部 provider（自管鉴权/路由）；请从 agent '${name}' 去掉 provider，改用它自带的 model 选择`,
       )
     }
-    // dry-run 跳过真实 provider 解析（无需真 key），但 provider-locked 校验上面已恒做
     if (!isDryRun()) {
       const bundle = resolveProvider(profile.provider, providers, env)
-      const applied = ex.applyProvider(bundle) ?? {}
-      // profile 显式选项优先于翻译器产出（如 profile 里写了 model，不被 provider 默认 model 覆盖）
-      opts.env = { ...(applied.env ?? {}), ...(opts.env ?? {}) }
-      if (applied.model != null && opts.model == null) opts.model = applied.model
+      // bundle 暂存到 opts.__providerBundle，runAgent 时由 applyProviderToProfile 写入 agentproc profile.env
+      opts.__providerBundle = bundle
+      // 自定义执行器的 applyProvider 翻译器优先（用户自定义的 provider→{env,model} 转换）
+      if (ex.applyProvider) {
+        const applied = ex.applyProvider(bundle) ?? {}
+        if (applied.env) opts.env = { ...(opts.env ?? {}), ...applied.env }
+        if (applied.model != null && opts.model == null) opts.model = applied.model
+      } else {
+        // 内置 BYO-LLM CLI：走 provider.js 的内置翻译器
+        const envTranslator = getEnvTranslator(profile.executor)
+        if (envTranslator) {
+          const env = envTranslator(bundle)
+          if (env) opts.env = { ...(opts.env ?? {}), ...env }
+        }
+        if (bundle.model != null && opts.model == null) opts.model = bundle.model
+      }
     }
   }
 
-  const run = isDryRun() ? makeFakeRun(profile.executor) : ex.run
+  const run = isDryRun() ? makeFakeRun(profile.executor) : (ex.run ?? makeDefaultRun())
   return { executor: profile.executor, run, opts }
+}
+
+/** 取 provider→env 翻译器（用于 resolveAgent 的旧行为兼容路径）。 */
+function getEnvTranslator(cli) {
+  switch (cli) {
+    case 'claude':    return claudeProviderEnv
+    case 'recursive': return recursiveProviderEnv
+    case 'aider':     return aiderProviderEnv
+    default:          return null
+  }
 }
 
 /** dry-run 假执行器：不调真 CLI，返回成功占位 + _meta。 */
@@ -261,83 +295,163 @@ function makeFakeRun(executor) {
   }
 }
 
-// ── runAgent 路由 ────────────────────────────────────────────────────
-//
-// 从 agent.js 迁来，消除 agent.js ↔ executor.js 初始化时序循环依赖：
-//   - 旧位置（agent.js）：无法静态引用 EXECUTORS，只能 dynamic import executor.js（技术债）。
-//   - 新位置（本文件）：EXECUTORS 在同一文件，直接访问；agent.js 静态 re-export 保持 API 不变。
-// ESM 安全性：agent.js 的 adapter 函数均为 function 声明（已提升），executor.js 初始化时
-// agent.js 已完成提升，EXECUTORS 可安全取到 claude/cursor 等正确引用。
+/**
+ * 默认 run：把 opts 转给 agentproc SDK。
+ *
+ * 处理流程：
+ *   1. 把 opts 转成 agentproc profile（executor / env / cwd / timeout 等）
+ *   2. 如果 opts.__providerBundle 存在，applyProviderToProfile 合并 provider env
+ *   3. 调 runViaAgentProc → agentproc.run → 返回 makeAgentResult
+ *   4. 若 cli === 'recursive' 且 throwOnCritical=true，走 recursive-extras 的额外校验
+ */
+function makeDefaultRun() {
+  return async (prompt, opts = {}) => {
+    const cli = opts.__cli || 'claude'
+    const ctx = {
+      cli,
+      cwd: opts.cwd ?? _defaultCwd,
+      timeout: opts.timeout,
+      env: opts.env,
+      envAllowlist: opts.envAllowlist,
+      streaming: opts.streaming,
+    }
+    const apOpts = {
+      sessionId: opts.sessionId,
+      onPartial: opts.onPartial,
+      onError: opts.onError,
+      onSession: opts.onSession,
+      onStderr: opts.onStderr,
+      extraEnv: opts.extraEnv,
+    }
+    if (opts.__providerBundle) {
+      const profile = applyProviderToProfile({ env: ctx.env || {} }, cli, opts.__providerBundle)
+      ctx.env = profile.env
+    }
+
+    // 优先走 agentproc SDK 路径
+    let result = await runViaAgentProc(prompt, ctx, apOpts)
+    if (result && result.__flowcastPath) {
+      // agentproc SDK 不收录此 CLI（如 recursive）——走 flowcast 自己的路径
+      return await runRecursiveDirect(result.prompt, result.ctx, opts)
+    }
+    // recursive 走 agentproc 路径时的 post-process（保留 fallback 兼容）
+    if (cli === 'recursive' && result && result._meta) {
+      const fakeResult = {
+        reply: String(result),
+        exitCode: result._meta.exitCode ?? 0,
+        timedOut: result._meta.timedOut ?? false,
+      }
+      const extra = maybeThrowRecursiveCritical(fakeResult, { ...opts, throwOnCritical: opts.throwOnCritical })
+      for (const [k, v] of Object.entries(extra)) {
+        result._meta[k] = v
+      }
+    }
+    return result
+  }
+}
+
+/**
+ * flowcast 自己的 recursive 执行路径（agentproc SDK 不收录 recursive）。
+ * 直接 spawn recursive 二进制 → 解析 [done after N steps] reason → 应用 throwOnCritical。
+ */
+async function runRecursiveDirect(prompt, ctx, opts) {
+  const { resolveRecursiveBin, deriveRecursiveMeta, maybeThrowRecursiveCritical } = await import('./executor/recursive-extras.js')
+  const { spawnCapture } = await import('./spawn.js')
+  const { makeAgentResult } = await import('./helpers.js')
+
+  const bin = opts.bin ?? resolveRecursiveBin(ctx.cwd)
+  const workspace = opts.workspace ?? '.'
+  const args = ['--workspace', workspace]
+  if (opts.systemPromptFile) args.push('--system-prompt-file', opts.systemPromptFile)
+  if (opts.transcriptOut) args.push('--transcript-out', opts.transcriptOut)
+  if (opts.pricingFile) args.push('--pricing-file', opts.pricingFile)
+  if (opts.model) args.push('--model', opts.model)
+  if (opts.maxSteps) args.push('--max-steps', String(opts.maxSteps))
+  if (opts.allowTools) args.push('--allow-tools', opts.allowTools)
+  if (ctx.env) Object.assign(args)  // no-op；env 走 spawnCapture 的 env 参数
+  args.push('run', String(prompt ?? ''))
+
+  const env = ctx.env ? { ...process.env, ...ctx.env } : undefined
+  const r = await spawnCapture(bin, args, {
+    cwd: ctx.cwd,
+    timeout: ctx.timeout,
+    env,
+    onData: opts.onData,
+  })
+  if (r.spawnError) {
+    throw new SpawnError(`[recursive] spawn error: ${r.spawnError}`, r.spawnError, {
+      _meta: { cli: 'recursive', exitCode: -1, spawnError: r.spawnError },
+    })
+  }
+  if (r.timedOut) {
+    throw new TimeoutError(`[recursive] timeout after ${ctx.timeout}ms`, {
+      _meta: { cli: 'recursive', exitCode: r.exitCode ?? -1, timedOut: true },
+    })
+  }
+
+  // 应用 throwOnCritical（panicked / budgetExceeded / 非零退出 → FlowcastError）
+  maybeThrowRecursiveCritical(r, opts)
+
+  const meta = deriveRecursiveMeta(r, opts)
+  meta.cli = 'recursive'
+  meta.exitCode = r.exitCode
+  meta.timedOut = false
+  return makeAgentResult(r.stdout, meta)
+}
+
+// ── runAgent 路由 ───────────────────────────────────────────────────────
 
 let _defaultCwd = process.cwd()
 
 /**
- * 设置全局默认工作目录，flow 启动时调用一次，之后所有 runAgent 自动继承。
- *
- * @deprecated `_defaultCwd` 是进程级单例，并发不安全：
- *   同一进程内若并发调用多次 `setWorkdir` + `runAgent`，`_defaultCwd` 会被竞争覆盖。
- *   **推荐做法**：每次 `runAgent` 调用时显式传 `cwd` 参数，彻底避免对全局状态的依赖。
- *   本函数保留是为了向后兼容（生成的 flow 骨架仍然调它）；future major 版本将移除。
- *
- * ✅ 安全场景：fanOut / orchestrateMulti 的并发子任务跑在独立 node 子进程里，各自有独立的
- *   `_defaultCwd`，不受跨进程竞态影响。
- *
- * @param {string} dir  全局默认工作目录（绝对路径）
+ * @deprecated 进程级单例，并发不安全。推荐每次 runAgent 显式传 cwd。
  */
 export function setWorkdir(dir) {
   _defaultCwd = dir
 }
 
-/**
- * 跑一次 agent。
- * @param {string} prompt
- * @param {object} [o]
- *   - cli           执行器名（默认 'claude'）
- *   - cwd           工作目录
- *   - schema        可选 JSON Schema：强制 agent 返回结构化对象（不匹配回喂重试）
- *   - schemaRetries 不匹配重试次数（默认 1）
- *   - 其余透传给底层执行器 adapter（经 SAFE_RUN_OPTS_KEYS 白名单 + 路径安全校验）
- */
-// runAgent 可接受的 opts key 白名单（代码级 API，比 resolveAgent 的 SAFE_OPTS_KEYS 更宽松）：
-// ┌─────────────────────┬────────────────────────────────────────────────────────────────────┐
-// │ 来源                │ 说明                                                               │
-// ├─────────────────────┼────────────────────────────────────────────────────────────────────┤
-// │ SAFE_OPTS_KEYS      │ 与 agents.json 配置文件白名单对齐（config + flow 两处都允许）      │
-// │ 以下额外 key         │ 仅 runAgent 代码级调用允许（generated flow 是受信代码，但不是     │
-// │                     │ 外部配置文件——对配置文件保持更严的白名单）                         │
-// └─────────────────────┴────────────────────────────────────────────────────────────────────┘
-// 两套白名单合并成一次扫描，避免对 opts 双重迭代（旧实现冗余且 timeout/allowTools 各出现两次）。
 const RUN_AGENT_ALL_KEYS = new Set([
   ...SAFE_OPTS_KEYS,
-  // 以下仅代码级 runAgent 允许，不对外开放给 agents.json 配置文件：
   'provider', 'env', 'bin', 'log', 'onData', 'replayFrom', 'workspace',
   'apiKey', 'apiBase',
-  'throwOnCritical',  // recursive 专用：true 时 panicked/budgetExceeded/非零退出抛 FlowcastError
+  'throwOnCritical',
+  'sessionId',  // 跨 turn 续接（agentproc 支持）
+  'streaming',
+  'onPartial', 'onError', 'onSession', 'onStderr',
+  'envAllowlist',
+  'extraEnv',
 ])
 
+/**
+ * 跑一次 agent。
+ *
+ * @param {string} prompt
+ * @param {object} [o]
+ * @param {string} [o.cli='claude']
+ * @param {string} [o.cwd]
+ * @param {object} [o.schema]
+ * @param {number} [o.schemaRetries=1]
+ */
 export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetries = 1, ...opts } = {}) {
-  // opts 白名单过滤（防 LLM 生成代码注入 systemPromptFile 等危险参数）。
-  // runAgent 由 generated flow 直接调用，flow 本身是 LLM 生成的——同样需要防注入。
+  // opts 白名单过滤（防 LLM 生成代码注入）
   const safeOpts = {}
   for (const [k, v] of Object.entries(opts)) {
     if (RUN_AGENT_ALL_KEYS.has(k)) safeOpts[k] = v
   }
-  // P1 修复：recursive 非零退出默认抛错，防止失败被当成功静默返回。
-  // 调用方可显式传 throwOnCritical: false 恢复旧行为（需要在 opts 白名单里）。
+  // recursive 默认 throwOnCritical=true
   if (cli === 'recursive' && safeOpts.throwOnCritical === undefined) {
     safeOpts.throwOnCritical = true
   }
-  // extraArgs 元素级白名单（与 resolveAgent 一致）
+  // extraArgs 元素级白名单
   if (safeOpts.extraArgs) {
     safeOpts.extraArgs = sanitizeExtraArgs(cli, safeOpts.extraArgs)
   }
-  // 路径型参数安全检查：防止 systemPromptFile/transcriptOut/pricingFile 路径穿越
+  // 路径型参数安全检查
   for (const pathKey of ['systemPromptFile', 'transcriptOut', 'pricingFile']) {
     if (opts[pathKey] != null) {
       if (!isSafePath(String(opts[pathKey]))) {
         throw new PathError(
-          `runAgent: ${pathKey} 必须是相对路径且不能逃逸工作目录` +
-          `（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
+          `runAgent: ${pathKey} 必须是相对路径且不能逃逸工作目录（不允许绝对路径或 ..），收到：${opts[pathKey]}`,
         )
       }
       safeOpts[pathKey] = opts[pathKey]
@@ -348,18 +462,26 @@ export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetr
     if (schema) return stubFromSchema(schema)
     return makeAgentResult(`[dry-run] ${cli} 未真实执行`, { cli, dryRun: true })
   }
-  const entry = EXECUTORS[cli]
-  if (!entry) {
+
+  // 校验 CLI 是否在 EXECUTORS 里（内置或 registerExecutor）
+  if (!EXECUTORS[cli]) {
     const known = Object.keys(EXECUTORS).join('/')
     throw new ConfigError(`未知 CLI: ${cli}，支持：${known}（或通过 registerExecutor 注册的自定义执行器）`)
   }
-  const fn = entry.run
-  const runner = (p) => fn(p, { cwd: cwd ?? _defaultCwd, ...safeOpts })
+
+  // 构造 runner：优先用 EXECUTORS[cli].run（自定义 entry），否则用默认（agentproc）
+  const entry = EXECUTORS[cli]
+  const defaultRunner = makeDefaultRun()
+  const fn = entry.run ?? defaultRunner
+
+  // 把 cli 注入 opts.__cli（makeDefaultRun 需要），以及 cwd / safeOpts 合并
+  const runner = (p) => fn(p, { __cli: cli, cwd: cwd ?? _defaultCwd, ...safeOpts })
+
   if (schema) return runStructured(runner, prompt, { schema, retries: schemaRetries })
   return runner(prompt)
 }
 
-// ── runAgentChain：跨 CLI 链式回退 ──────────────────────────────────
+// ── runAgentChain：跨 CLI 链式回退 ──────────────────────────────────────
 
 function specLabel(spec = {}) {
   return `${spec.cli ?? 'claude'}${spec.provider?.name ? '/' + spec.provider.name : ''}`
@@ -389,14 +511,11 @@ function backoffMs(fails, base = AGENT_COOLDOWN_BASE_MS, cap = AGENT_COOLDOWN_MA
 }
 
 function coolRemaining(cooldown, spec, now) {
-  // 持久化限流状态（跨进程）：只在 spec 明确指定了 model 时查询，
-  // 避免用 cli/default 这个过宽的 key 误判没有指定模型的 spec。
   let persistedMs = 0
   if (spec.model) {
     const persisted = getAvailableAt(spec.cli ?? 'claude', spec.model)
     persistedMs = persisted ? persisted.remainingMs : 0
   }
-  // 内存 cooldown（指数退避，仅当前进程）
   if (!cooldown) return persistedMs
   const entry = cooldown.get(specLabel(spec))
   const until = entry && typeof entry === 'object' ? entry.until : entry
@@ -405,8 +524,7 @@ function coolRemaining(cooldown, spec, now) {
 }
 
 /**
- * 跨 CLI 的 agent 链式回退：按序尝试，因限额/超载/超时失败就切下一个。
- * 可选 run 级冷却：共享 cooldown Map，按指数退避降级到链尾。
+ * 跨 CLI 的 agent 链式回退。
  */
 export async function runAgentChain(prompt, chain, {
   runner = runAgent, cooldown = null,
@@ -414,8 +532,6 @@ export async function runAgentChain(prompt, chain, {
 } = {}) {
   const list = Array.isArray(chain) && chain.length ? chain : [{}]
   const now = Date.now()
-  // 排序：持久化限流状态（跨进程）+ 内存 cooldown（当前进程）合并后升序排，让可用的 CLI 优先。
-  // 无论 cooldown 是否传入，只要有持久化限流就重排（不再依赖 cooldown 非空才排序）。
   const order = (() => {
     const withCool = list.map((spec, i) => ({ spec, i, cool: coolRemaining(cooldown, spec, now) }))
     const hasAnyBlock = withCool.some(x => x.cool > 0)
@@ -435,14 +551,13 @@ export async function runAgentChain(prompt, chain, {
       if (isProviderRetryable(e)) {
         const from = specLabel(spec)
         const reason = e.timedOut ? 'timeout' : String(e.apiStatus ?? e.message).slice(0, 80)
-        // 持久化限流状态（异步，不阻塞回退流程）
         if (isProviderRetryable(e) && !e.timedOut) {
           const rawOutput = e.output ?? e.message ?? ''
           const useLLM = Boolean(process.env.FLOWCAST_RATE_LIMIT_LLM)
           recordRateLimit(spec.cli ?? 'claude', spec.model, rawOutput, { useLLM }).then(({ source, availableAt }) => {
             const eta = new Date(availableAt).toLocaleString()
             console.warn(`  [rate-limit] ${makeKey(spec.cli ?? 'claude', spec.model)} 限流，下次可用：${eta}（来源：${source}）`)
-            emitAgentEvent({ event: EVENT.RATE_LIMIT, cli: spec.cli, model: spec.model, availableAt, source })
+            emitAgentEvent(makeEvent(EVENT.RATE_LIMIT, { cli: spec.cli, model: spec.model, availableAt, source }))
           }).catch(() => { /* 记录失败不影响主流程 */ })
         }
         if (cooldown) {
@@ -453,14 +568,30 @@ export async function runAgentChain(prompt, chain, {
         if (i < order.length - 1) {
           const to = specLabel(order[i + 1])
           console.warn(`  [agent fallback] ${from} 不可用（${reason}），切换 → ${to}`)
-          emitAgentEvent({ event: EVENT.FALLBACK, scope: 'cli', from, to, reason })
+          emitAgentEvent(makeEvent(EVENT.FALLBACK, { scope: 'cli', from, to, reason }))
           continue
         }
       }
       throw e
     }
   }
-  // 防御性兜底：正常路径最后一项失败已在循环内 throw e 退出，此处不可达。
-  // 若将来循环逻辑变更导致意外走到这里，确保不静默返回 undefined。
   throw lastErr ?? new FlowcastError('runAgentChain: 所有 provider 均失败')
+}
+
+// ── agentEventSink（emitAgentEvent）：从 adapters.js 迁来 ──────────────
+
+let _agentEventSink = null
+
+export function setAgentEventSink(fn) {
+  _agentEventSink = typeof fn === 'function' ? fn : null
+}
+
+/**
+ * emit agent 观测事件（fallback / rate-limit 等）。
+ * 接收 events.js schema 包装好的事件对象（带 event / ts / ... 字段）。
+ */
+export function emitAgentEvent(e) {
+  if (!_agentEventSink) return
+  const normalized = (e && e.event) ? e : makeEvent(e?.type ?? 'agent', e ?? {})
+  try { _agentEventSink(normalized) } catch { /* 观测失败不影响主流程 */ }
 }

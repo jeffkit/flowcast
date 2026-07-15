@@ -178,3 +178,90 @@ export function resolveProvider(name, providers = {}, env = process.env) {
   }
   return bundle
 }
+
+// ── provider → CLI env 翻译器 ──────────────────────────────────────────
+//
+// 这些翻译器把通用 provider bundle {type,apiBase,model,apiKey} 翻译成每个 CLI 二进制
+// 读取的环境变量（CLAUDE_* / RECURSIVE_* / AIDER OPENAI_* 等）。
+//
+// 历史上住在 adapters.js——搬到本文件是因为它们属于「provider 配置」的延伸，
+// 不是「CLI 适配」本身。新 executor 子系统基于 agentproc 后，adapters.js 已不再存在。
+
+/**
+ * Claude Code CLI：把 provider bundle 翻译成 ANTHROPIC_* env。
+ * 注意 Claude Code CLI 读 ANTHROPIC_AUTH_TOKEN（不是 ANTHROPIC_API_KEY）。
+ * @param {{type?, apiBase?, apiKey?, model?, extraEnv?}|null|undefined} provider
+ * @returns {object|undefined}  非空 env 对象；空/undefined provider 返回 undefined
+ */
+export function claudeProviderEnv(provider) {
+  if (!provider) return undefined
+  const env = {}
+  if (provider.apiBase) env.ANTHROPIC_BASE_URL = provider.apiBase
+  if (provider.apiKey) env.ANTHROPIC_AUTH_TOKEN = provider.apiKey
+  if (provider.extraEnv && typeof provider.extraEnv === 'object') {
+    Object.assign(env, provider.extraEnv)
+  }
+  return Object.keys(env).length ? env : undefined
+}
+
+/**
+ * Recursive 二进制：把 provider bundle 翻译成 RECURSIVE_* env。
+ * @param {{type?, apiBase?, model?, apiKey?, maxSteps?}|null|undefined} provider
+ */
+export function recursiveProviderEnv({ type, apiBase, model, apiKey, maxSteps } = {}) {
+  const env = {}
+  if (type) env.RECURSIVE_PROVIDER_TYPE = type
+  if (apiBase) env.RECURSIVE_API_BASE = apiBase
+  if (model) env.RECURSIVE_MODEL = model
+  if (apiKey) env.RECURSIVE_API_KEY = apiKey
+  if (maxSteps != null && maxSteps !== '') env.RECURSIVE_MAX_STEPS = String(maxSteps)
+  return env
+}
+
+/**
+ * Aider（OpenAI 协议）：把 provider bundle 翻译成 OPENAI_* env。
+ */
+export function aiderProviderEnv({ apiBase, apiKey } = {}) {
+  const env = {}
+  if (apiBase) env.OPENAI_API_BASE = apiBase
+  if (apiKey) env.OPENAI_API_KEY = apiKey
+  return Object.keys(env).length ? env : undefined
+}
+
+/**
+ * 给定 flowcast CLI 名，返回对应的 provider→env 翻译器（若该 CLI 是 BYO-LLM）。
+ * @param {string} cli
+ * @returns {Function|null}
+ */
+export function providerEnvTranslator(cli) {
+  switch (cli) {
+    case 'claude':    return claudeProviderEnv
+    case 'recursive': return recursiveProviderEnv
+    case 'aider':     return aiderProviderEnv
+    default:          return null
+  }
+}
+
+/**
+ * 把 provider bundle 应用到一个 agentproc profile 对象上。
+ * 修改 profile.env（合并 provider env）与 profile model 字段，返回同一个 profile。
+ * 若 profile 已经有显式 model，provider 的 model 不会覆盖（profile 优先）。
+ *
+ * @param {object} profile      agentproc profile（会被原地修改）
+ * @param {string} cli          flowcast CLI 名（决定走哪个翻译器）
+ * @param {{type?,apiBase?,model?,apiKey?,extraEnv?,maxSteps?}|null|undefined} bundle  已解析的 provider bundle
+ * @returns {object} profile
+ */
+export function applyProviderToProfile(profile, cli, bundle) {
+  if (!profile || !bundle) return profile
+  const translator = providerEnvTranslator(cli)
+  if (!translator) return profile  // 锁定型 CLI 不接受 provider
+  const env = translator(bundle)
+  if (env) {
+    profile.env = { ...(profile.env || {}), ...env }
+  }
+  if (bundle.model != null && (profile.model == null || profile.model === '')) {
+    profile.model = bundle.model
+  }
+  return profile
+}

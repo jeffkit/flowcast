@@ -1,6 +1,6 @@
 {
   "name": "flowcast",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "轻量 workflow 编排框架：断点续跑、HITL、多 CLI 调度",
   "type": "module",
   "main": "index.js",
@@ -22,7 +22,6 @@
     "index.js",
     "internal.js",
     "errors.js",
-    "adapters.js",
     "dirs.js",
     "checkpoint.js",
     "spawn.js",
@@ -34,6 +33,7 @@
     "failure-context.js",
     "provider.js",
     "executor.js",
+    "executor/",
     "dry-run.js",
     "git.js",
     "schema.js",
@@ -73,5 +73,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "agentproc": "^0.10.0"
   }
 }
