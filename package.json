@@ -75,6 +75,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "agentproc": "^0.10.0"
+    "agentproc": "^0.10.1"
   }
 }
