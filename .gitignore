@@ -2,3 +2,5 @@
 .flowx/
 node_modules/
 .worktrees/
+.aider*
+.workbuddy/
