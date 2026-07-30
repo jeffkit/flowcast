@@ -19,6 +19,9 @@ flowcast run .flowcast/flows/<name>.js --repo . [--参数 值]
 flowcast force-dev --run-id <id> --repo .
 flowcast run .flowcast/flows/<name>.js --run-id <id> --repo .
 
+# 监督模式：flow 跑挂了让 agent 自动修 flow，续跑直到跑通（详见 references/supervisor.md）
+flowcast run .flowcast/flows/<name>.js --supervise --agent cursor-default --repo .
+
 # 列出历史 run
 flowcast list
 

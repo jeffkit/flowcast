@@ -46,6 +46,7 @@ flowcast init                         # 交互式扫描本机 agent CLI，生成
 | "用 flowcast 做 xxx" / "多步任务要自动编排" | → [orchestrate 闭环](#orchestrate)（编排需求 → 生成 flow → 跑） |
 | "帮我写一个 flow" / "自动化 xxx 流程" | → [写 flow](#write) |
 | "跑这个任务" / "跑已有 flow 文件" | → [运行任务](#run) |
+| "flow 跑不通，想自动修到跑通" | → [run --supervise](references/supervisor.md) |
 | "flow 报错了" / "怎么续跑" | → [排查失败](#debug) |
 | "配置质量门" / "设置 model" | → [配置项目](#config) |
 | "校验 task.name / tag 路径字符" / "防 .. 穿越" | → [实用工具](#utilities) |

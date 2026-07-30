@@ -187,6 +187,7 @@ flowcast doctor [--repo .]                       # 自检环境健康（Node/git
 flowcast orchestrate "<需求>" --repo .           # L3：需求 → 生成 flow → 执行
 flowcast orchestrate "<需求>" --split --repo .   # 大目标拆子任务 → 并发执行
 flowcast run <flow-file> [--run-id <id>]         # 跑 flow（续跑传同一 id）
+flowcast run <flow-file> --supervise [--agent a] # 跑 flow，挂了自动修 flow 续跑直到跑通
 flowcast flows install <path-to-flow.js>         # 安装自定义 flow 到 ~/.flowcast/flows/
 flowcast flows list                              # 列出已安装的用户级 flow
 flowcast dashboard --repo . [--open]             # 生成可观测看板 HTML

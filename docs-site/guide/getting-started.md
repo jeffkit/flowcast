@@ -161,6 +161,7 @@ flowcast dashboard --repo . --open
 | `flowcast init` | 交互式扫描本机 agent CLI + 生成 `~/.flowcast` 配置（新用户第一步） |
 | `flowcast doctor [--repo .]` | 自检环境健康（Node/git/CLI/配置），只读 |
 | `flowcast run <name\|file> [args]` | 按名字运行已安装的 flow，或直接运行 flow 文件 |
+| `flowcast run <flow> --supervise` | 跑 flow，挂了让 agent 自动修 flow、用同一 runId 续跑直到跑通 |
 | `flowcast flows list` | 列出 `~/.flowcast/flows/` 下已安装的 flow |
 | `flowcast flows install <file>` | 安装 flow 到 `~/.flowcast/flows/` |
 | `flowcast flows remove <name>` | 移除已安装的 flow |

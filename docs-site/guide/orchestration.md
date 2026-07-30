@@ -81,6 +81,25 @@ flowcast orchestrate "大目标" --split --inplace
 | `--inplace` | 分拆模式不做 worktree 隔离 |
 | `--timeout` | 子 flow 超时 ms |
 
+## 对偶：`run --supervise`（跑 flow，挂了自动修到跑通）
+
+`orchestrate` 和 `run --supervise` 是对偶关系：
+
+| | `orchestrate` | `run --supervise` |
+|---|---|---|
+| 输入 | 一段编排需求（生成 flow） | 一个**已有 flow 文件** |
+| flow 代码 | 一次性生成后**锁定不变** | 跑挂了就**被 agent 修**，迭代到跑通 |
+| 续跑语义 | 同一 runId，flow 不变 | 同一 runId，**flow 被改后从失败处续跑** |
+| 适合 | 需求 → 生成 → 跑一次 | 已有 flow 跑不通 → 边修边跑到通 |
+
+```bash
+# flow 跑不通？让 agent 监督它，挂哪修哪，续跑到跑通（最多 5 轮）
+flowcast run .flowcast/flows/my-flow.js --supervise --agent cursor-default --repo .
+flowcast run .flowcast/flows/my-flow.js --supervise --max-turns 10   # 调整迭代上限
+```
+
+机制：supervisor 用同一 runId 反复跑 flow——flow 内部 Checkpoint 会跳过已成功的 step、从失败 step 重跑。失败时 supervisor 把错误详情喂给 agent 让它改 flow 代码，改完用 `validateFlow` 校验再续跑。**只修 flow 代码，不动业务代码。**
+
 ## 编程式调用
 
 ```js
