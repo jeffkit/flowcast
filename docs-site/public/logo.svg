@@ -1,0 +1,9 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 圆角方块底，品牌绿 -->
+  <rect width="32" height="32" rx="7" fill="#299764"/>
+  <!-- 流转箭头：体现 workflow 编排 -->
+  <path d="M9 11.5C9 9.567 10.567 8 12.5 8H19" stroke="white" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+  <path d="M16 5L19.5 8L16 11" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M23 20.5C23 22.433 21.433 24 19.5 24H13" stroke="white" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+  <path d="M16 27L12.5 24L16 21" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

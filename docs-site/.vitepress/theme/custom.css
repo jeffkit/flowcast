@@ -1,0 +1,118 @@
+/**
+ * flowcast 文档站自定义样式
+ *
+ * 策略：只覆盖 VitePress 的 CSS 变量（--vp-*），不写大段选择器。
+ * 这样跟随上游升级、明暗模式自动适配，维护成本最低。
+ *
+ * 品牌色锚点：#3c8772（config.mjs 的 theme-color），
+ * 对齐 VitePress green 色阶（#299764 / #18794e / #30a46c），保证对比度达标。
+ */
+
+/* ── 品牌色（明模式） ──────────────────────────────────────────────── */
+:root {
+  /* 主品牌色：链接、按钮、tip 容器、代码高亮统一用这套绿 */
+  --vp-c-brand-1: #18794e;   /* 深：hover/压下 */
+  --vp-c-brand-2: #299764;   /* 主：默认链接、品牌色 */
+  --vp-c-brand-3: #30a46c;   /* 浅：点缀 */
+  --vp-c-brand-soft: rgba(41, 151, 100, 0.14);
+
+  /* 按钮主色（Hero / CTA） */
+  --vp-button-brand-bg: #299764;
+  --vp-button-brand-hover-bg: #18794e;
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-hover-text: #ffffff;
+
+  /* Hero 标题渐变字：绿 → 青 */
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(120deg, #18794e 30%, #30a46c 50%, #3dd68c 70%);
+
+  /* Hero 图像区光晕（与 HomeHeroBackground 组件配合） */
+  --vp-home-hero-image-background-image: radial-gradient(
+    ellipse 80% 60% at 50% 40%,
+    rgba(41, 151, 100, 0.18) 0%,
+    rgba(41, 151, 100, 0.06) 40%,
+    transparent 70%
+  );
+
+  /* 圆角与阴影：比默认更柔和 */
+  --vp-border-radius: 10px;
+  --vp-border-radius-small: 6px;
+}
+
+/* ── 品牌色（暗模式微调） ──────────────────────────────────────────── */
+.dark {
+  --vp-c-brand-1: #3dd68c;   /* 暗模式提亮，保证对比度 */
+  --vp-c-brand-2: #30a46c;
+  --vp-c-brand-3: #299764;
+  --vp-c-brand-soft: rgba(61, 214, 140, 0.16);
+
+  --vp-button-brand-bg: #299764;
+  --vp-button-brand-hover-bg: #30a46c;
+
+  --vp-home-hero-name-background: -webkit-linear-gradient(120deg, #3dd68c 30%, #30a46c 60%, #299764 80%);
+
+  --vp-home-hero-image-background-image: radial-gradient(
+    ellipse 80% 60% at 50% 40%,
+    rgba(61, 214, 140, 0.14) 0%,
+    rgba(48, 164, 108, 0.05) 40%,
+    transparent 70%
+  );
+}
+
+/* ── 首页 Hero 区：渐变标题字重 + 间距 ──────────────────────────────── */
+.VPHero .name {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* ── 特性卡片：hover 上浮 + 边框变绿 ────────────────────────────────── */
+.VPFeature {
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+}
+.VPFeature:hover {
+  border-color: var(--vp-c-brand-2);
+  box-shadow: 0 8px 24px rgba(41, 151, 100, 0.12);
+  transform: translateY(-3px);
+}
+
+/* 卡片图标统一绿色调（VitePress 把 frontmatter icon 包在 .icon 里） */
+.VPFeature .icon {
+  color: var(--vp-c-brand-2);
+  background-color: var(--vp-c-brand-soft);
+}
+
+/* ── 代码块、容器圆角更柔和 ────────────────────────────────────────── */
+.vp-doc div[class*='language-'],
+.vp-doc .vp-code-group {
+  border-radius: var(--vp-border-radius);
+}
+
+/* ── 自定义首页 Hero 背景（HomeHeroBackground.vue） ─────────────────── */
+.flowcast-hero-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 网格纹层：极淡，给"框架/编排"的工具感 */
+.flowcast-hero-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(41, 151, 100, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(41, 151, 100, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 35%, #000 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 35%, #000 0%, transparent 75%);
+}
+
+.dark .flowcast-hero-bg::before {
+  background-image:
+    linear-gradient(to right, rgba(61, 214, 140, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(61, 214, 140, 0.05) 1px, transparent 1px);
+}

@@ -15,7 +15,7 @@ export default defineConfig({
   ],
 
   themeConfig: {
-    logo: undefined,
+    logo: '/logo.svg',
     outline: { level: [2, 3], label: '本页目录' },
 
     nav: [

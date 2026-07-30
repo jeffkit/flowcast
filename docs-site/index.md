@@ -4,7 +4,7 @@ layout: home
 hero:
   name: flowcast
   text: 轻量 workflow 编排框架
-  tagline: 断点续跑 · HITL · 多 CLI/agent 调度 · 自改安全沙箱 · 质量门，以及其上的 L3 codegen 编排层。零运行时依赖 · 纯 ESM · Node ≥ 20。
+  tagline: 断点续跑 · HITL · 多 CLI/agent 调度 · 自改安全沙箱 · 质量门，以及其上的 L3 codegen 编排层。最小依赖（仅 agentproc SDK）· 纯 ESM · Node ≥ 20。
   actions:
     - theme: brand
       text: 快速上手
@@ -17,24 +17,33 @@ hero:
       link: https://github.com/jeffkit/flowcast
 
 features:
-  - title: 断点续跑
+  - icon: { src: /icons/checkpoint.svg }
+    title: 断点续跑
     details: Checkpoint 把 flow 拆成可记录的步骤，中断后用同一个 run-id 续跑，已完成步骤零重复执行。
-  - title: 人工介入（HITL）
+  - icon: { src: /icons/hitl.svg }
+    title: 人工介入（HITL）
     details: 可插拔 HITL 后端（terminal / 企业微信），在关键节点阻塞等人工决策或单向通知，支持异步协作。
-  - title: 多 CLI/agent 调度
+  - icon: { src: /icons/multi-cli.svg }
+    title: 多 CLI/agent 调度
     details: claude / cursor / gemini / codex / aider / recursive 各有 adapter，统一 runAgent 驱动，可路由、可并行、可互换。
-  - title: 自改安全沙箱
+  - icon: { src: /icons/guard.svg }
+    title: 自改安全沙箱
     details: withSelfModGuard 在 git baseline 上隔离自改，质量门失败硬回滚，让 agent 安全地改自己的代码。
-  - title: 质量门
+  - icon: { src: /icons/gate.svg }
+    title: 质量门
     details: runGate / runGates 把测试、lint、构建等检查纳入 flow，失败可 rollback / resume-fix / autofix。
-  - title: L3 codegen 编排
+  - icon: { src: /icons/codegen.svg }
+    title: L3 codegen 编排
     details: 一行需求 → 动态生成 flow 代码 → 校验（语法 + import 白名单 + dry-run）→ 隔离执行（续跑锁定）。不做 DAG。
-  - title: 并发子 flow
+  - icon: { src: /icons/fanout.svg }
+    title: 并发子 flow
     details: fanOut 限并发 + worktree 隔离 + 每任务日志 + 结果汇总；runFlow 把一条 flow 当隔离子进程跑。
-  - title: 可观测看板
+  - icon: { src: /icons/dashboard.svg }
+    title: 可观测看板
     details: 扫描 .flowcast/runs 与 worktree，重建父子运行树、推断僵尸进程，生成只读单文件 HTML 看板。
-  - title: 零运行时依赖
-    details: 核心不引第三方包，纯 ESM，配置与密钥全部外置（${ENV} 运行时插值），明文永不入仓。
+  - icon: { src: /icons/lean.svg }
+    title: 最小依赖
+    details: 运行时仅依赖 agentproc SDK，纯 ESM，配置与密钥全部外置（${ENV} 运行时插值），明文永不入仓。
 ---
 
 ## 三层架构
