@@ -43,7 +43,7 @@ flowcast init                         # 交互式扫描本机 agent CLI，生成
 | 用户说 | 走哪个场景 |
 |--------|-----------|
 | "环境没配过" / "哪个 agent 能用" / "跑不起来" | → [环境自检](#env-check)（先 `flowcast doctor`/`init`） |
-| "用 flowcast 做 xxx" / "一句话需求自动跑" | → [orchestrate 闭环](#orchestrate)（最高频路径） |
+| "用 flowcast 做 xxx" / "多步任务要自动编排" | → [orchestrate 闭环](#orchestrate)（编排需求 → 生成 flow → 跑） |
 | "帮我写一个 flow" / "自动化 xxx 流程" | → [写 flow](#write) |
 | "跑这个任务" / "跑已有 flow 文件" | → [运行任务](#run) |
 | "flow 报错了" / "怎么续跑" | → [排查失败](#debug) |
@@ -60,8 +60,9 @@ flowcast init            # 一键扫描 + 交互式生成 ~/.flowcast/{agents,pr
 ```
 详见各命令 `--help`。
 
-### orchestrate 闭环（一句话需求 → 自动跑） {#orchestrate}
+### orchestrate 闭环（编排需求 → 生成 flow → 跑） {#orchestrate}
 
+> `orchestrate` 把一段**编排需求**交给 agent 生成多步 flow 代码再执行——适合多步骤、可中断续跑的任务。一句话能搞定的简单任务直接让 `claude`/`cursor` 做，别 orchestrate。
 > 完整闭环见 [references/orchestrate.md](references/orchestrate.md)：需求怎么写、生成后怎么 run/续跑/看板、生成失败 vs 执行失败怎么区分。
 
 ```bash
@@ -105,7 +106,7 @@ cp.done({})
 | 场景 | 命令 |
 |------|------|
 | 开发 feature / 修 bug（完整闭环） | `flowcast force-dev --feature <name> --repo .` |
-| 一句话需求，自动生成并执行 | `flowcast orchestrate "<需求>" --repo .` |
+| 多步编排需求，自动生成并执行 flow | `flowcast orchestrate "<编排需求>" --repo .` |
 | 跑已有 flow 文件 | `flowcast run .flowcast/flows/xxx.js --repo .` |
 
 **断点续跑**（HITL 暂停或进程中断后）：

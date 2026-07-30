@@ -72,9 +72,9 @@ flowcast run goal-drive --dry-run   # 假执行器，验证骨架
 
 设计要点：`loop / memory / quality-gate / runAgent` 都是 flowcast 一等原语，本 flow 只做薄编排。「反复跑到达成、且越跑越聪明」是通用能力。
 
-## L3 一行需求
+## L3 编排需求
 
-不写 flow，直接让 L3 生成并执行：
+不写 flow，把一段多步骤的编排需求交给 L3 生成并执行：
 
 ```bash
 # 单 flow

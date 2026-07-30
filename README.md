@@ -1,6 +1,6 @@
 # flowcast
 
-轻量 workflow 编排框架：**断点续跑 · HITL · 多 CLI/agent 调度 · 自改安全沙箱 · 质量门**，以及其上的 **L3 codegen 编排层**（一行需求 → 动态生成 flow → 隔离执行）。
+轻量 workflow 编排框架：**断点续跑 · HITL · 多 CLI/agent 调度 · 自改安全沙箱 · 质量门**，以及其上的 **L3 codegen 编排层**（把多步编排需求 → 动态生成 flow → 隔离执行）。
 
 纯 ESM · Node ≥ 20（仅依赖 agentproc SDK）
 
@@ -69,12 +69,14 @@ flowcast init
 
 ### 3. 跑起来
 
+`orchestrate` 把一段**编排需求**交给 agent，生成一段多步骤的 flow 代码再执行——适合多步骤、可中断续跑的任务（如"审计并修复 lint 后跑测试"、"逐条实现 TODO 清单"）。一句话能搞定的单步任务直接用 `claude`/`cursor` 即可，不必 orchestrate。
+
 ```bash
-# 一行需求 → 生成 flow → 校验 → 执行
+# 编排需求 → 生成 flow → 校验 → 执行（多步骤任务才值得用）
 flowcast orchestrate "把 README 里的 TODO 清单逐条实现" --repo . --agent claude-sonnet
 
 # 干跑验证结构（不烧 API，无需配置）
-FLOWCAST_DRY_RUN=1 flowcast orchestrate "test" --repo .
+FLOWCAST_DRY_RUN=1 flowcast orchestrate "审计 src/ 的 lint 问题并修复" --repo .
 ```
 
 ---

@@ -6,7 +6,7 @@
 ## 项目概述
 
 flowcast（本地目录曾叫 flowx）是最小依赖（仅 agentproc SDK）的纯 ESM 库 + CLI（`flowcast` / `flowx` / `fc`）。  
-L1 驱动 CLI/Agent，L2 提供 Checkpoint / HITL / 质量门等原语，L3 `orchestrator/` 把一句话需求生成并执行 flow。  
+L1 驱动 CLI/Agent，L2 提供 Checkpoint / HITL / 质量门等原语，L3 `orchestrator/` 把多步编排需求生成并执行 flow。  
 业务项目的 flow 放各自仓（如 `.flowcast/flows/`），本仓只放引擎与通用示例。
 
 **技术栈：** Node.js ≥20, ESM, Workflow, HITL, AgentProc  

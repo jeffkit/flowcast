@@ -128,12 +128,12 @@ flowcast run ./flows/hello.js --run-id hello-1234567890
 
 这就是 flowcast 最核心的保证：**步骤跳过准确率 100%，已完成步骤零重复执行**。详见 [断点续跑](/guide/checkpoint)。
 
-## 用 CLI 一行需求跑 L3 编排
+## 用 CLI 把编排需求交给 L3
 
-不想自己写 flow？让 L3 替你**生成并执行**：
+不想自己写 flow？把一段**多步骤的编排需求**交给 L3，让它**生成 flow 并执行**（适合需要流程设计、断点续跑的任务；一句话能搞定的单步任务直接用 `claude`/`cursor` 即可）：
 
 ```bash
-# 一行需求 → 生成 flow → 校验（语法 + import 白名单 + dry-run）→ 执行（续跑锁定）
+# 编排需求 → 生成 flow → 校验（语法 + import 白名单 + dry-run）→ 执行（续跑锁定）
 flowcast orchestrate "审计 src/ 并修复 lint 问题" --repo . --agent claude-sonnet
 
 # 大目标：先分拆成子任务，每个生成一条 flow，fanOut 并发执行
@@ -164,7 +164,7 @@ flowcast dashboard --repo . --open
 | `flowcast flows list` | 列出 `~/.flowcast/flows/` 下已安装的 flow |
 | `flowcast flows install <file>` | 安装 flow 到 `~/.flowcast/flows/` |
 | `flowcast flows remove <name>` | 移除已安装的 flow |
-| `flowcast orchestrate "<目标>" --repo .` | L3：一行需求 → 生成 → 校验 → 执行 |
+| `flowcast orchestrate "<编排需求>" --repo .` | L3：编排需求 → 生成 flow → 校验 → 执行（多步任务才值得用） |
 | `flowcast orchestrate "<大目标>" --split` | L3 接单分拆：拆子任务 → 各自生成 → fanOut 并发 |
 | `flowcast dashboard --repo . [--open]` | 生成只读可观测看板 HTML |
 | `flowcast list` | 列出当前项目所有 run |

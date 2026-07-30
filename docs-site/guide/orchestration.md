@@ -2,6 +2,11 @@
 
 L3 是 flowcast 最高的一层：**接单 → 动态生成 flow 代码 → 校验 → 执行（续跑锁定）**。它类似但超越 Claude Code 的 `/workflow`——它是**跨 coding agent** 的。
 
+::: tip 什么时候该用 orchestrate？
+`orchestrate` 把你的一段**编排需求**（多步骤、需要流程设计、可中断续跑）交给 agent 生成 flow 再执行。
+**别用它跑单步任务**——"加一行"、"改个变量"这种直接让 `claude`/`cursor` 做即可，用 orchestrate 反而多一层代码生成的开销。
+:::
+
 ## 核心决策：codegen 唯一主路径，不做 DAG
 
 L3 **直接生成 flow 代码**（与人手写同构），不引入 DAG 抽象。flow 逻辑本质是命令式的（条件 resume、budget 重试、verdict 分支），用代码表达天然、可读、可 dry-run 校验；DAG 反而要为这些控制流再造一套表达。
@@ -18,7 +23,7 @@ L3 **直接生成 flow 代码**（与人手写同构），不引入 DAG 抽象�
 
 ## 单 flow 模式
 
-一行需求，端到端跑通：
+把一段编排需求交给 orchestrate，端到端跑通：
 
 ```bash
 flowcast orchestrate "审计 src/ 并修复 lint 问题" --repo . --agent claude-sonnet

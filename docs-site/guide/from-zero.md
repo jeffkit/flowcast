@@ -90,10 +90,16 @@ mkdir -p ~/.flowcast
 先用 dry-run 跑通骨架，确认环境/配置没问题，再上真的。dry-run 下执行器与质量门被 fake，**不烧 API、不跑构建**。
 
 ```bash
-FLOWCAST_DRY_RUN=1 flowcast orchestrate "在 README 末尾加一行 hello" --repo . --agent cursor-default
+FLOWCAST_DRY_RUN=1 flowcast orchestrate "审计 src/ 下的 lint 问题并逐个修复，最后跑 npm test 验证" --repo . --agent cursor-default
 ```
 
 **确认成功**：看到生成 → 校验 → 执行（fake）走完，结尾 `✓ orchestrate 完成 exit=0`，并在 `.flowcast/runs/<run-id>/` 下有 `flow.mjs`、`state.json`、`run.log.jsonl`。
+
+::: tip orchestrate 适合什么？不适合什么？
+`orchestrate` 把你的 prompt 当作**编排需求**：它会先让 agent 据此**生成一段 flow 代码**（含多个 `cp.step`），再执行这段 flow。
+- ✅ 适合：多步骤、可中断、需要质量门/HITL、会反复跑的任务（如"审计并修复 lint"、"逐条实现 TODO 清单"）。
+- ❌ 不适合：一句话就能搞定的单步任务（如"在 README 加一行 hello"）——那种直接在 `claude`/`cursor` 里说一句就行，用 orchestrate 反而多一层代码生成的开销。
+:::
 
 ::: warning dry-run 验证的边界
 dry-run 只验证**结构 / 骨架 / 配置**（能不能生成合法 flow、配置是否齐全、流程能否走通）。
@@ -105,10 +111,10 @@ dry-run 只验证**结构 / 骨架 / 配置**（能不能生成合法 flow、配
 去掉 `FLOWCAST_DRY_RUN`，用真实 agent 端到端执行：
 
 ```bash
-flowcast orchestrate "在 README 末尾加一行 hello" --repo . --agent cursor-default
+flowcast orchestrate "审计 src/ 下的 lint 问题并逐个修复，最后跑 npm test 验证" --repo . --agent cursor-default
 ```
 
-**确认成功**：`exit=0`，目标仓里 README 真的被改了；`.flowcast/runs/<run-id>/report.md` 有可读摘要。
+**确认成功**：`exit=0`，`flow.mjs` 里的每个 step 都跑完；`.flowcast/runs/<run-id>/report.md` 有可读摘要。
 
 ## 第 5 步（可选）：续跑与看板
 

@@ -106,9 +106,10 @@ flowcast orchestrate "..." --run-id <run-id> --repo .
 
 ### `orchestrate`、`orchestrate --split`、手写 flow 我该用哪个？
 
-- 一行需求、单目标 → `orchestrate`
+- 多步骤、需要流程设计或断点续跑（如"审计并修复 lint 后跑测试"）→ `orchestrate`
 - 大目标可拆成多个独立子任务 → `orchestrate --split`
 - 流程固定、要精细控制（条件分支/重试/特定 HITL 点）→ 手写 flow，`flowcast run ./my-flow.js`
+- 单步、一句话能搞定（如"加一行"）→ 都不用，直接让 `claude`/`cursor` 做
 
 详见 [L3 编排](/guide/orchestration) 与 [给 AI 使用](/guide/for-ai) 的决策树。
 

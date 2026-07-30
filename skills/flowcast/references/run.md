@@ -6,8 +6,8 @@
 # 标准开发闭环（分支 → 实现 → 审查 → PR）
 flowcast force-dev --feature <name> --repo .
 
-# 一句话需求自动生成并执行 flow
-flowcast orchestrate "<需求描述>" --repo .
+# 把多步编排需求交给 L3，自动生成并执行 flow
+flowcast orchestrate "<编排需求>" --repo .
 
 # 大目标拆子任务并发执行
 flowcast orchestrate "<大目标>" --repo . --split --concurrency 3

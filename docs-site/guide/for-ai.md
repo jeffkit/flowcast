@@ -25,8 +25,8 @@ flowcast 的使用者，很多时候本身就是一个 **AI agent**——它被�
 
 ```
 任务来了
-├─ 一次性单步 / 纯读代码 / 无中断风险 → 不用 flowcast
-├─ 一行需求、单目标 → flowcast orchestrate "<目标>" --repo . --agent <name>
+├─ 单步、一句话能搞定（改一行、加个变量）→ 不用 flowcast，直接让 claude/cursor 做
+├─ 多步骤、需要流程设计或断点续跑（审计并修复 lint、逐条实现 TODO）→ flowcast orchestrate "<编排需求>" --repo . --agent <name>
 ├─ 大目标、可拆成多个独立子任务 → flowcast orchestrate "<大目标>" --split --concurrency N
 └─ 流程固定、要精细控制（条件分支/重试/特定 HITL 点）→ 手写 flow，flowcast run ./my-flow.js
 ```

@@ -59,7 +59,7 @@ npm test                          # node --test test/（全量单测，含结构
 node --check <file>               # 语法校验
 
 flowcast force-dev --feature x --repo .   # 跑 force-dev flow
-flowcast orchestrate "<目标>" --repo .     # L3：一行需求 → 生成 flow → 校验 → 执行（续跑锁定）
+flowcast orchestrate "<编排需求>" --repo .     # L3：编排需求 → 生成 flow → 校验 → 执行（续跑锁定）
 flowcast orchestrate "<大目标>" --split    # L3 接单分拆：拆子任务 → 各自生成 flow → fanOut 并发执行
 flowcast dashboard --repo . [--open]      # 扫 .flowcast/runs + worktree → 生成只读可观测看板 HTML
 flowcast run ./flows/my-flow.js [args]    # 跑自定义 flow

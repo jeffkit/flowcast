@@ -34,7 +34,7 @@ features:
     details: runGate / runGates 把测试、lint、构建等检查纳入 flow，失败可 rollback / resume-fix / autofix。
   - icon: { src: /icons/codegen.svg }
     title: L3 codegen 编排
-    details: 一行需求 → 动态生成 flow 代码 → 校验（语法 + import 白名单 + dry-run）→ 隔离执行（续跑锁定）。不做 DAG。
+    details: 编排需求 → 动态生成 flow 代码 → 校验（语法 + import 白名单 + dry-run）→ 隔离执行（续跑锁定）。不做 DAG。
   - icon: { src: /icons/fanout.svg }
     title: 并发子 flow
     details: fanOut 限并发 + worktree 隔离 + 每任务日志 + 结果汇总；runFlow 把一条 flow 当隔离子进程跑。
@@ -66,7 +66,7 @@ L1 执行器 (adapters.js + executor.js) 怎么驱动一个 CLI/agent + provider
 # 全局安装 CLI
 npm install -g flowcast
 
-# 一行需求，端到端跑通：生成 flow → 校验 → 执行
+# 把一段编排需求交给 flowcast：生成多步 flow → 校验 → 执行
 flowcast orchestrate "把 README 里的 TODO 清单逐条实现" --repo .
 
 # 跑自定义 flow（dry-run 不烧 API，先验证骨架）

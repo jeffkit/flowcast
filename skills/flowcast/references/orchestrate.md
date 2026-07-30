@@ -1,7 +1,8 @@
 # orchestrate 闭环参考（生成 → 跑 → 续跑 → 看板）
 
-> 这是 flowcast **最高频**的用法：一句话需求 → 自动生成 flow → 校验 → 执行。
-> 手写 flow 适合「固定、可复用的流水线」；orchestrate 适合「一次性、按需编排」。
+> `orchestrate` 把你的一段**编排需求**交给 agent，让它**生成一段 flow 代码**（含多个 `cp.step`），再校验、执行这段 flow。
+> 它**不是**"直接让 agent 干一件事"的入口——那是 `claude`/`cursor` 自己的活。
+> 适合 orchestrate 的是「多步骤、需要流程设计、可中断续跑」的任务；手写 flow 适合「固定、可复用的流水线」。
 
 ## 0. 前置：环境就绪
 
@@ -15,25 +16,31 @@ flowcast init            # 未配置过？交互式扫描并生成 ~/.flowcast/{
 至少要有一个 ready 的 agent（doctor 里打 ✓ 的）。`orchestrate` 生成 flow 时需要一个
 agent 来产出代码，默认找 `claude-sonnet`——若你没有，用 `--agent <name>` 指定一个已配置的。
 
-## 1. 何时用 orchestrate，何时手写 flow
+## 1. 何时用 orchestrate，何时手写 flow，何时直接让 agent 干
 
 | 场景 | 选择 |
 |------|------|
-| 一次性任务（"把 TODO 清掉"、"审计 lint"） | **orchestrate** |
-| 需求模糊，让 agent 自己拆步骤 | **orchestrate** |
-| 大目标要并发拆子任务 | **orchestrate --split** |
+| 多步骤、需要流程设计、可中断续跑（"审计 src/ 并修复 lint 后跑测试"、"逐条实现 TODO 清单"） | **orchestrate** |
+| 大目标，要并发拆成多个独立子任务 | **orchestrate --split** |
 | 固定流水线，反复跑（每次发版、每次 PR） | **手写 flow**（放 `.flowcast/flows/`） |
 | 需要 HITL 在固定节点卡住审批 | **手写 flow** |
+| 一句话能搞定的单步任务（"加一行"、"改个变量名"） | **直接用 `claude`/`cursor`，别用 orchestrate** |
+
+::: warning 别用 orchestrate 跑简单任务
+`orchestrate` 会先调 agent 生成一段 flow 代码、再跑它。对一个"加一行 hello"这样的单步任务，
+这层代码生成是纯浪费（多一次 LLM 调用 + 校验开销），而且简单任务根本用不上断点续跑/HITL/质量门。
+判断标准：**如果这个任务不需要"多步骤"或"流程设计"，就直接让 agent 做，别 orchestrate。**
+:::
 
 ## 2. 需求怎么写，生成更易成功
 
-orchestrate 把你的需求文本交给 agent 生成 flow。写得越具体，生成质量越高：
+orchestrate 把你的**编排需求**交给 agent 生成 flow。需求写得越具体（范围 + 步骤意图 + 验收标准），生成的 flow 质量越高：
 
 ```bash
-# ✗ 太模糊：agent 不知道边界、不知道成功标准
-flowcast orchestrate "改一下代码" --repo .
+# ✗ 太模糊：agent 不知道要编排什么、边界和验收标准都不清
+flowcast orchestrate "优化整个项目的错误处理" --repo .
 
-# ✓ 具体目标 + 范围 + 验收标准
+# ✓ 明确的多步编排：有范围、有验收、天然需要拆步骤
 flowcast orchestrate "把 src/ 下所有 console.log 清掉，确保 npm test 仍通过" --repo . --agent cursor-default
 
 # ✓ 大目标用 --split 自动拆并发
@@ -43,7 +50,8 @@ flowcast orchestrate "给每个 src/*.ts 补上单元测试" --repo . --split --
 **生成阶段也会烧 API**（要用 agent 产出 flow 代码）。想先验证结构不烧钱：
 
 ```bash
-FLOWCAST_DRY_RUN=1 flowcast orchestrate "test" --repo .   # 生成走真 agent，但执行被 fake
+# 用一个真实编排需求跑 dry-run：生成走真 agent，但执行被 fake
+FLOWCAST_DRY_RUN=1 flowcast orchestrate "审计 src/ 的 lint 问题并修复" --repo .
 ```
 
 ## 3. 生成之后怎么跑（完整闭环）

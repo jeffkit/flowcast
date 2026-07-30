@@ -2,12 +2,12 @@
 
 > flowcast：轻量 workflow 编排框架（最小依赖 · 纯 ESM · Node ≥ 20）。
 > 把会多步骤、可能中断、需人工确认或质量门把关的编码任务，固化成可断点续跑的受控 flow；
-> 或用 L3 一行需求自动生成并执行 flow。本页可整页塞进 context。
+> 或用 L3 把一段编排需求交给 agent 自动生成 flow 并执行。本页可整页塞进 context。
 > 文档站：https://jeffkit.github.io/flowcast/
 
 ## 何时用
-满足任意一条就用：多步骤且可能中断（要断点续跑）/ 需 HITL / 需质量门或让 agent 安全改代码（失败回滚）/ 统一调度多个 coding agent / 并发跑子任务 / 一行需求端到端自动生成执行。
-不要用于：一次性单步问答、纯读代码、无中断风险的简单脚本。
+满足任意一条就用：多步骤且可能中断（要断点续跑）/ 需 HITL / 需质量门或让 agent 安全改代码（失败回滚）/ 统一调度多个 coding agent / 并发跑子任务 / 把一段多步编排需求交给 L3 自动生成 flow 并执行。
+不要用于：一句话能搞定的单步任务（直接让 claude/cursor 做）、纯读代码、无中断风险的简单脚本。
 
 ## Bootstrap（最小可用）
 1. Node ≥ 20。
@@ -20,9 +20,10 @@
 6. 撞错先自检：`flowcast doctor [--repo .]`（只读，逐项诊断 Node/git/CLI/配置并给修法）。
 
 ## 入口决策
-- 一行需求、单目标 → `flowcast orchestrate "<目标>" --repo . --agent <name>`
+- 多步骤、需要流程设计或断点续跑（审计并修复 lint、逐条实现 TODO）→ `flowcast orchestrate "<编排需求>" --repo . --agent <name>`
 - 大目标可拆 → `flowcast orchestrate "<大目标>" --split --concurrency 3`
 - 流程固定要精控 → 手写 flow，`flowcast run ./flows/x.js`
+- 单步、一句话能搞定（加一行、改变量）→ 别用 flowcast，直接让 claude/cursor 做
 - 标准开发流（分支→码→审查→PR）已下掉；只 orchestrate / `--split` / 手写 flow 三选一。
 - 看所有 run → `flowcast dashboard --repo . --open`
 - 续跑：用同一个 `--run-id` 再跑（已完成步骤 [skip]）。
