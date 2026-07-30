@@ -24,7 +24,7 @@ async function safeRm(dir) {
   }
 }
 
-test('Checkpoint.record/has: 同步记录已算好的结果，可被 has 命中', () => {
+test('Checkpoint.record/has: 同步记录已算好的结果，可被 has 命中', async () => {
   const dir = tempDir()
   try {
     const cp = new Checkpoint('r1', dir)
@@ -36,7 +36,7 @@ test('Checkpoint.record/has: 同步记录已算好的结果，可被 has 命中'
     const cp2 = new Checkpoint('r1', dir)
     assert.equal(cp2.has('g.a'), true)
     assert.deepEqual(cp2.state.completed['g.a'], { success: true, reason: 'ok' })
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally { await safeRm(dir) }
 })
 
 test('Checkpoint.record: 并发回调按 fan-out 方式写多个 key 都不丢', async () => {
@@ -52,7 +52,7 @@ test('Checkpoint.record: 并发回调按 fan-out 方式写多个 key 都不丢',
     // state.json 最终包含全部 5 条
     const onDisk = JSON.parse(readFileSync(join(dir, 'r2', 'state.json'), 'utf8'))
     assert.equal(Object.keys(onDisk.completed).length, 5)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally { await safeRm(dir) }
 })
 
 test('Checkpoint.event：结构化事件追加进 run.log.jsonl（不进 state.json）', async () => {
@@ -71,7 +71,7 @@ test('Checkpoint.event：结构化事件追加进 run.log.jsonl（不进 state.j
     // 事件不该污染 state.json
     const state = JSON.parse(readFileSync(join(dir, 'rev', 'state.json'), 'utf8'))
     assert.equal(state.steps.length, 0)
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally { await safeRm(dir) }
 })
 
 test('Checkpoint.step：自动捕获 agent 结果的 _meta(model/token) 进步骤记录', async () => {
@@ -185,7 +185,7 @@ test('Checkpoint.step: sidecar 文件丢失 → 步骤重新执行（不跳过�
   } finally {
     await cp?.flushLog().catch(() => {})
     await cp2?.flushLog().catch(() => {})
-    rmSync(dir, { recursive: true, force: true })
+    await safeRm(dir)
   }
 })
 
@@ -276,7 +276,7 @@ test('onStep: skip 事件在续跑跳过时触发', async () => {
   } finally {
     await cp1?.flushLog().catch(() => {})
     await cp2?.flushLog().catch(() => {})
-    rmSync(dir, { recursive: true, force: true })
+    await safeRm(dir)
   }
 })
 
@@ -319,7 +319,7 @@ test('onStep: start/skip/error 事件自动写进 run.log.jsonl', async () => {
     assert.ok(statuses.includes('start'), 'jsonl 应有 start 条目')
     assert.ok(statuses.includes('done'),  'jsonl 应有 done 条目')
     assert.ok(statuses.includes('skip'),  'jsonl 应有 skip 条目')
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally { await safeRm(dir) }
 })
 
 test('Checkpoint.step: timeout 超时抛错并带 key 信息', async () => {
@@ -412,7 +412,7 @@ test('Checkpoint.step: 续跑时 _meta 从步骤记录里还原', async () => {
     // 先等所有异步日志落盘，再清理目录
     await cp1?.flushLog().catch(() => {})
     await cp2?.flushLog().catch(() => {})
-    rmSync(dir, { recursive: true, force: true })
+    await safeRm(dir)
   }
 })
 
@@ -436,7 +436,7 @@ test('Checkpoint.pause: 抛出 PauseSignal，状态落盘为 paused', async () =
   } finally { await safeRm(dir) }
 })
 
-test('Checkpoint._loadState: state.json 损坏 + 残留旧版 .bak → 从 .bak 恢复（升级兼容）', () => {
+test('Checkpoint._loadState: state.json 损坏 + 残留旧版 .bak → 从 .bak 恢复（升级兼容）', async () => {
   // 用户从旧版本（_flush 写 .bak 的版本）升级到新版：
   // state.json 损坏 + 残留 .bak 仍在 → 仍然从 .bak 恢复（向后兼容旧数据）
   const dir = tempDir()
@@ -453,11 +453,11 @@ test('Checkpoint._loadState: state.json 损坏 + 残留旧版 .bak → 从 .bak 
     const cp2 = new Checkpoint('r-bak', dir)
     assert.equal(cp2.has('step0'), true, '从残留 .bak 恢复后应能看到 step0')
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    await safeRm(dir)
   }
 })
 
-test('Checkpoint._loadState: state.json 损坏 + 无 .bak → 警告 + fresh 启动', () => {
+test('Checkpoint._loadState: state.json 损坏 + 无 .bak → 警告 + fresh 启动', async () => {
   // 新版 _flush 改用 writeFile+renameSync 原子写：不再生成 .bak（rename 后 tmp 已原子接管）。
   // 真正的新版行为：state.json 损坏 + 没有 .bak → 警告 + fresh 启动。
   const dir = tempDir()
@@ -477,11 +477,11 @@ test('Checkpoint._loadState: state.json 损坏 + 无 .bak → 警告 + fresh 启
     assert.equal(cp2.has('step1'), false, 'fresh 启动不应有 step1')
   } finally {
     console.warn = origWarn
-    rmSync(dir, { recursive: true, force: true })
+    await safeRm(dir)
   }
 })
 
-test('Checkpoint._flush: write+rename 原子写，截断时要么旧要么新完整', () => {
+test('Checkpoint._flush: write+rename 原子写，截断时要么旧要么新完整', async () => {
   // 验证 flush 用 rename 替换——state.json 永远是合法 JSON（除非中间被外部破坏）。
   const dir = tempDir()
   try {
@@ -501,7 +501,7 @@ test('Checkpoint._flush: write+rename 原子写，截断时要么旧要么新完
     assert.equal(parsed2.completed.step1, 'value1')
     assert.equal(parsed2.completed.step2, 'value2')
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    await safeRm(dir)
   }
 })
 
@@ -525,7 +525,7 @@ test('Checkpoint.step: 循环里重复调用同一 key 触发 warn（但不报�
 
 // ── loop 协作窄接口 ─────────────────────────────────────────────
 
-test('Checkpoint.setLoopState/getLoopState: 部分更新，未传字段不动', () => {
+test('Checkpoint.setLoopState/getLoopState: 部分更新，未传字段不动', async () => {
   const dir = tempDir()
   try {
     const cp = new Checkpoint('r-loop', dir)
@@ -540,10 +540,10 @@ test('Checkpoint.setLoopState/getLoopState: 部分更新，未传字段不动', 
     // 持久化：重新构造 Checkpoint 应能读出
     const cp2 = new Checkpoint('r-loop', dir)
     assert.deepEqual(cp2.getLoopState(), { verdict: 'continue', status: 'completed', turns: 3, reason: undefined })
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally { await safeRm(dir) }
 })
 
-test('Checkpoint.countCompletedTurns: 只数 ^turn-N$ 形式的 key', () => {
+test('Checkpoint.countCompletedTurns: 只数 ^turn-N$ 形式的 key', async () => {
   const dir = tempDir()
   try {
     const cp = new Checkpoint('r-turns', dir)
@@ -553,7 +553,7 @@ test('Checkpoint.countCompletedTurns: 只数 ^turn-N$ 形式的 key', () => {
     cp.record('not-a-turn', 'c')  // 不应被数
     cp.record('turn-abc', 'd')    // 不应被数
     assert.equal(cp.countCompletedTurns(), 2, '只数 ^turn-N$ 形式')
-  } finally { rmSync(dir, { recursive: true, force: true }) }
+  } finally { await safeRm(dir) }
 })
 
 test('dry-run 下 dirs.js 把 flowcastDir 指向 ~/.flowcast/dryrun/', async () => {
