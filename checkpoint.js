@@ -25,6 +25,21 @@ function fnv32(str) {
   return h
 }
 
+// 推导本 run 来自哪个 flow 文件，用于 dashboard「run ↔ workflow」归因。
+// 优先用 bin/flowcast.js spawnFlow 注入的 FLOWCAST_FLOW_ABS（resolve 后的准确路径）；
+// 缺省回退 process.argv[1]（被 node 直接 spawn 的脚本路径，覆盖 node flow.mjs / orchestrator 等所有路径）。
+// 仅当目标是 .js/.mjs 文件时才记录，避免把 node 二进制本身或 REPL 当成 flow。
+function deriveFlowAttribution() {
+  const candidate = process.env.FLOWCAST_FLOW_ABS || process.argv[1]
+  if (!candidate || typeof candidate !== 'string') return {}
+  if (!/\.(js|mjs)$/.test(candidate)) return {}
+  // basename 不依赖顶部 import（避免外部 formatter 还原 import 行导致 ReferenceError）：
+  // 取最后一个路径分隔符（/ 或 \）之后的部分。
+  const file = candidate.split(/[\\/]/).pop()
+  const name = file.replace(/\.(js|mjs)$/, '')
+  return { flowPath: candidate, flowName: name }
+}
+
 // 从 agent 结果里提取 _meta（cli/model/token），只挑可观测字段，缺省安全返回 {}。
 function pickAgentMeta(result) {
   const m = result && result._meta
@@ -62,6 +77,8 @@ function pickAgentMeta(result) {
  * @property {number}   [loopTurns]       loop 原语：已完成轮次数
  * @property {string}   [loopReason]      loop 原语：停止原因说明
  * @property {number}   [expectMaxMs]     dashboard 自适应僵尸阈值（ms）
+ * @property {string}   [flowPath]        归因：本 run 由哪个 flow 文件跑出（绝对路径）。新建 run 时自动写入。
+ * @property {string}   [flowName]        归因：flow 文件 basename 去扩展名（如 quickstart）。新建 run 时自动写入。
  */
 
 export class Checkpoint {
@@ -318,7 +335,13 @@ export class Checkpoint {
   // ── 内部工具 ────────────────────────────────────────────────────
 
   _loadState(runId) {
-    const fresh = () => this._normalizeState({ runId, status: 'running', completed: {}, steps: [], startedAt: new Date().toISOString() })
+    // 新建 run 时自动写入 flow 归因（flowPath/flowName），供 dashboard 把 run 连到 workflow。
+    // 续跑（state.json 已存在）时不覆盖——保留首次启动时记录的归因。
+    const fresh = () => this._normalizeState({
+      runId, status: 'running', completed: {}, steps: [],
+      startedAt: new Date().toISOString(),
+      ...deriveFlowAttribution(),
+    })
     if (!existsSync(this.path)) return fresh()
     try {
       return this._normalizeState(JSON.parse(readFileSync(this.path, 'utf8')))

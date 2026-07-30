@@ -266,6 +266,8 @@ export function readRun(dir, runId, {
     orphanedStateFile,  // state 文件 mtime 拿不到（stat 失败）→ 异常态
     displayStatus: stale ? 'stale' : (orphanedStateFile ? 'stale' : status),
     feature: state.pauseContext?.feature ?? state.summary?.feature ?? null,
+    flowPath: state.flowPath ?? null,
+    flowName: state.flowName ?? null,
     startedAt,
     completedAt,
     durationMs: Number.isFinite(durationMs) ? durationMs : null,
@@ -410,8 +412,41 @@ export function collectRuns(repo, {
 
   const roots = runs.filter(r => !r.parentId).map(r => r.runId)
   const stats = computeStats(runs)
+  const byWorkflow = groupByWorkflow(runs)
 
-  return { repo, generatedAt: new Date(now).toISOString(), staleMs, runs, roots, stats }
+  return { repo, generatedAt: new Date(now).toISOString(), staleMs, runs, roots, stats, byWorkflow }
+}
+
+/**
+ * 按 flowName 聚合 run 统计（供 dashboard Workflows tab / Runs tab 分组展示）。
+ * 没有 flowName 的 run（旧 run 或手写未带归因）归到 '(unknown)' 桶。
+ *
+ * @param {Run[]} runs
+ * @returns {Record<string, {flowName:string, total:number, running:number, completed:number, paused:number, stale:number, other:number, totalTokens:number, lastActivityMs:number|null}>}
+ */
+export function groupByWorkflow(runs) {
+  const groups = {}
+  for (const r of runs) {
+    const name = r.flowName ?? '(unknown)'
+    if (!groups[name]) {
+      groups[name] = {
+        flowName: name, total: 0, running: 0, completed: 0, paused: 0, stale: 0, other: 0,
+        totalTokens: 0, lastActivityMs: null,
+      }
+    }
+    const g = groups[name]
+    g.total++
+    if (r.stale) g.stale++
+    else if (r.status === 'running') g.running++
+    else if (r.status === 'paused') g.paused++
+    else if (r.status === 'completed') g.completed++
+    else g.other++
+    if (r.usage?.hasTokens) g.totalTokens += r.usage.totalTokens ?? 0
+    if (r.lastActivityMs != null && r.lastActivityMs > (g.lastActivityMs ?? 0)) {
+      g.lastActivityMs = r.lastActivityMs
+    }
+  }
+  return groups
 }
 
 function computeStats(runs) {

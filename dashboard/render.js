@@ -20,6 +20,10 @@ function escapeAttr(s) {
  */
 export function renderHtml(model) {
   const json = embedJson(model)
+  const runCount = model.runs?.length ?? 0
+  const agentReady = (model.agents ?? []).filter(a => a.ready).length
+  const agentTotal = (model.agents ?? []).length
+  const flowCount = model.workflows?.all?.length ?? 0
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -34,19 +38,32 @@ export function renderHtml(model) {
   <div class="repo" id="repo"></div>
   <div class="gen" id="gen"></div>
 </header>
-<section class="stats" id="stats"></section>
-<main>
-  <aside class="list-pane">
-    <div class="filters">
-      <input type="search" id="search" placeholder="搜索 runId / feature…" autocomplete="off">
-      <div class="chips" id="statusFilters"></div>
-    </div>
-    <div class="run-list" id="runList"></div>
-  </aside>
-  <article class="detail-pane" id="detail">
-    <div class="empty">← 选择一个 run 查看详情</div>
-  </article>
-</main>
+<nav class="tabs" id="tabs">
+  <button class="tab-btn on" data-tab="runs">Runs <em>${runCount}</em></button>
+  <button class="tab-btn" data-tab="agents">Agents <em>${agentReady}/${agentTotal}</em></button>
+  <button class="tab-btn" data-tab="workflows">Workflows <em>${flowCount}</em></button>
+</nav>
+<div class="tab-panel on" data-tab="runs">
+  <section class="stats" id="stats"></section>
+  <main>
+    <aside class="list-pane">
+      <div class="filters">
+        <input type="search" id="search" placeholder="搜索 runId / feature / flow…" autocomplete="off">
+        <div class="chips" id="statusFilters"></div>
+      </div>
+      <div class="run-list" id="runList"></div>
+    </aside>
+    <article class="detail-pane" id="detail">
+      <div class="empty">← 选择一个 run 查看详情</div>
+    </article>
+  </main>
+</div>
+<div class="tab-panel" data-tab="agents">
+  <section class="panel-body" id="agentsPanel"></section>
+</div>
+<div class="tab-panel" data-tab="workflows">
+  <section class="panel-body" id="workflowsPanel"></section>
+</div>
 <script>
 const MODEL = ${json};
 ${CLIENT_JS}
@@ -149,6 +166,31 @@ a.link{color:var(--accent);cursor:pointer;text-decoration:none}
 .step-tab{padding:4px 12px;font-size:11px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none}
 .step-tab.on{color:var(--accent);border-bottom-color:var(--accent)}
 .step-tab-pane{display:none}.step-tab-pane.on{display:block}
+/* ── tabs / 控制台多视图 ── */
+.tabs{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid var(--border);background:var(--panel)}
+.tab-btn{appearance:none;border:none;background:none;color:var(--muted);font:inherit;font-size:13px;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;display:flex;align-items:center;gap:6px}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.on{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-btn em{font-style:normal;font-size:11px;color:var(--muted);background:var(--bg);padding:1px 7px;border-radius:10px}
+.tab-btn.on em{color:var(--accent)}
+.tab-panel{display:none}
+.tab-panel.on{display:block}
+.panel-body{padding:18px 22px;overflow-y:auto;height:calc(100vh - 112px)}
+.panel-body .empty{color:var(--muted);text-align:center;margin-top:80px}
+/* agents / workflows 表格复用 events 表样式 */
+table.grid-table{width:100%;border-collapse:collapse;font-size:12px}
+table.grid-table td,table.grid-table th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+table.grid-table th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+table.grid-table tr.row{cursor:pointer}
+table.grid-table tr.row:hover{background:var(--panel2)}
+.scope-tag{font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600}
+.scope-project{background:rgba(110,168,254,.15);color:var(--accent)}
+.scope-user{background:rgba(139,147,163,.15);color:var(--muted)}
+.section-h{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 10px}
+.flow-link{color:var(--accent);cursor:pointer;text-decoration:none;font-size:11px}
+.flow-link:hover{text-decoration:underline}
+.mini-stat{display:inline-flex;gap:4px;align-items:baseline;font-size:11px;color:var(--muted)}
+.mini-stat b{color:var(--text);font-weight:600}
 `
 
 // 浏览器端脚本：纯 DOM，无框架。
@@ -158,10 +200,28 @@ const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<
 const fmtDur = (ms) => ms==null?'-':(ms<1000?ms+'ms':ms<60000?(ms/1000).toFixed(1)+'s':(ms/60000).toFixed(1)+'m');
 const fmtTok = (n) => (n==null||n===0)?'0':(n>=1e6?(n/1e6).toFixed(2)+'M':n>=1000?(n/1000).toFixed(1)+'k':String(n));
 const fmtTime = (iso) => { if(!iso) return '-'; const d=new Date(iso); return isNaN(d)?'-':d.toLocaleString('zh-CN',{hour12:false}); };
-const byId = Object.fromEntries(MODEL.runs.map(r=>[r.runId,r]));
+const byId = Object.fromEntries((MODEL.runs||[]).map(r=>[r.runId,r]));
 let activeStatuses = new Set();
 let search = '';
 let selected = null;
+// 控制台多视图状态
+let activeTab = 'runs';
+let flowFilter = null;   // 按 flowName 筛选 runs（从 Workflows tab 跳来时设置）
+let agentFilter = null;  // 按 executor/cli 筛选 runs（从 Agents tab 跳来时设置）
+
+// ── tab 切换 ──────────────────────────────────────────────────
+function switchTab(name, opts={}){
+  activeTab = name;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('on', b.dataset.tab===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('on', p.dataset.tab===name));
+  if(opts.flowFilter!==undefined){ flowFilter=opts.flowFilter; agentFilter=null; }
+  if(opts.agentFilter!==undefined){ agentFilter=opts.agentFilter; flowFilter=null; }
+  if(name==='runs'){ renderFilters(); renderList(); }
+  if(name==='agents') renderAgentsTab();
+  if(name==='workflows') renderWorkflowsTab();
+}
+document.querySelectorAll('.tab-btn').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+
 
 function statusLabel(r){ return r.stale?'stale':r.status; }
 // CSS class 名白名单：只允许已知状态，其他值替换为 'unknown'，防止 state.json 注入 class 属性。
@@ -198,7 +258,20 @@ function renderFilters(){
 
 function matchFilter(r){
   if(activeStatuses.size && !activeStatuses.has(statusLabel(r))) return false;
-  if(search){ const q=search.toLowerCase(); return r.runId.toLowerCase().includes(q)||(r.feature||'').toLowerCase().includes(q); }
+  if(flowFilter && (r.flowName||'(unknown)')!==flowFilter) return false;
+  if(agentFilter){
+    // 匹配 run 用到的 cli/executor：看 steps 的 cli 字段 + models 里的 cli 前缀
+    const clis = new Set();
+    (r.steps||[]).forEach(s=>{ if(s.cli) clis.add(s.cli); });
+    (r.models||[]).forEach(m=>{ const c=m.split(':')[0]; if(c&&c!=='?') clis.add(c); });
+    if(!clis.has(agentFilter)) return false;
+  }
+  if(search){
+    const q=search.toLowerCase();
+    return r.runId.toLowerCase().includes(q)
+      || (r.feature||'').toLowerCase().includes(q)
+      || (r.flowName||'').toLowerCase().includes(q);
+  }
   return true;
 }
 
@@ -207,12 +280,19 @@ function renderList(){
   const roots = MODEL.runs.filter(r=>!r.parentId);
   const shown = new Set();
   let html='';
+  // 筛选提示条（从其他 tab 跳来带了 flow/agent 筛选时显示）
+  if(flowFilter||agentFilter){
+    const label = flowFilter ? ('工作流 '+esc(flowFilter)) : ('Agent '+esc(agentFilter));
+    html += '<div style="padding:8px 12px;background:rgba(110,168,254,.08);border-bottom:1px solid var(--border);font-size:11px;color:var(--accent)">'
+      + '筛选：'+label+' · <span class="flow-link" id="clearFilter">清除</span></div>';
+  }
   const renderRun = (r,isChild)=>{
     shown.add(r.runId);
     const sl=safeSl(r);
     html += '<div class="run'+(isChild?' child':'')+(selected===r.runId?' sel':'')+'" data-id="'+esc(r.runId)+'">'
       + '<div class="rid">'+esc(r.runId)+'</div>'
       + '<div class="meta"><span class="badge b-'+sl+'">'+sl+'</span>'
+      + (r.flowName?'<span class="flow-link" data-flow="'+esc(r.flowName)+'" title="查看工作流">'+esc(r.flowName)+'</span>':'')
       + (r.feature?'<span>'+esc(r.feature)+'</span>':'')
       + '<span>'+r.completedCount+' steps'+(r.skippedCount?'<span style="color:var(--muted);font-size:10px"> +'+r.skippedCount+'↩</span>':'')+'</span>'
       + (r.signals.fallback?'<span title="fallback">↻'+r.signals.fallback+'</span>':'')
@@ -232,6 +312,12 @@ function renderList(){
   for(const r of MODEL.runs){ if(!shown.has(r.runId) && matchFilter(r)) renderRun(r,false); }
   $('runList').innerHTML = html || '<div class="empty" style="margin-top:30px">无匹配 run</div>';
   $('runList').querySelectorAll('.run').forEach(el=>el.onclick=()=>select(el.dataset.id));
+  // run 行内的 flow 标签：点击跳到 Workflows tab 并定位该 flow
+  $('runList').querySelectorAll('.flow-link[data-flow]').forEach(el=>{
+    el.onclick=(e)=>{ e.stopPropagation(); switchTab('workflows'); setTimeout(()=>highlightFlow(el.dataset.flow),0); };
+  });
+  const clearBtn = $('clearFilter');
+  if(clearBtn) clearBtn.onclick=()=>{ flowFilter=null; agentFilter=null; renderList(); };
 }
 
 function select(id){ selected=id; renderList(); renderDetail(byId[id]); location.hash=id; }
@@ -241,6 +327,10 @@ function renderDetail(r){
   const sl=safeSl(r);
   let h = '<h2>'+esc(r.runId)+' <span class="badge b-'+sl+'">'+sl+'</span></h2>';
   h += '<div class="sub">'+esc(r.dir)+'</div>';
+  if(r.flowName){
+    h += '<div class="sub">来自工作流：<a class="flow-link" id="detailFlowLink" data-flow="'+esc(r.flowName)+'">'+esc(r.flowName)+'</a>'
+      + (r.flowPath?' <span style="color:var(--muted)">· '+esc(r.flowPath)+'</span>':'')+'</div>';
+  }
   if(r.stale) h+='<div class="sigchip err" style="margin-bottom:12px">⚠ 僵尸 run：status=running 但最近活动 '+fmtTime(r.lastActivity)+' 已超阈值，进程可能已崩溃/被 kill</div>';
   if(r.paused&&r.pauseReason) h+='<div class="sigchip warn" style="margin-bottom:12px">⏸ 暂停等人工：'+esc(r.pauseReason)+'</div>';
 
@@ -411,8 +501,138 @@ function renderDetail(r){
 
   $('detail').innerHTML=h;
   $('detail').querySelectorAll('.cell').forEach(el=>el.onclick=()=>select(el.dataset.id));
+  const dfl = $('detailFlowLink');
+  if(dfl) dfl.onclick=()=>{ switchTab('workflows'); setTimeout(()=>highlightFlow(dfl.dataset.flow),0); };
 }
 function kv(k,v){return '<div><span>'+esc(k)+'</span><b>'+esc(v)+'</b></div>';}
+
+// ── Agents tab ───────────────────────────────────────────────
+function renderAgentsTab(){
+  const agents = MODEL.agents || [];
+  const el = $('agentsPanel');
+  if(!agents.length){
+    el.innerHTML = '<div class="empty">未采集到 agent 配置（可能未运行 flowcast init）</div>'
+      + (MODEL._collectWarning ? '<div class="sub" style="text-align:center;color:var(--err)">'+esc(MODEL._collectWarning)+'</div>' : '');
+    return;
+  }
+  // 统计：就绪 / 已配置 / 已安装
+  const ready = agents.filter(a=>a.ready).length;
+  const configured = agents.filter(a=>a.configured).length;
+  const installed = agents.filter(a=>a.installed).length;
+  let h = '<div class="sig" style="margin-bottom:18px">'
+    + '<span class="sigchip ok"><b>'+ready+'</b>就绪</span>'
+    + '<span class="sigchip"><b>'+configured+'</b>已配置</span>'
+    + '<span class="sigchip"><b>'+installed+'/'+agents.length+'</b>已安装</span>'
+    + '</div>';
+  h += '<table class="grid-table"><thead><tr>'
+    + '<th>名称</th><th>executor</th><th>model</th><th>provider</th>'
+    + '<th>状态</th><th>凭证</th><th>路径</th></tr></thead><tbody>';
+  for(const a of agents){
+    // 状态 chip：就绪绿、装了但未登录黄、未安装灰
+    let statusHtml, statusCls;
+    if(a.ready){ statusHtml='就绪'; statusCls='ok'; }
+    else if(a.installed && a.authed===false){ statusHtml='未登录'; statusCls='warn'; }
+    else if(a.installed){ statusHtml='已安装'; statusCls=''; }
+    else { statusHtml='未安装'; statusCls='muted'; }
+    const statusCell = '<span class="badge b-'+(statusCls==='ok'?'completed':statusCls==='warn'?'paused':'unknown')+'">'+statusHtml+'</span>';
+    const credCell = a.authed===true ? '✓ 已登录'
+      : a.authed===false ? '<span style="color:var(--err)">✗ 未登录</span>'
+      : '<span style="color:var(--muted)">自管</span>';
+    h += '<tr class="row" data-cli="'+esc(a.executor||'')+'">'
+      + '<td><b>'+esc(a.name)+'</b>'+(a.configured?'':' <span style="color:var(--muted);font-size:10px">(未配置)</span>')+'</td>'
+      + '<td>'+esc(a.executor||'-')+'</td>'
+      + '<td>'+esc(a.model||'-')+'</td>'
+      + '<td>'+esc(a.provider||'-')+'</td>'
+      + '<td>'+statusCell+'</td>'
+      + '<td style="font-size:11px;color:var(--muted)">'+credCell+(a.authDetail?'<br>'+esc(a.authDetail):'')+'</td>'
+      + '<td style="font-size:10px;color:var(--muted)">'+esc(a.path||'-')+'</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table>';
+  h += '<div class="sub" style="margin-top:14px">点击任一行 → 在 Runs tab 筛选用到该 executor 的 run</div>';
+  el.innerHTML = h;
+  el.querySelectorAll('.row').forEach(tr=>tr.onclick=()=>{
+    const cli = tr.dataset.cli;
+    if(!cli) return;
+    switchTab('runs', { agentFilter: cli });
+  });
+}
+
+// ── Workflows tab ────────────────────────────────────────────
+function renderWorkflowsTab(){
+  const wf = MODEL.workflows || { project: [], user: [], all: [] };
+  const byWf = MODEL.byWorkflow || {};
+  const el = $('workflowsPanel');
+  const projectFlows = wf.project || [];
+  const userFlows = wf.user || [];
+  if(!projectFlows.length && !userFlows.length){
+    el.innerHTML = '<div class="empty">未找到 flow 文件</div>'
+      + '<div class="sub" style="text-align:center">项目级：'+esc(MODEL.repo)+'/.flowcast/flows/ · 用户级：~/.flowcast/flows/</div>'
+      + '<div class="sub" style="text-align:center">安装示例：<code>flowcast flows install ./my-flow.js</code></div>';
+    return;
+  }
+  let h = '';
+  const renderGroup = (title, flows)=>{
+    if(!flows.length) return;
+    h += '<div class="section-h">'+esc(title)+'（'+flows.length+'）</div>';
+    h += '<table class="grid-table"><thead><tr>'
+      + '<th>名称</th><th>路径</th><th>run 统计</th><th>Token</th><th>最近活动</th></tr></thead><tbody>';
+    for(const f of flows){
+      const stat = byWf[f.name] || { total:0, running:0, completed:0, paused:0, stale:0, totalTokens:0, lastActivityMs:null };
+      const statCell = stat.total>0
+        ? '<div class="mini-stat">'+stat.total+' 次'
+          + (stat.running?' · <b style="color:var(--running)">'+stat.running+'跑</b>':'')
+          + (stat.stale?' · <b style="color:var(--stale)">'+stat.stale+'僵</b>':'')
+          + (stat.completed?' · <b style="color:var(--ok)">'+stat.completed+'成</b>':'')
+          + (stat.paused?' · <b style="color:var(--warn)">'+stat.paused+'停</b>':'')
+          + '</div>'
+        : '<span style="color:var(--muted);font-size:11px">尚无 run</span>';
+      h += '<tr class="row" data-flow="'+esc(f.name)+'">'
+        + '<td><b>'+esc(f.name)+'</b> <span class="scope-tag scope-'+esc(f.scope)+'">'+esc(f.scope)+'</span></td>'
+        + '<td style="font-size:11px;color:var(--muted)">'+esc(f.path)+'</td>'
+        + '<td>'+statCell+'</td>'
+        + '<td style="font-size:11px">'+(stat.totalTokens?fmtTok(stat.totalTokens):'-')+'</td>'
+        + '<td style="font-size:11px;color:var(--muted)">'+(stat.lastActivityMs?fmtTime(new Date(stat.lastActivityMs).toISOString()):'-')+'</td>'
+        + '</tr>';
+    }
+    h += '</tbody></table>';
+  };
+  renderGroup('项目级 flow（'+esc(MODEL.repo)+'）', projectFlows);
+  renderGroup('用户级 flow（~/.flowcast/flows/）', userFlows);
+  // 未归因的 run（flowName 在磁盘 flow 清单里找不到，或 run 没记录归因）
+  const knownNames = new Set(wf.all.map(f=>f.name));
+  const orphanGroups = Object.entries(byWf).filter(([name])=>!knownNames.has(name) && name!=='(unknown)');
+  if(orphanGroups.length){
+    h += '<div class="section-h" style="color:var(--warn)">已运行但磁盘无对应文件（可能已删除）</div>';
+    h += '<table class="grid-table"><thead><tr><th>flowName</th><th>run 统计</th></tr></thead><tbody>';
+    for(const [name, stat] of orphanGroups){
+      h += '<tr class="row" data-flow="'+esc(name)+'"><td><b>'+esc(name)+'</b></td>'
+        + '<td><div class="mini-stat">'+stat.total+' 次 · 成 '+stat.completed+' · 跑 '+stat.running+'</div></td></tr>';
+    }
+    h += '</tbody></table>';
+  }
+  h += '<div class="sub" style="margin-top:14px">点击任一行 → 在 Runs tab 筛选该工作流的 run</div>';
+  el.innerHTML = h;
+  el.querySelectorAll('.row').forEach(tr=>tr.onclick=()=>{
+    const fn = tr.dataset.flow;
+    if(!fn) return;
+    switchTab('runs', { flowFilter: fn });
+  });
+}
+
+// 高亮某个 flow 行（从 Runs tab 的 flow 标签跳来时调用）
+function highlightFlow(flowName){
+  const el = $('workflowsPanel');
+  if(!el) return;
+  const row = el.querySelector('.row[data-flow="'+cssEscape(flowName)+'"]');
+  if(row){
+    row.style.background = 'rgba(110,168,254,.12)';
+    row.scrollIntoView({ block:'center', behavior:'smooth' });
+    setTimeout(()=>{ row.style.background=''; }, 2000);
+  }
+}
+// 简易 CSS 选择器转义（flowName 用于属性选择器时）
+function cssEscape(s){ return String(s==null?'':s).replace(/["\\]/g,'\\$&'); }
 
 function stepTab(btn, stepId, pane){
   const tabs = btn.closest('.step-tabs').querySelectorAll('.step-tab');
@@ -426,6 +646,10 @@ function stepTab(btn, stepId, pane){
 
 $('search').addEventListener('input',e=>{search=e.target.value;renderList();});
 renderHeader(); renderFilters(); renderList();
+// 初始路由：#tab=agents / #tab=workflows 切换视图；#<runId> 直选某 run
 const initial = location.hash.slice(1);
-if(initial && byId[initial]) select(initial);
+if(initial.startsWith('tab=')){
+  const t = initial.slice(4);
+  if(['runs','agents','workflows'].includes(t)) switchTab(t);
+} else if(initial && byId[initial]) select(initial);
 `

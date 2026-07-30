@@ -29,7 +29,7 @@ export async function runDashboard(argv) {
   const repo = resolve(opts.repo)
   const staleMs = opts['stale-min'] ? Math.max(0, parseFloat(opts['stale-min'])) * 60_000 : undefined
 
-  const { out, model } = generateDashboard({ repo, out: opts.out, staleMs })
+  const { out, model } = await generateDashboard({ repo, out: opts.out, staleMs })
   const s = model.stats
   console.log(`\n📊 flowcast dashboard 已生成：${out}`)
   console.log(`   ${s.total} runs · 运行中 ${s.running} · 僵尸 ${s.stale} · 暂停 ${s.paused} · 完成 ${s.completed}`)
