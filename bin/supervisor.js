@@ -28,8 +28,8 @@ export function extractFlowCode(text) {
 }
 
 /**
- * 构建修复 prompt：把失败详情 + 当前 flow 代码交给 agent，让它只改 flow 文件。
- * 用代码块包围失败详情和 flow 代码，防止其中的内容被当成 prompt 指令（注入防护）。
+ * 首轮修复 prompt：把规则 + 当前 flow 代码 + 失败详情都给 agent（建立完整上下文）。
+ * 用代码块包围，防止其中的内容被当成 prompt 指令（注入防护）。
  */
 export function buildFixPrompt(failureDetail, flowCode) {
   return `你是 flowcast flow 修复专家。下面的 flow 在运行时失败了，请诊断原因并修复 flow 代码。
@@ -51,6 +51,21 @@ ${failureDetail}
 \`\`\`
 
 请输出修复后的完整 flow 代码（单个 \`\`\`js 代码块，不要解释）。`
+}
+
+/**
+ * 后续轮修复 prompt：只抛新的失败问题。
+ * 依赖 agentproc session 续接——agent 在同一 session 里记得前面的对话和自己的修改，
+ * 所以不需要重复贴 flow 代码或汇总历史，只告诉它"又出现了这个错误"即可。
+ */
+export function buildFollowupPrompt(failureDetail) {
+  return `改完后再跑，又失败了。这是新的错误：
+
+\`\`\`text
+${failureDetail}
+\`\`\`
+
+请基于我们之前的讨论继续诊断，输出修复后的完整 flow 代码（单个 \`\`\`js 代码块）。`
 }
 
 /**
@@ -99,8 +114,10 @@ export async function runSupervised({
 
   const doRunFlow = injected.runFlow ?? ((...args) => runFlow(...args))
   const doValidate = injected.validateFlow ?? ((...args) => validateFlow(...args))
-  const doFixAgent = injected.runFixAgent ?? (async (prompt) => {
-    // 用具名 agent profile 跑修复（复用 orchestrate 的 resolveAgent 路径）
+  // doFixAgent：接收 { prompt, sessionId }，返回 { output, sessionId }。
+  // sessionId 续接是关键——同一 session 里 agent 记得前面的诊断和自己的修改，
+  // 后续轮只需抛新问题，不用重复贴 flow 代码或汇总历史。
+  const doFixAgent = injected.runFixAgent ?? (async ({ prompt, sessionId }) => {
     const effective = agent && agents[agent] ? agent : (agents.default ? 'default' : null)
     if (!effective) {
       throw new ConfigError(
@@ -109,10 +126,13 @@ export async function runSupervised({
       )
     }
     const a = resolveAgent(effective, agents, { providers })
-    return String(await a.run(prompt, { cwd: repo, ...a.opts }))
+    const result = await a.run(prompt, { cwd: repo, sessionId: sessionId || undefined, ...a.opts })
+    return { output: String(result), sessionId: result?._meta?.sessionId ?? sessionId }
   })
 
   out.write(`\n▶ supervise  flow=${flowAbs}  run=${runId}  agent=${agent}  maxTurns=${maxTurns}\n`)
+
+  let sessionId = null  // 跨轮续接的 agentproc session id
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     out.write(`\n── 轮次 ${turn}/${maxTurns} ──\n`)
@@ -132,13 +152,15 @@ export async function runSupervised({
     ].filter(Boolean).join('\n\n')
     out.write(`✗ 第 ${turn} 轮失败，准备修 flow…\n`)
 
-    // 修 flow（含 validateFlow 回喂纠错，最多额外 2 次）
+    // 修 flow（含 validateFlow 回喂纠错，最多额外 2 次）。
+    // 首轮（无 sessionId）用完整 prompt 建立上下文；后续轮用 followup prompt 只抛新问题，
+    // 依赖 session 续接让 agent 记得之前的讨论。
     const fixed = await fixWithRetry({
-      flowAbs, repo, failureDetail, doFixAgent, doValidate, out, maxFixAttempts: 2,
+      flowAbs, failureDetail, sessionId, doFixAgent, doValidate, out, maxFixAttempts: 2,
     })
+    sessionId = fixed.sessionId  // 记住 session，下一轮续接
     if (!fixed.ok) {
       out.write(`✗ 修复后校验仍不通过：${fixed.error}\n`)
-      // 校验没过也继续续跑一次（让 runFlow 暴露真实错误），但通常下一轮会同样失败
     }
     // 续跑（同一 runId，回到循环顶）
   }
@@ -149,30 +171,37 @@ export async function runSupervised({
 
 /**
  * 调 agent 修 flow，改完用 validateFlow 校验；不通过则把校验错误回喂再改。
- * @returns {Promise<{ok:boolean, error?:string}>}
+ * 首轮用完整 prompt（带 flow 代码），后续/回喂用 session 续接只抛新问题。
+ * @returns {Promise<{ok:boolean, error?:string, sessionId?:string}>}
  */
-async function fixWithRetry({ flowAbs, repo, failureDetail, doFixAgent, doValidate, out, maxFixAttempts }) {
+async function fixWithRetry({ flowAbs, failureDetail, sessionId, doFixAgent, doValidate, out, maxFixAttempts }) {
+  let currentSessionId = sessionId
+  let isFirst = !sessionId  // 首轮（无 session）要贴完整 flow 代码建立上下文
   let priorError = null
   for (let attempt = 1; attempt <= maxFixAttempts + 1; attempt++) {
-    const flowCode = readFileSync(flowAbs, 'utf8')
-    const prompt = buildFixPrompt(failureDetail, flowCode) +
-      (priorError ? `\n\n# 你上次的修复未通过校验，错误：\n\`\`\`text\n${priorError}\n\`\`\`\n请修正后再输出。` : '')
+    const prompt = isFirst
+      ? buildFixPrompt(failureDetail, readFileSync(flowAbs, 'utf8')) +
+        (priorError ? `\n\n# 你上次的修复未通过校验，错误：\n\`\`\`text\n${priorError}\n\`\`\`\n请修正后再输出。` : '')
+      : buildFollowupPrompt(priorError ? `校验错误：${priorError}` : failureDetail)
 
-    const agentOutput = await doFixAgent(prompt)
-    const newCode = extractFlowCode(agentOutput)
+    const { output, sessionId: returnedSid } = await doFixAgent({ prompt, sessionId: currentSessionId })
+    if (returnedSid) currentSessionId = returnedSid
+    isFirst = false  // 后续调用都走 session 续接
+
+    const newCode = extractFlowCode(output)
     if (!newCode) {
       priorError = 'agent 输出里没找到代码块'
       continue
     }
     writeFileSync(flowAbs, newCode, 'utf8')
 
-    const validation = await doValidate(flowAbs, { repo })
+    const validation = await doValidate(flowAbs)
     if (validation.ok) {
       out.write(`  ✓ flow 已修复（${attempt > 1 ? `第 ${attempt} 次校验通过` : '校验通过'}）\n`)
-      return { ok: true }
+      return { ok: true, sessionId: currentSessionId }
     }
     priorError = validation.error
     out.write(`  ⚠ 第 ${attempt} 次修复校验未通过：${validation.error}\n`)
   }
-  return { ok: false, error: priorError }
+  return { ok: false, error: priorError, sessionId: currentSessionId }
 }

@@ -43,11 +43,21 @@ for 每一轮（最多 maxTurns）:
   2. 若 exit=0 → 跑通了，结束（return 0）
   3. 若失败：
      a. 收集失败详情（stderr + state.json 里失败 step 的 error）
-     b. 调修复 agent：把失败详情 + 当前 flow 代码喂给它，让它只改 flow 代码
+     b. 调修复 agent 改 flow 代码（见下方"连续上下文"）
      c. 写回 flow 文件，用 validateFlow 校验（语法/import/dry-run）
         校验不过则把错误回喂 agent 再改（最多额外 2 次）
   4. 续跑（回到第 1 步）
 ```
+
+### 连续上下文：多轮修复复用同一 agent session
+
+supervisor 的修复 agent 跨轮**复用同一个 agentproc session**——agent 记得前面的诊断和自己的修改。
+
+- **首轮**：用完整 prompt（规则 + flow 代码 + 失败详情）建立上下文
+- **后续轮**：只抛新的失败问题（"改完后又失败了，错误是 X"），不再重复贴 flow 代码
+- 这样 agent 不会重复尝试已经失败的方法，而是基于之前的讨论继续迭代——越修越准
+
+session 续接是 agentproc 的原生能力（`sessionId` 透传），不需要手动汇总修复历史。
 
 ## 续跑语义（重要）
 
