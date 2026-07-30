@@ -149,3 +149,65 @@ test('BYO_LLM_CLIS: claude/aider/recursive 在列', () => {
   assert.ok(BYO_LLM_CLIS.has('recursive'))
   assert.ok(!BYO_LLM_CLIS.has('cursor'))
 })
+
+// ── doctor: 未引用 provider 的缺 env 降级为 ⚠️ ─────────────────────────
+
+test('doctor: 未被 agent 引用的 provider 缺 env → ⚠️ 提示，不计入退出码', async () => {
+  const { runDoctor } = await import('../bin/doctor.js')
+  // p-used 被某 agent 引用且缺 env → 致命 ✗；p-idle 未被引用且缺 env → ⚠️
+  const scan = {
+    agents: [{
+      cli: 'cursor', executor: 'cursor', acceptsProvider: false,
+      installed: true, authed: true, ready: true, authDetail: 'ok',
+    }],
+    config: {
+      agents: { 'cursor-default': { executor: 'cursor', provider: 'p-used' } },
+      providers: { 'p-used': { apiKey: '${MISSING_USED}' }, 'p-idle': { apiKey: '${MISSING_IDLE}' } },
+      agentProblems: [],
+      providerProblems: [
+        { provider: 'p-used', problems: ['环境变量 MISSING_USED 未设置'] },
+        { provider: 'p-idle', problems: ['环境变量 MISSING_IDLE 未设置'] },
+      ],
+    },
+    summary: { totalClis: 1, installedClis: 1, readyClis: 1, hasUsableAgent: true, configOk: false },
+    flowcastResolvable: { ok: true },
+  }
+  const lines = []
+  const out = { write: (s) => lines.push(s) }
+  const code = await runDoctor(['--repo', '.'], { scan, out })
+  const text = lines.join('')
+
+  // p-used 被引用 → ✗ 致命
+  assert.match(text, /✗ provider 'p-used' 配置/)
+  assert.match(text, /✗ provider 'p-used'[\s\S]*设置缺失的环境变量/)
+  // p-idle 未引用 → ⚠️ 提示
+  assert.match(text, /⚠ provider 'p-idle' 配置/)
+  assert.match(text, /未被任何 agent 引用/)
+  // 有致命项 → 退出码 1
+  assert.equal(code, 1)
+})
+
+test('doctor: 全部缺 env 的 provider 都未被引用 → 退出码 0', async () => {
+  const { runDoctor } = await import('../bin/doctor.js')
+  const scan = {
+    agents: [{
+      cli: 'cursor', executor: 'cursor', acceptsProvider: false,
+      installed: true, authed: true, ready: true, authDetail: 'ok',
+    }],
+    config: {
+      agents: { 'cursor-default': { executor: 'cursor' } },
+      providers: { 'p-idle': { apiKey: '${MISSING}' } },
+      agentProblems: [],
+      providerProblems: [
+        { provider: 'p-idle', problems: ['环境变量 MISSING 未设置'] },
+      ],
+    },
+    summary: { totalClis: 1, installedClis: 1, readyClis: 1, hasUsableAgent: true, configOk: false },
+    flowcastResolvable: { ok: true },
+  }
+  const lines = []
+  const out = { write: (s) => lines.push(s) }
+  const code = await runDoctor(['--repo', '.'], { scan, out })
+  assert.match(lines.join(''), /环境就绪/)
+  assert.equal(code, 0)
+})

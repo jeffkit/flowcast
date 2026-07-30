@@ -71,7 +71,12 @@ flowcast init
 
 `orchestrate` 把一段**编排需求**交给 agent，生成一段多步骤的 flow 代码再执行——适合多步骤、可中断续跑的任务（如"审计并修复 lint 后跑测试"、"逐条实现 TODO 清单"）。一句话能搞定的单步任务直接用 `claude`/`cursor` 即可，不必 orchestrate。
 
+> **前置**：`orchestrate` 生成的 flow 会 `import flowcast`，目标仓必须能解析到它。全局装 CLI 后，还需在目标仓里 `npm install flowcast`，否则预检会 fail-fast。
+
 ```bash
+# 在目标仓装包（orchestrate 生成的 flow 会 import flowcast）
+cd <你的目标仓> && npm install flowcast
+
 # 编排需求 → 生成 flow → 校验 → 执行（多步骤任务才值得用）
 flowcast orchestrate "把 README 里的 TODO 清单逐条实现" --repo . --agent claude-sonnet
 

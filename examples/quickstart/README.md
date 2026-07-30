@@ -13,7 +13,7 @@ cd ~/my-flowcast-project
 npm install
 ```
 
-> `package.json` 里依赖 `"flowcast": "^0.2.0"`（v0.2.0 已发到 npm）。
+> `package.json` 里依赖 `"flowcast": "^0.7.0"`（已发到 npm）。
 > 想锁定主仓未发布的最新 commit，可改用 `"flowcast": "github:jeffkit/flowcast"`。
 
 ### 1. 先 dry-run（零配置、不烧 API）

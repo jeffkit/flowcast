@@ -18,9 +18,12 @@ import { existsSync } from 'fs'
 import { fullScan } from '../scan.js'
 import { basenamesFor } from '../provider.js'
 
-// 一个检查项：{ ok, label, detail?, fix? }
-function check(label, ok, { detail, fix } = {}) {
-  return { label, ok, detail, fix }
+// 一个检查项：{ ok, label, detail?, fix?, warn? }
+//   ok=true  → ✓（通过）
+//   ok=false → ✗（致命，影响退出码）
+//   warn=true 且 ok=true → ⚠️（提示，不影响退出码）
+function check(label, ok, { detail, fix, warn = false } = {}) {
+  return { label, ok, detail, fix, warn }
 }
 
 function nodeVersionOk() {
@@ -60,10 +63,21 @@ function configChecks(config) {
       fix: '修正 ~/.flowcast/agents.json 或运行 flowcast init 重新生成',
     }))
   }
+
+  // 算出「被某个 agent profile 引用的 provider 名集合」。
+  // 未被引用的 provider 即使 ${ENV} 展不开，也只是「暂时用不到」，降级为 ⚠️ 提示而非致命 ✗。
+  // 否则用户配了多个 provider、当前只打算用其中一两个时，doctor 会刷一屏红叉并退出码 1。
+  const referenced = new Set(
+    Object.values(config.agents || {})
+      .map(a => a && a.provider)
+      .filter(Boolean)
+  )
   for (const prob of config.providerProblems) {
-    checks.push(check(`provider '${prob.provider}' 配置`, false, {
-      detail: prob.problems.join('; '),
-      fix: '设置缺失的环境变量，或修正 providers.json 里的 ${ENV}',
+    const used = referenced.has(prob.provider)
+    checks.push(check(`provider '${prob.provider}' 配置`, used ? false : true, {
+      detail: prob.problems.join('; ') + (used ? '' : '（未被任何 agent 引用，暂不影响使用）'),
+      fix: used ? '设置缺失的环境变量，或修正 providers.json 里的 ${ENV}' : '用到时再设置该环境变量',
+      warn: !used,
     }))
   }
   return checks
@@ -133,7 +147,7 @@ export async function runDoctor(argv = [], injected = {}) {
   for (const g of groups) {
     out.write(`\n【${g.title}】\n`)
     for (const it of g.items) {
-      const mark = it.ok ? '✓' : '✗'
+      const mark = it.warn ? '⚠' : (it.ok ? '✓' : '✗')
       out.write(`  ${mark} ${it.label}\n`)
       if (it.detail) out.write(`      ${it.detail}\n`)
       if (!it.ok) {

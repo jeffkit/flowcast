@@ -63,18 +63,25 @@ L1 执行器 (adapters.js + executor.js) 怎么驱动一个 CLI/agent + provider
 ## 30 秒上手
 
 ```bash
-# 全局安装 CLI
+# 1. 全局安装 CLI
 npm install -g flowcast
 
-# 把一段编排需求交给 flowcast：生成多步 flow → 校验 → 执行
+# 2. 在你的目标仓里装包（orchestrate 生成的 flow 会 import flowcast）
+cd <你的目标仓> && npm install flowcast
+
+# 3. 扫描本机环境并生成配置（新用户第一步，交互式）
+flowcast init
+
+# 4. 把一段编排需求交给 flowcast：生成多步 flow → 校验 → 执行
 flowcast orchestrate "把 README 里的 TODO 清单逐条实现" --repo .
 
-# 跑自定义 flow（dry-run 不烧 API，先验证骨架）
-FLOWCAST_DRY_RUN=1 flowcast run ./my-flow.js
-
-# 安装并按名字运行团队 flow
-flowcast flows install ./path/to/my-flow.js
-flowcast run my-flow --repo .
+# 先 dry-run 验证骨架（不烧 API、不跑构建）
+FLOWCAST_DRY_RUN=1 flowcast orchestrate "审计 src/ 的 lint 问题并修复" --repo .
 ```
 
-> 想了解 flowcast 的来龙去脉与设计取舍，从 [介绍](/guide/introduction) 开始。
+:::tip orchestrate 适合什么？
+多步骤、可中断、需要断点续跑的任务（如「审计并修复 lint 后跑测试」「逐条实现 TODO 清单」）。
+一句话能搞定的单步任务，直接在 `claude`/`cursor` 里说一句即可，不必用 orchestrate。
+:::
+
+> 第一次接触？跟着 [从零到第一次跑通](/guide/from-zero) 走一遍端到端路径。想理解设计取舍，看 [介绍](/guide/introduction)。

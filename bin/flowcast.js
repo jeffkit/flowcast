@@ -63,7 +63,11 @@ function spawnFlow(flowAbs, args) {
   const result = spawnSync(
     'node',
     ['--import', resolverHook, flowAbs, ...args],
-    { stdio: 'inherit', cwd: process.cwd(), env: { ...process.env, FLOWCAST_PKG_INDEX: pkgIndex } }
+    {
+      stdio: 'inherit', cwd: process.cwd(),
+      // FLOWCAST_FLOW_ABS 让子进程内 new Checkpoint 能记录准确的 flow 归因（dashboard 用）。
+      env: { ...process.env, FLOWCAST_PKG_INDEX: pkgIndex, FLOWCAST_FLOW_ABS: flowAbs },
+    }
   )
   // status 为 null 表示被信号终止（OOM kill / Ctrl-C），按 Unix 惯例映射为 128+N。
   if (result.status != null) return result.status
@@ -87,7 +91,7 @@ Commands:
   flows remove <name>  Remove a user-level flow
   orchestrate <goal>   L3: generate a flow from a goal, validate it, then run it
   dashboard            Generate a static observability dashboard (HTML) for all runs
-  list                 List all workflow runs in current project (needs force-dev flow installed)
+  list                 List all workflow runs in current project (scans .flowcast/runs)
   rate-limits          Show/clear rate-limit records (~/.flowcast/rate-limits.json)
 
 First time? Start with:
@@ -95,16 +99,14 @@ First time? Start with:
   flowcast doctor      # 自检环境是否就绪
 
 Examples:
-  flowcast flows install /path/to/force-lab/flows/force-dev.js
-  flowcast run force-dev --feature add-login --repo .
-  flowcast run force-dev --run-id run-1234567890      # resume a paused run
-  flowcast run ./my-custom-flow.js --repo .
+  flowcast init                              # 扫描本机 agent + 生成配置（新用户第一步）
+  flowcast orchestrate "审计 src/ 并修复 lint" --repo . --agent claude-sonnet
+  flowcast orchestrate "..." --run-id orch-123          # 续跑（传同一 id）
+  flowcast orchestrate "大目标" --split --concurrency 3 # 拆子任务并发
+  flowcast run ./my-flow.js --repo .                     # 跑自定义 flow 文件
   flowcast run ./my-flow.js --supervise --agent cursor-default  # 跑挂了自动修 flow 到跑通
-  flowcast orchestrate "审计 src/ 并修复 lint 问题" --repo . --agent claude-sonnet
-  flowcast orchestrate "..." --run-id orch-123
-  flowcast orchestrate "大目标" --split --concurrency 3
-  flowcast dashboard --repo . --open
-  flowcast list
+  flowcast dashboard --repo . --open                     # 生成可观测看板
+  flowcast list                                           # 列出当前项目的所有 run
   flowcast rate-limits               # 列出所有活跃限流记录
   flowcast rate-limits clear         # 清空全部限流记录
   flowcast rate-limits clear agy/glm-4-flash  # 清除指定 cli/model 的记录
@@ -171,16 +173,35 @@ if (command === 'init') {
   }
 
 } else if (command === 'list') {
-  // 便捷别名：列出当前项目的所有 run（依赖 force-dev flow）
-  const flowAbs = resolveFlowFile('force-dev')
-  if (!flowAbs) {
-    console.error('需要先安装 force-dev flow 才能用 `list`：flowcast flows install <path-to-force-dev.js>')
-    console.error(`查找路径：`)
-    console.error(`  项目级: ${join(process.cwd(), '.flowcast', 'flows', 'force-dev.js')} 或 .flowx/flows/`)
-    console.error(`  用户级: ${join(USER_FLOWS_DIR, 'force-dev.js')}`)
-    process.exit(1)
+  // 列出当前项目的所有 run：直接扫描 .flowcast/runs（+ worktree），不依赖任何外部 flow
+  const { collectRuns } = await import(join(__dirname, '../dashboard/collect.js'))
+  const runs = collectRuns(process.cwd()).runs
+  if (runs.length === 0) {
+    console.log('当前项目还没有任何 run。跑一个试试：')
+    console.log('  flowcast orchestrate "<需求>" --repo .')
+    process.exit(0)
   }
-  process.exit(spawnFlow(flowAbs, ['--list']))
+  const STATUS_MARK = { running: '▶', paused: '⏸', completed: '✓', failed: '✗' }
+  const COL = [34, 12, 16, 10]
+  const header = ['run-id', '状态', '步骤', '最后活动'].map((h, i) => h.padEnd(COL[i])).join('  ')
+  console.log(`当前项目的 run（共 ${runs.length} 个，按最近活动倒序）：\n`)
+  console.log(header)
+  console.log('-'.repeat(header.length))
+  for (const r of runs) {
+    const mark = STATUS_MARK[r.status] ?? '·'
+    const status = `${mark} ${r.status ?? '-'}`
+    const steps = r.stepCount ? `${r.completedCount}/${r.stepCount}` : '-'
+    const last = r.lastActivityMs ? new Date(r.lastActivityMs).toLocaleString() : '-'
+    const row = [
+      (r.runId ?? '-').slice(0, COL[0]).padEnd(COL[0]),
+      status.padEnd(COL[1]),
+      steps.padEnd(COL[2]),
+      last.padEnd(COL[3]),
+    ].join('  ')
+    console.log(row)
+  }
+  console.log(`\n提示：flowcast dashboard --repo . --open  生成可观测看板`)
+  process.exit(0)
 
 } else if (command === 'orchestrate') {
   // L3：一行需求 → 生成 flow → 校验 → 执行（续跑锁定）

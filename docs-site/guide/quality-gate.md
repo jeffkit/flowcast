@@ -65,7 +65,7 @@ await runGate(gate, { onEvent: (e) => cp.event(e.event, e) })
 
 ## 自改安全沙箱（withSelfModGuard）
 
-`withSelfModGuard` 是 recursive（`self-improve.sh`）与 revengers（Self-Mod Guard）各自独立收敛到的同一个原语：**让 AI 改自己的代码时不致命**。
+`withSelfModGuard` 解决一个核心问题：**让 AI 改自己的代码时不致命**——在 git baseline 上隔离改动，质量门失败就硬回滚到改动前。
 
 ```js
 import { withSelfModGuard, captureBaseline } from 'flowcast'
