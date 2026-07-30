@@ -99,6 +99,7 @@ Examples:
   flowcast run force-dev --feature add-login --repo .
   flowcast run force-dev --run-id run-1234567890      # resume a paused run
   flowcast run ./my-custom-flow.js --repo .
+  flowcast run ./my-flow.js --supervise --agent cursor-default  # 跑挂了自动修 flow 到跑通
   flowcast orchestrate "审计 src/ 并修复 lint 问题" --repo . --agent claude-sonnet
   flowcast orchestrate "..." --run-id orch-123
   flowcast orchestrate "大目标" --split --concurrency 3
@@ -260,6 +261,32 @@ if (command === 'init') {
     console.error(`  用户级: ${join(USER_FLOWS_DIR, nameOrFile + '.js')}`)
     console.error(`安装：flowcast flows install <path-to-flow.js>`)
     process.exit(1)
+  }
+
+  // --supervise：监督模式——跑 flow，挂了让 agent 修 flow，用同一 runId 续跑直到跑通
+  if (rest.includes('--supervise')) {
+    const { parseArgs } = await import('util')
+    const { values: sOpts } = parseArgs({
+      args: rest, options: {
+        supervise:    { type: 'boolean' },
+        repo:         { type: 'string', default: process.cwd() },
+        'run-id':     { type: 'string' },
+        agent:        { type: 'string' },
+        'max-turns':  { type: 'string' },
+      }, strict: false,
+    })
+    const { loadAgents } = await import(join(__dirname, '../executor.js'))
+    const { loadProviders } = await import(join(__dirname, '../provider.js'))
+    const { runSupervised } = await import(join(__dirname, 'supervisor.js'))
+    const [agents, providers] = await Promise.all([loadAgents({ repo: sOpts.repo }), loadProviders({ repo: sOpts.repo })])
+    process.exit(await runSupervised({
+      flowAbs,
+      repo: sOpts.repo,
+      runId: sOpts['run-id'] ?? `super-${Date.now()}`,
+      agent: sOpts.agent ?? 'default',
+      agents, providers,
+      maxTurns: sOpts['max-turns'] ? parseInt(sOpts['max-turns'], 10) : 5,
+    }))
   }
 
   process.exit(spawnFlow(flowAbs, rest.slice(1)))
