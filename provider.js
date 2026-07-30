@@ -163,7 +163,7 @@ export function resolveProvider(name, providers = {}, env = process.env) {
     const known = Object.keys(providers)
     const hint = known.length
       ? `已定义：${known.join(' / ')}`
-      : '当前无任何 provider 配置，请创建 ~/.flowcast/providers.json'
+      : '当前无任何 provider 配置。运行 `flowcast init` 自动生成，或 `flowcast doctor` 自检环境'
     throw new ConfigError(`未知 provider '${name}'（${hint}）`)
   }
   const bundle = {

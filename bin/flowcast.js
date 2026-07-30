@@ -79,6 +79,8 @@ if (!command || command === '--help' || command === '-h') {
 flowcast — lightweight workflow runner  (aliases: flowcast / flowc / fc / flowx)
 
 Commands:
+  init                 Scan local agents and interactively generate ~/.flowcast config
+  doctor               Diagnose environment health (Node/git/CLIs/config), read-only
   run <name|file>      Run a named user flow or a local flow file
   flows list           List installed user-level flows (~/.flowcast/flows/)
   flows install <src>  Install a flow file to ~/.flowcast/flows/
@@ -87,6 +89,10 @@ Commands:
   dashboard            Generate a static observability dashboard (HTML) for all runs
   list                 List all workflow runs in current project (needs force-dev flow installed)
   rate-limits          Show/clear rate-limit records (~/.flowcast/rate-limits.json)
+
+First time? Start with:
+  flowcast init        # 交互式扫描 + 生成配置（新用户第一步）
+  flowcast doctor      # 自检环境是否就绪
 
 Examples:
   flowcast flows install /path/to/force-lab/flows/force-dev.js
@@ -105,7 +111,17 @@ Examples:
   process.exit(0)
 }
 
-if (command === 'flows') {
+if (command === 'init') {
+  // 交互式引导：扫描本机 agent CLI → 生成 ~/.flowcast/{agents,providers}.json
+  const { runInit } = await import(join(__dirname, 'init.js'))
+  process.exit(await runInit(rest))
+
+} else if (command === 'doctor') {
+  // 环境健康自检（只读）：Node/git/CLI 可达性/配置合法性
+  const { runDoctor } = await import(join(__dirname, 'doctor.js'))
+  process.exit(await runDoctor(rest))
+
+} else if (command === 'flows') {
   const sub = rest[0]
 
   if (!sub || sub === 'list') {

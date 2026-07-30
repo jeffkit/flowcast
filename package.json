@@ -23,6 +23,7 @@
     "internal.js",
     "errors.js",
     "dirs.js",
+    "scan.js",
     "checkpoint.js",
     "spawn.js",
     "concurrency.js",

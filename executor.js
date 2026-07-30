@@ -209,7 +209,9 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
   if (!profile) {
     if (isDryRun()) return { executor: name, run: makeFakeRun(name), opts: {} }
     const known = Object.keys(agents)
-    const hint = known.length ? `已定义：${known.join(' / ')}` : '当前无任何 agent 配置，请创建 ~/.flowcast/agents.json'
+    const hint = known.length
+      ? `已定义：${known.join(' / ')}`
+      : '当前无任何 agent 配置。运行 `flowcast init` 自动扫描并生成配置，或 `flowcast doctor` 自检环境'
     throw new ConfigError(`未知 agent '${name}'（${hint}）`)
   }
   if (!profile.executor) throw new ConfigError(`agent '${name}' 缺少 executor 字段`)
