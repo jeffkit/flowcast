@@ -51,6 +51,22 @@ flowcast flows remove my-flow
 flowcast run my-flow --repo .
 ```
 
+## 初始化配置（新用户第一步）
+
+装好 CLI 后，**先用 `init` 自动扫描本机环境并生成配置**：
+
+```bash
+flowcast init
+```
+
+`init` 会扫描 PATH 中的 agent CLI（claude/cursor/gemini/codex/aider/...）及其登录凭证，交互式让你选要生成 profile 的 CLI 和默认 agent，对 BYO-LLM CLI（claude/aider）补问 provider（API key 用 `${ENV}` 形式，明文不入仓），最后写入 `~/.flowcast/agents.json` + `~/.flowcast/providers.json`（已有则 `.bak` 备份）。
+
+- 想跳过交互（CI/脚本）：`flowcast init --yes`
+- 想自检环境是否就绪（只读，不写盘）：`flowcast doctor`
+- 想手写配置而非用 init：见 [配置分层](/guide/configuration)
+
+`doctor` 会逐项检查 Node/git、每个 CLI 的 PATH 与凭证、agents/providers 配置合法性、flowcast 包能否被当前 repo 解析，每条 ✗ 给出具体修复建议。
+
 ## 第一个 flow
 
 一个 flow 就是一个普通的可执行 JS 脚本。下面这个 flow 把工作拆成两个**可断点续跑**的步骤：
@@ -142,6 +158,8 @@ flowcast dashboard --repo . --open
 
 | 命令 | 作用 |
 |------|------|
+| `flowcast init` | 交互式扫描本机 agent CLI + 生成 `~/.flowcast` 配置（新用户第一步） |
+| `flowcast doctor [--repo .]` | 自检环境健康（Node/git/CLI/配置），只读 |
 | `flowcast run <name\|file> [args]` | 按名字运行已安装的 flow，或直接运行 flow 文件 |
 | `flowcast flows list` | 列出 `~/.flowcast/flows/` 下已安装的 flow |
 | `flowcast flows install <file>` | 安装 flow 到 `~/.flowcast/flows/` |

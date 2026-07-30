@@ -48,9 +48,8 @@ npm install -g flowcast
 # 2. 目标仓能解析 flowcast（L3 orchestrate 必需）
 cd <repo> && npm install flowcast
 
-# 3. 最小配置（只用 cursor 等锁定型可跳过 providers）
-mkdir -p ~/.flowcast
-# 写 ~/.flowcast/agents.json: { "agents": { "cursor-default": {"executor":"cursor","model":"auto"} } }
+# 3. 扫描本机环境 + 生成配置（交互式；CI 用 flowcast init --yes）
+flowcast init
 
 # 4. dry-run 冒烟（不烧 API）
 FLOWCAST_DRY_RUN=1 flowcast orchestrate "测试目标" --repo . --agent cursor-default
@@ -61,6 +60,8 @@ flowcast orchestrate "真实目标" --repo . --agent cursor-default
 # 6. 中断后续跑（同一个 run-id）
 flowcast orchestrate "..." --run-id <run-id>
 ```
+
+环境不确定或撞错时，先跑 `flowcast doctor` 逐项自检（Node/git/CLI 可达性/配置合法性）。
 
 完整步骤见 [从零到第一次跑通](/guide/from-zero)，撞错见 [排错 / FAQ](/guide/troubleshooting)。
 

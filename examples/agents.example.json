@@ -1,5 +1,5 @@
 {
-  "//": "flowx agent profile 示例。复制到 ~/.flowx/agents.json（机器级）或 <repo>/.flowx/agents.json（项目级覆盖）。",
+  "//": "flowcast agent profile 示例。复制到 ~/.flowcast/agents.json（机器级）或 <repo>/.flowcast/agents.json（项目级覆盖）。（旧项目 ~/.flowx/ 仍兼容）",
   "//provider": "provider 仅对 BYO-LLM 执行器（recursive/aider/claude）有效；给 cursor/gemini/codex 配 provider 会 fail-fast。",
   "agents": {
     "recursive-deepseek": {

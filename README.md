@@ -2,7 +2,7 @@
 
 轻量 workflow 编排框架：**断点续跑 · HITL · 多 CLI/agent 调度 · 自改安全沙箱 · 质量门**，以及其上的 **L3 codegen 编排层**（一行需求 → 动态生成 flow → 隔离执行）。
 
-零运行时依赖 · 纯 ESM · Node ≥ 20
+纯 ESM · Node ≥ 20（仅依赖 agentproc SDK）
 
 [![npm](https://img.shields.io/npm/v/flowcast)](https://www.npmjs.com/package/flowcast)
 [![license](https://img.shields.io/npm/l/flowcast)](LICENSE)
@@ -19,9 +19,25 @@
 npm install -g flowcast
 ```
 
-### 2. 前置配置（必须，约 2 分钟）
+### 2. 前置配置（必须，一条命令）
 
-`orchestrate` 需要有可用的 AI agent CLI（如 `claude`）和 provider 配置：
+`orchestrate` 需要有可用的 AI agent CLI（如 `claude`/`cursor`）和 provider 配置。
+**新用户直接跑 `init` 自动扫描本机已装的 CLI 并交互式生成配置**：
+
+```bash
+flowcast init
+```
+
+`init` 会：
+- 扫描 PATH 中的 agent CLI（claude/cursor/gemini/codex/aider/...）及其登录凭证
+- 让你选要生成 profile 的 CLI、选默认 agent
+- 对 BYO-LLM CLI（claude/aider）补问 provider（API key 用 `${ENV}` 形式，明文不入仓）
+- 写入 `~/.flowcast/agents.json` + `~/.flowcast/providers.json`（已有则 `.bak` 备份）
+
+想跳过交互（CI/脚本）用 `flowcast init --yes`；想自检环境健康用 `flowcast doctor`。
+
+<details>
+<summary>手动配置（不想用 init）</summary>
 
 ```json5
 // ~/.flowcast/providers.json（机器级，gitignore）
@@ -49,6 +65,7 @@ npm install -g flowcast
 ```
 
 > 详见 `examples/providers.example.json` 和 `examples/agents.example.json`。
+</details>
 
 ### 3. 跑起来
 
@@ -163,6 +180,8 @@ flowcast run .flowcast/flows/my-flow.js --run-id run-1234567890 --repo .
 ## CLI 命令
 
 ```bash
+flowcast init                                    # 交互式扫描 + 生成 ~/.flowcast 配置（新用户第一步）
+flowcast doctor [--repo .]                       # 自检环境健康（Node/git/CLI/配置），只读
 flowcast orchestrate "<需求>" --repo .           # L3：需求 → 生成 flow → 执行
 flowcast orchestrate "<需求>" --split --repo .   # 大目标拆子任务 → 并发执行
 flowcast run <flow-file> [--run-id <id>]         # 跑 flow（续跑传同一 id）

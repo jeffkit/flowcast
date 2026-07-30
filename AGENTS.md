@@ -5,7 +5,7 @@
 
 ## 项目概述
 
-flowcast（本地目录曾叫 flowx）是零运行时依赖的纯 ESM 库 + CLI（`flowcast` / `flowx` / `fc`）。  
+flowcast（本地目录曾叫 flowx）是最小依赖（仅 agentproc SDK）的纯 ESM 库 + CLI（`flowcast` / `flowx` / `fc`）。  
 L1 驱动 CLI/Agent，L2 提供 Checkpoint / HITL / 质量门等原语，L3 `orchestrator/` 把一句话需求生成并执行 flow。  
 业务项目的 flow 放各自仓（如 `.flowcast/flows/`），本仓只放引擎与通用示例。
 
@@ -38,7 +38,7 @@ L1 executor.js    → 各 CLI adapter + provider 路由
 - 禁止把 API Key / provider 明文写进仓（用 `~/.flowcast/*.json` + `${ENV}`）
 - 禁止在本仓堆业务项目专用 flow（放业务仓，`file:` 依赖本包）
 - 禁止绕过质量门 / 自改沙箱做「方便的」自改
-- 禁止引入运行时 npm 依赖（设计约束：零 runtime deps）
+- 禁止随意引入运行时 npm 依赖（设计约束：最小依赖，当前仅 agentproc SDK）
 
 ## 常用命令
 

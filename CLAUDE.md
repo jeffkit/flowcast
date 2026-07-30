@@ -2,7 +2,7 @@
 
 `flowcast` 是一个轻量 workflow 编排框架：断点续跑、HITL、多 CLI/agent 调度、
 自改安全沙箱、质量门，以及在其之上的 L3 codegen 编排层（动态生成并执行 flow）。
-**零运行时依赖、纯 ESM、Node ≥ 20。**
+**纯 ESM、Node ≥ 20。核心尽量零额外依赖（仅依赖 agentproc SDK；yaml 等为可选 lazy import）。**
 
 > **新 session 先读 [docs/BACKGROUND.md](docs/BACKGROUND.md)**——flowcast 的来龙去脉与愿景
 > （统一自我迭代引擎、三层架构、边界决策、路线图）。本文只讲架构与 API。
@@ -85,7 +85,7 @@ provider / agent 配置**绝不硬编码在代码里**，按内容性质三分�
 
 ## 开发约定
 
-- **零运行时依赖**：核心不引第三方包（yaml 等为可选 lazy import）。新增依赖前先确认是否真的必要。
+- **最小依赖**：运行时仅依赖 `agentproc` SDK；其余（yaml 等）为可选 lazy import。新增依赖前先确认是否真的必要——这是核心设计约束。
 - **纯 ESM**：所有文件 `import`/`export`；新对外 API 必须在 `index.js` 登记。
 - **原语优先**：先做可独立测试的一等公民原语，flow 只做薄编排。新原语必须带单测。
 - **dry-run 可跑**：写 flow / 改原语时保证 `FLOWCAST_DRY_RUN=1` 下能跑通骨架（假执行器 + 假质量门）。`FLOWX_DRY_RUN` 已弃用，向后兼容保留但不推荐。

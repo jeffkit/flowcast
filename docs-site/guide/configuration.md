@@ -2,6 +2,10 @@
 
 flowcast 的一条铁律：**provider / agent 配置绝不硬编码在代码里**。配置按内容性质三分，密钥永不入仓。
 
+::: tip 不想手写？用 `flowcast init`
+新用户可直接跑 `flowcast init`：它会扫描本机已装的 agent CLI 及登录凭证，交互式生成 `~/.flowcast/{agents,providers}.json`（API key 以 `${ENV}` 形式写入，明文不入仓）。已有配置会 `.bak` 备份。本页讲解的是 init 背后的配置规则，手写或排查时参考。
+:::
+
 ## 三分原则
 
 | 内容 | 放哪 |

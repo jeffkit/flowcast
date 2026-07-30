@@ -1,5 +1,5 @@
 {
-  "//": "flowx provider profile 示例。复制到 ~/.flowx/providers.json（机器级）或 <repo>/.flowx/providers.json（项目级覆盖）。",
+  "//": "flowcast provider profile 示例。复制到 ~/.flowcast/providers.json（机器级）或 <repo>/.flowcast/providers.json（项目级覆盖）。（旧项目 ~/.flowx/ 仍兼容）",
   "//apiKey": "apiKey 用 ${ENV_VAR} 在运行时从进程 env 展开，明文密钥永不写进配置文件。",
   "providers": {
     "deepseek": {

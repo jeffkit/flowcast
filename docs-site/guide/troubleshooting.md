@@ -2,6 +2,17 @@
 
 flowcast 的设计偏好 **fail-fast**：配置/环境不对时立刻报错并给出修法，而不是静默卡死。本页是常见报错对照表。
 
+## 先跑这一步：`flowcast doctor`
+
+撞错时先跑只读自检，它会逐项诊断并给出修复建议，往往一步定位问题：
+
+```bash
+flowcast doctor            # 检查 Node/git/每个 CLI 的 PATH 与凭证/配置合法性
+flowcast doctor --repo .   # 额外检查 flowcast 包能否被当前 repo 解析
+```
+
+`doctor` 输出里每条 ✗ 都带具体修法。配置缺失可直接用 `flowcast init` 自动生成。下面是常见报错的详细对照表。
+
 ## 常见报错 → 含义 → 怎么修
 
 ### `目标仓无法解析 flowcast`

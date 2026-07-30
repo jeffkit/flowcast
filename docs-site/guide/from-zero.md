@@ -32,14 +32,32 @@ node -e "import('flowcast').then(m => console.log('ok:', Object.keys(m).length, 
 # 期望输出：ok: <数字> exports
 ```
 
-## 第 2 步：写最小 `~/.flowcast` 配置
+## 第 2 步：生成 `~/.flowcast` 配置
 
 provider / agent 配置放机器级 `~/.flowcast/`，密钥用 `${ENV}` 运行时插值（**明文永不入仓**）。
 
+**推荐：用 `flowcast init` 自动生成。** 它会扫描本机已装的 agent CLI 及其登录凭证，交互式让你选要生成 profile 的 CLI 和默认 agent，并写入 `~/.flowcast/{agents,providers}.json`：
+
+```bash
+flowcast init
+```
+
+对 BYO-LLM 的 CLI（claude/aider），`init` 会追问 provider 的 API key 环境变量名（如 `DEEPSEEK_API_KEY`），并以 `${ENV}` 形式写入配置。生成后记得在 shell 里设置该变量（缺变量会 fail-fast）：
+
+```bash
+export DEEPSEEK_API_KEY=sk-xxxx
+```
+
+::: tip 选哪个 agent
+**BYO-LLM**（`recursive` / `aider` / `claude`）可注入 provider（端点/模型/密钥）。
+**锁定型**（`cursor` / `gemini` / `codex`）自管鉴权——给它配 `provider` 会 fail-fast，只用它自带的 `model`。
+只想最快跑通、本机已登录 cursor-agent 的话，用 `cursor-default` 最省事（无需 provider/key）。
+:::
+
+::: details 不想用 init，手写配置
 ```bash
 mkdir -p ~/.flowcast
 ```
-
 `~/.flowcast/providers.json`（BYO-LLM 执行器才需要；只用 cursor 等锁定型可跳过）：
 ```json
 {
@@ -53,7 +71,6 @@ mkdir -p ~/.flowcast
   }
 }
 ```
-
 `~/.flowcast/agents.json`：
 ```json
 {
@@ -64,17 +81,9 @@ mkdir -p ~/.flowcast
   }
 }
 ```
-
-设置密钥环境变量（缺变量会 fail-fast）：
-```bash
-export DEEPSEEK_API_KEY=sk-xxxx
-```
-
-::: tip 选哪个 agent
-**BYO-LLM**（`recursive` / `aider` / `claude`）可注入 provider（端点/模型/密钥）。
-**锁定型**（`cursor` / `gemini` / `codex`）自管鉴权——给它配 `provider` 会 fail-fast，只用它自带的 `model`。
-只想最快跑通、本机已登录 cursor-agent 的话，用 `cursor-default` 最省事（无需 provider/key）。
 :::
+
+不确定环境是否就绪？跑 `flowcast doctor` 逐项自检。
 
 ## 第 3 步：dry-run 冒烟（不烧 API）
 
@@ -113,4 +122,4 @@ flowcast dashboard --repo . --open
 
 ## 卡住了？
 
-直接看 [排错 / FAQ](/guide/troubleshooting) —— 列了所有常见 fail-fast 报错和修法。
+先跑 `flowcast doctor` 逐项自检环境，再看 [排错 / FAQ](/guide/troubleshooting) —— 列了所有常见 fail-fast 报错和修法。
