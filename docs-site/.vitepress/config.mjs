@@ -25,7 +25,7 @@ export default defineConfig({
       { text: '速查', link: '/llms.txt', target: '_blank' },
       {
         // 与 ../../package.json 的 "version" 同步；改包版本时一并改这里。
-        text: 'v0.5.0',
+        text: 'v0.7.0',
         items: [
           { text: 'GitHub', link: 'https://github.com/jeffkit/flowcast' },
           { text: '更新日志', link: 'https://github.com/jeffkit/flowcast/commits/main' },
@@ -59,6 +59,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: 'L3 编排（orchestrate）', link: '/guide/orchestration' },
+            { text: 'run --supervise（修 flow 到跑通）', link: '/guide/orchestration#对偶-run-supervise-跑-flow-挂了自动修到跑通' },
             { text: 'loop · memory · failure-context', link: '/guide/loop-memory' },
             { text: '配置分层', link: '/guide/configuration' },
             { text: '示例', link: '/guide/examples' },

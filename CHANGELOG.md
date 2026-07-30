@@ -4,6 +4,58 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-30
+
+### 新增
+
+- **`flowcast init`**：交互式扫描本机 agent CLI（PATH 二进制 + 已登录凭证 + 配置合法性三层信号），生成 `~/.flowcast/{agents,providers}.json`。支持 `--yes` 非交互、`--scope project`。新用户第一步从手抄 JSON 升级为一条命令。
+- **`flowcast doctor`**：只读环境自检（Node/git/CLI 可达性/配置合法性/包可解析性），每条 ✗ 给修复建议。
+- **`flowcast run --supervise`**：监督模式——跑一个已有 flow，挂了让 agent（复用同一 agentproc session，连续上下文）修 flow 代码，用同一 runId 续跑直到跑通。与 `orchestrate` 对偶（orchestrate 创造 flow，supervise 修 flow）。
+- **`scan.js`**：三层信号扫描模块（init/doctor 共用），纯函数 + 依赖注入可测。
+
+### 修复
+
+- **测试偶发崩溃根治**：Node test runner 的 `Unable to deserialize cloned data`（V8 structuredClone 竞态 nodejs/node#49844）偶发导致 CI 变红。根因数据：文件并发跑崩溃率 15%，`--test-concurrency=1` 降到 0%；CI 已用串行但仍偶发，新增 `test/run-with-retry.sh` 检测偶发标志自动重跑。
+- **`checkpoint.test.js` 异步 IO 排干**：所有 finally 块的裸 `rmSync` 改为 `await safeRm`，降低残留 IO 触发竞态的窗口。
+
+### 优化
+
+- **文档站视觉美化**：从纯默认 VitePress 主题升级为绿色品牌化（Hero 渐变 + 沉浸背景 + 特性卡片图标 + logo）。
+- **文档全面同步**：init/doctor/supervise 贯通到 README/skill/docs-site 各页；纠正 orchestrate 定位（接受"编排需求"而非"一次性简单任务"）；修正"零运行时依赖"为"最小依赖"。
+- **报错引导**：`resolveAgent`/`resolveProvider` 的 ConfigError 从孤立报错接到 `init`/`doctor` 入口。
+
+## [0.6.1] - 2026-07-22
+
+### 修复
+
+- **打包遗漏**：`rate-limiter.js` 未列入 `package.json` 的 `files`，发布的 npm 包缺失该文件导致运行时报错。
+
+## [0.6.0] - 2026-07-15
+
+### 新增
+
+- **迁移到 AgentProc v0.10.0+ SDK**：executor 改用 agentproc 内建 executor（`runViaExecutor`），删除 flowcast 自维护的 per-CLI adapter（adapters.js）。CLI 调用、session 续接、事件解析由 agentproc SDK 单一事实来源提供。升级到 v0.10.1 补完 agy session 续接。
+- **顶层 `events.js`**：集中事件常量与 schema 注册表，dashboard 事件识别单一来源。
+- **CONFIG_SCHEMA.md / SECURITY_MODEL.md**：配置 schema 与安全模型文档。
+
+### 修复
+
+- **`checkpoint` done/pause async + 同步落盘**：终止路径 `await _logQueue` 强制日志落盘后再返回/抛错。
+- **测试竞态系统性修复**：checkpoint 测试 12 处 finally 补齐 `safeRm`/`flushLog`，修复 macOS/Ubuntu CI 竞态。
+- **CI 稳定性**：加 `--test-concurrency=1` 串行跑文件、`--test-timeout=120s` 兜底、`timeout-minutes: 30`。
+
+## [0.5.0] - 2026-06-22
+
+### 新增
+
+- **自学习限流感知系统（`rate-limiter.js`）**：agent 调用被限流时自动记录冷却，跨 run 感知，避免重复撞限流。`flowcast rate-limits` 命令查看/清除记录。
+- **agent 结果类型统一 + schema 约束扩展**：`makeAgentResult` 统一 String & {_meta} 契约，token/model 元数据自动捕获。
+
+### 修复
+
+- **`quality-gate` / `schema` 多轮 resume-fix 容错** + `runStructured` 故障容忍。
+- **macOS CI 竞态**：flushLog 后再 rmSync。
+
 ## [0.4.0] - 2026-06-22
 
 ### 新增
