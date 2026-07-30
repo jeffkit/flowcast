@@ -46,5 +46,10 @@ jobs:
       # 重型子进程同时抢 CPU → 事件循环饥饿 → 测试 hang / 超时变红。
       # --test-concurrency=1 串行跑文件（文件内测试本就顺序），避免跨文件争抢；
       # --test-timeout 作为兜底，任何真实 hang 都会在 120s 内明确失败而非拖垮整 job。
+      #
+      # run-with-retry.sh：Node test runner 有已知偶发 IPC 反序列化竞态
+      # （nodejs/node#49844，"Unable to deserialize cloned data"），--test-concurrency=1
+      # 已大幅降低概率，但低核 CI runner 上仍偶发。脚本检测到该偶发崩溃自动重跑（最多 2 次），
+      # 真测试失败则立即退出不重试。
       - name: Run tests
-        run: node --test --test-concurrency=1 --test-timeout=120000 test/*.test.js
+        run: ./test/run-with-retry.sh
