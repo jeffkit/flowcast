@@ -65,11 +65,9 @@ const { values: opts } = parseArgs({ options: {
   'max-rounds':   { type: 'string', default: '5' },   // repair loop 轮数上限
   'max-sprints':  { type: 'string', default: '8' },   // sprint 数上限（防止 planner 失控）
   workdir:        { type: 'string' },                 // 默认 <repo>/.flowcast/pge/<run-id>/
-  scope:          { type: 'string', default: 'auto' },// build-time scope 守卫：允许改动的文件范围
-                                                       //   'auto'（默认）= 从 goal 提到的语言推断
-                                                       //   'ts' / 'py' / 'rs' = 只许这些扩展名
-                                                       //   'glob:sdk/typescript/**,*.md' = gitignore 风格白名单
-                                                       //   'none' = 关闭守卫（不做 git checkout 还原）
+  'allow-dirty-gates': { type: 'boolean', default: false }, // baseline gate 健康检查：
+                                                            //   false（默认）= gate 在 main 上就红 → 报错中止
+                                                            //   true = 标记这些 gate 为"只记录不 resume-fix"
   'dry-run':      { type: 'boolean', default: false },
   hitl:           { type: 'string', default: 'terminal' },
   'project-name': { type: 'string', default: 'flowcast' },
@@ -114,6 +112,12 @@ const worktreeDir = isDryRun() ? repo : join(repo, '.worktrees', `pge-${runId}`)
 // 否则 main 跑到赋值行时还处在 TDZ（实测 pge-v2-20260804-142837）。
 let baseline = null
 
+// baseline gate 健康检查的结果：在 main（干净 worktree）上就红的 gate 名字集合。
+// --allow-dirty-gates 时，sprintGates() 会把这些 gate 的 onFail 改为 'rollback'
+// （失败只记录、不触发 resume-fix，避免 Generator 被迫修无关的 pre-existing lint 债务）。
+// 严格模式（默认）下这个集合非空会直接在 preflight 报错中止，根本不会跑到 sprint。
+const dirtyGates = new Set()
+
 // 受控的 git 操作 helper（在 worktree 或主仓里跑 git 命令）。
 function git(args, cwd = repo) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -133,95 +137,6 @@ function goalSubject() {
   const firstLine = goal.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'pge result'
   return firstLine.slice(0, 60)
 }
-
-// ── build-time scope 守卫（待修 4b）──────────────────────────────────────
-// Generator 常偏离 goal/contract 的 scope（goal 说"只加 TS 测试"却改了 11 个 .py）。
-// prompt 约束 + Evaluator contract 校验都拦不住 build 阶段的偏离。这里在 Generator
-// 跑完后、gate 之前，把**超出 scope 的已跟踪文件**还原（git checkout --），新增文件
-// （?? 未跟踪）一律保留（它们是预期产物）。
-//
-// scope 判定（parseScope）支持三种形式：
-//   - 'auto'（默认）：从 goal 提到的语言推断（提到 TS/typescript → ts；提到 Python → py…）
-//   - 扩展名列表：'ts,js,md' → 只许这些扩展名的文件改动
-//   - glob 白名单：'glob:sdk/typescript/**,*.md' → 路径匹配任一 pattern 才允许
-//   - 'none'：关闭守卫
-function parseScope(spec, goalText) {
-  if (!spec || spec === 'none') return { mode: 'none' }
-  if (spec === 'auto') {
-    // 从 goal 提到的技术栈推断允许的扩展名。只看显式提到的语言，没提到就退化为 none
-    // （不做硬还原，避免误杀）。
-    const g = goalText.toLowerCase()
-    const exts = new Set()
-    if (/\b(typescript|\.ts\b|ts 测试|ts test|vitest)\b/.test(g) || g.includes('typescript')) exts.add('ts')
-    if (/\b(python|\.py\b|py 测试|pytest)\b/.test(g) || g.includes('python')) exts.add('py')
-    if (/\b(rust|\.rs\b|cargo)\b/.test(g) || g.includes('rust')) exts.add('rs')
-    if (exts.size === 0) return { mode: 'none' }  // goal 没提任何语言，不猜
-    return { mode: 'ext', exts: [...exts] }
-  }
-  if (spec.startsWith('glob:')) {
-    return { mode: 'glob', patterns: spec.slice(5).split(',').map(s => s.trim()).filter(Boolean) }
-  }
-  // 否则当作扩展名列表
-  return { mode: 'ext', exts: spec.split(',').map(s => s.trim().replace(/^\./, '').toLowerCase()).filter(Boolean) }
-}
-
-// 判断单个文件路径是否在 scope 内。
-function fileInScope(path, scope) {
-  if (scope.mode === 'none') return true
-  if (scope.mode === 'ext') {
-    const ext = path.split('.').pop()?.toLowerCase()
-    return scope.exts.includes(ext)
-  }
-  if (scope.mode === 'glob') {
-    // 简化 glob：仅支持 * / ** / ?（用 minimap 匹配太重，这里手写最小实现）
-    return scope.patterns.some(p => matchGlob(path, p))
-  }
-  return true
-}
-
-// 最小 glob 匹配：** 匹配任意层级，* 匹配非 /，? 匹配单字符。
-function matchGlob(path, pattern) {
-  // 把 pattern 转成正则
-  let re = '^'
-  let i = 0
-  while (i < pattern.length) {
-    const c = pattern[i]
-    if (c === '*') {
-      if (pattern[i + 1] === '*') { re += '.*'; i += 2; if (pattern[i] === '/') i++ }
-      else { re += '[^/]*'; i++ }
-    } else if (c === '?') { re += '[^/]'; i++ }
-    else if ('.+()[]{}^$|\\'.includes(c)) { re += '\\' + c; i++ }
-    else { re += c; i++ }
-  }
-  re += '$'
-  return new RegExp(re).test(path)
-}
-
-// 在 worktree 里把超出 scope 的已修改文件（M/已跟踪）还原。返回被还原的文件列表。
-function enforceScope(scope) {
-  if (scope.mode === 'none') return []
-  if (isDryRun()) return []
-  let status
-  try { status = git(['status', '--porcelain'], worktreeDir) } catch { return [] }
-  const restored = []
-  for (const line of status.split('\n').filter(Boolean)) {
-    // porcelain 格式：XY <path>，X 是 index 状态，Y 是 worktree 状态。
-    // 只还原「已跟踪文件的修改」（X/Y 含 M/D/R/C，不含 ?? 即新增）。
-    const xy = line.slice(0, 2)
-    const path = line.slice(3).trim().replace(/^"|"$/g, '')
-    if (xy.includes('?')) continue  // 新增文件，保留
-    if (fileInScope(path, scope)) continue
-    try {
-      git(['checkout', '--', path], worktreeDir)
-      restored.push(path)
-    } catch (e) {
-      console.log(`  [scope] 还原 ${path} 失败: ${e.message?.slice(0, 80)}`)
-    }
-  }
-  return restored
-}
-
-const scopeSpec = parseScope(opts.scope, goal)
 
 
 // 角色派生：默认从 <agent> 派生 <agent>-planner / <agent>-evaluator。
@@ -523,6 +438,47 @@ async function main() {
       } else {
         console.log(`[worktree] 复用已有工作目录（续跑）: ${worktreeDir}`)
       }
+    })
+    // baseline gate 健康检查：在干净的 worktree（== main）上空跑一遍所有 gate。
+    // 如果某个 gate 在 baseline 就红，说明 main 上有 pre-existing 的 lint/test 债务。
+    // 不查就跑，resume-fix 会把这些无关债务塞给 Generator，耗尽 budget（实测 v3：
+    // ruff 在 main 上有 35 个 pre-existing error，Generator 被迫修了 12 个 Python
+    // 文件的 import 风格，30min 超时）。这里把"修 lint 债务"的责任交还给人。
+    await cp.step('preflight.gate-check', async () => {
+      const gates = await sprintGates()
+      if (gates.length === 0) return { checked: 0 }
+      // 用 no-op resumeFix + onExhausted:'return-fail' 跑一遍：失败不 throw、不修复，
+      // 只拿 pass/fail 结果。cwd 用 worktreeDir（此刻 worktree == main，无任何改动）。
+      const probed = gates.map(g => ({ ...g, cwd: g.cwd ?? worktreeDir }))
+      const results = await runGates(probed, {
+        resumeFix: async () => false,  // 探测模式：不修复，直接让 gate 返回 fail
+        onExhausted: 'return-fail',
+      })
+      const failed = results.filter(r => !r.passed)
+      if (failed.length === 0) {
+        console.log(`  [gate-check] ${results.length} 个 gate 在 baseline 全绿`)
+        return { checked: results.length, dirty: [] }
+      }
+      const dirtyNames = failed.map(r => r.name)
+      dirtyNames.forEach(n => dirtyGates.add(n))
+      const msg = `baseline gate 健康检查：以下 gate 在 main（干净 worktree）上就是红的：\n` +
+        failed.map(r => `  - ${r.name}（exit ${r.exitCode ?? 'n/a'}）`).join('\n') +
+        `\n\n这意味着 main 上有 pre-existing 的 lint/test/build 债务。继续跑会让\n` +
+        `resume-fix 把这些无关债务塞给 Generator，耗尽 budget。`
+      if (opts['allow-dirty-gates']) {
+        console.log(`  [gate-check] ⚠️ ${failed.length} 个 gate 在 baseline 就红（--allow-dirty-gates）：`)
+        console.log(failed.map(r => `    - ${r.name}`).join('\n'))
+        console.log(`  [gate-check] 这些 gate 在 sprint 里将降级为「只记录不 resume-fix」`)
+        return { checked: results.length, dirty: dirtyNames, downgraded: true }
+      }
+      // 严格模式：报错中止，把修 baseline 的责任交还给人
+      const err = new Error(
+        msg + `\n\n请先在 main 上修干净这些 gate（例如 \`cd <repo> && <gate-cmd>\`），\n` +
+        `commit 后再跑 pge。或用 --allow-dirty-gates 跳过（这些 gate 会降级为只记录）。`,
+      )
+      err.code = 'DIRTY_BASELINE_GATE'
+      err.dirtyGates = dirtyNames
+      throw err
     })
   }
 
@@ -972,13 +928,6 @@ ${read(`sprint-${idx}-contract.md`) ?? JSON.stringify(contract)}
 完整 spec：
 ${read('spec.md') ?? ''}`,
         )
-        // build-time scope 守卫（待修 4b）：Generator 常偏离 goal 的 scope（改了不该改的
-        // 文件）。在 gate 前把超出 scope 的已跟踪文件还原，避免 resume-fix 被无关改动拖死。
-        // 新增文件（??）一律保留——它们是预期产物。
-        const restored = enforceScope(scopeSpec)
-        if (restored.length) {
-          console.log(`  [scope] 还原 ${restored.length} 个超出 scope 的文件: ${restored.slice(0, 5).join(', ')}${restored.length > 5 ? '...' : ''}`)
-        }
         return { phase: 'build' }
       }
 
@@ -993,11 +942,6 @@ sprint：${sprint.name}
 contract（验收点以此为准）：
 ${read(`sprint-${idx}-contract.md`) ?? JSON.stringify(contract)}`,
       )
-      // repair 轮同样做 scope 守卫：Generator 修 bug 时可能再次蔓延 scope。
-      const restored = enforceScope(scopeSpec)
-      if (restored.length) {
-        console.log(`  [scope] repair 轮还原 ${restored.length} 个超出 scope 的文件: ${restored.slice(0, 5).join(', ')}${restored.length > 5 ? '...' : ''}`)
-      }
       return { phase: 'repair', turn }
     },
     {
@@ -1109,13 +1053,20 @@ ${read('spec.md') ?? ''}
   }
 }
 
-// 加载质量门：业务项目 .flowcast/gates.json + 内置默认（合并）
+// 加载质量门：业务项目 .flowcast/gates.json + 内置默认（合并）。
+// 若 preflight.gate-check 发现有 baseline 就红的 gate 且 --allow-dirty-gates，
+// 这些 gate 的 onFail 降级为 'rollback'（失败只记录，不触发 resume-fix，
+// 避免 Generator 被迫修无关的 pre-existing 债务）。
 async function sprintGates() {
   let builtin = []
   let project = []
   try { builtin = defaultGates() } catch { /* 无内置也无所谓 */ }
   try { project = await loadGates({ repo }) } catch { /* 业务项目没声明也无所谓 */ }
-  return mergeGates(builtin, project)
+  const merged = mergeGates(builtin, project)
+  if (dirtyGates.size > 0) {
+    return merged.map(g => dirtyGates.has(g.name) ? { ...g, onFail: 'rollback' } : g)
+  }
+  return merged
 }
 
 function defaultGates() {
