@@ -468,13 +468,13 @@ async function main() {
       if (opts['allow-dirty-gates']) {
         console.log(`  [gate-check] ⚠️ ${failed.length} 个 gate 在 baseline 就红（--allow-dirty-gates）：`)
         console.log(failed.map(r => `    - ${r.name}`).join('\n'))
-        console.log(`  [gate-check] 这些 gate 在 sprint 里将降级为「只记录不 resume-fix」`)
+        console.log(`  [gate-check] 这些 gate 将从 sprint gates 中跳过（不跑、不判 fail、不触发 repair）`)
         return { checked: results.length, dirty: dirtyNames, downgraded: true }
       }
       // 严格模式：报错中止，把修 baseline 的责任交还给人
       const err = new Error(
         msg + `\n\n请先在 main 上修干净这些 gate（例如 \`cd <repo> && <gate-cmd>\`），\n` +
-        `commit 后再跑 pge。或用 --allow-dirty-gates 跳过（这些 gate 会降级为只记录）。`,
+        `commit 后再跑 pge。或用 --allow-dirty-gates 让这些 gate 从 sprint 中跳过。`,
       )
       err.code = 'DIRTY_BASELINE_GATE'
       err.dirtyGates = dirtyNames
@@ -1055,8 +1055,11 @@ ${read('spec.md') ?? ''}
 
 // 加载质量门：业务项目 .flowcast/gates.json + 内置默认（合并）。
 // 若 preflight.gate-check 发现有 baseline 就红的 gate 且 --allow-dirty-gates，
-// 这些 gate 的 onFail 降级为 'rollback'（失败只记录，不触发 resume-fix，
-// 避免 Generator 被迫修无关的 pre-existing 债务）。
+// 这些 gate 从 sprint gates 里完全移除（不跑、不判 fail、不触发 repair），
+// 避免 Generator 被迫修无关的 pre-existing 债务。
+// 注意：不是降级 onFail——降级仍会让 gate 跑、失败后 isDone 仍判 sprint 失败
+// 并触发 repair loop（实测 ilinkhub-val-1785833310074：turn-2/3 的 repair prompt
+// 只有 gate summary、没有 evaluator findings，Generator 对着空 bug list 空转）。
 async function sprintGates() {
   let builtin = []
   let project = []
@@ -1064,7 +1067,11 @@ async function sprintGates() {
   try { project = await loadGates({ repo }) } catch { /* 业务项目没声明也无所谓 */ }
   const merged = mergeGates(builtin, project)
   if (dirtyGates.size > 0) {
-    return merged.map(g => dirtyGates.has(g.name) ? { ...g, onFail: 'rollback' } : g)
+    const skipped = merged.filter(g => dirtyGates.has(g.name))
+    if (skipped.length) {
+      console.log(`  [gate] 跳过 baseline 就红的 gate（--allow-dirty-gates）: ${skipped.map(g => g.name).join(', ')}`)
+    }
+    return merged.filter(g => !dirtyGates.has(g.name))
   }
   return merged
 }
