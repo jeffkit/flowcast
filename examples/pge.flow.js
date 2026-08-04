@@ -65,6 +65,11 @@ const { values: opts } = parseArgs({ options: {
   'max-rounds':   { type: 'string', default: '5' },   // repair loop 轮数上限
   'max-sprints':  { type: 'string', default: '8' },   // sprint 数上限（防止 planner 失控）
   workdir:        { type: 'string' },                 // 默认 <repo>/.flowcast/pge/<run-id>/
+  scope:          { type: 'string', default: 'auto' },// build-time scope 守卫：允许改动的文件范围
+                                                       //   'auto'（默认）= 从 goal 提到的语言推断
+                                                       //   'ts' / 'py' / 'rs' = 只许这些扩展名
+                                                       //   'glob:sdk/typescript/**,*.md' = gitignore 风格白名单
+                                                       //   'none' = 关闭守卫（不做 git checkout 还原）
   'dry-run':      { type: 'boolean', default: false },
   hitl:           { type: 'string', default: 'terminal' },
   'project-name': { type: 'string', default: 'flowcast' },
@@ -128,6 +133,96 @@ function goalSubject() {
   const firstLine = goal.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'pge result'
   return firstLine.slice(0, 60)
 }
+
+// ── build-time scope 守卫（待修 4b）──────────────────────────────────────
+// Generator 常偏离 goal/contract 的 scope（goal 说"只加 TS 测试"却改了 11 个 .py）。
+// prompt 约束 + Evaluator contract 校验都拦不住 build 阶段的偏离。这里在 Generator
+// 跑完后、gate 之前，把**超出 scope 的已跟踪文件**还原（git checkout --），新增文件
+// （?? 未跟踪）一律保留（它们是预期产物）。
+//
+// scope 判定（parseScope）支持三种形式：
+//   - 'auto'（默认）：从 goal 提到的语言推断（提到 TS/typescript → ts；提到 Python → py…）
+//   - 扩展名列表：'ts,js,md' → 只许这些扩展名的文件改动
+//   - glob 白名单：'glob:sdk/typescript/**,*.md' → 路径匹配任一 pattern 才允许
+//   - 'none'：关闭守卫
+function parseScope(spec, goalText) {
+  if (!spec || spec === 'none') return { mode: 'none' }
+  if (spec === 'auto') {
+    // 从 goal 提到的技术栈推断允许的扩展名。只看显式提到的语言，没提到就退化为 none
+    // （不做硬还原，避免误杀）。
+    const g = goalText.toLowerCase()
+    const exts = new Set()
+    if (/\b(typescript|\.ts\b|ts 测试|ts test|vitest)\b/.test(g) || g.includes('typescript')) exts.add('ts')
+    if (/\b(python|\.py\b|py 测试|pytest)\b/.test(g) || g.includes('python')) exts.add('py')
+    if (/\b(rust|\.rs\b|cargo)\b/.test(g) || g.includes('rust')) exts.add('rs')
+    if (exts.size === 0) return { mode: 'none' }  // goal 没提任何语言，不猜
+    return { mode: 'ext', exts: [...exts] }
+  }
+  if (spec.startsWith('glob:')) {
+    return { mode: 'glob', patterns: spec.slice(5).split(',').map(s => s.trim()).filter(Boolean) }
+  }
+  // 否则当作扩展名列表
+  return { mode: 'ext', exts: spec.split(',').map(s => s.trim().replace(/^\./, '').toLowerCase()).filter(Boolean) }
+}
+
+// 判断单个文件路径是否在 scope 内。
+function fileInScope(path, scope) {
+  if (scope.mode === 'none') return true
+  if (scope.mode === 'ext') {
+    const ext = path.split('.').pop()?.toLowerCase()
+    return scope.exts.includes(ext)
+  }
+  if (scope.mode === 'glob') {
+    // 简化 glob：仅支持 * / ** / ?（用 minimap 匹配太重，这里手写最小实现）
+    return scope.patterns.some(p => matchGlob(path, p))
+  }
+  return true
+}
+
+// 最小 glob 匹配：** 匹配任意层级，* 匹配非 /，? 匹配单字符。
+function matchGlob(path, pattern) {
+  // 把 pattern 转成正则
+  let re = '^'
+  let i = 0
+  while (i < pattern.length) {
+    const c = pattern[i]
+    if (c === '*') {
+      if (pattern[i + 1] === '*') { re += '.*'; i += 2; if (pattern[i] === '/') i++ }
+      else { re += '[^/]*'; i++ }
+    } else if (c === '?') { re += '[^/]'; i++ }
+    else if ('.+()[]{}^$|\\'.includes(c)) { re += '\\' + c; i++ }
+    else { re += c; i++ }
+  }
+  re += '$'
+  return new RegExp(re).test(path)
+}
+
+// 在 worktree 里把超出 scope 的已修改文件（M/已跟踪）还原。返回被还原的文件列表。
+function enforceScope(scope) {
+  if (scope.mode === 'none') return []
+  if (isDryRun()) return []
+  let status
+  try { status = git(['status', '--porcelain'], worktreeDir) } catch { return [] }
+  const restored = []
+  for (const line of status.split('\n').filter(Boolean)) {
+    // porcelain 格式：XY <path>，X 是 index 状态，Y 是 worktree 状态。
+    // 只还原「已跟踪文件的修改」（X/Y 含 M/D/R/C，不含 ?? 即新增）。
+    const xy = line.slice(0, 2)
+    const path = line.slice(3).trim().replace(/^"|"$/g, '')
+    if (xy.includes('?')) continue  // 新增文件，保留
+    if (fileInScope(path, scope)) continue
+    try {
+      git(['checkout', '--', path], worktreeDir)
+      restored.push(path)
+    } catch (e) {
+      console.log(`  [scope] 还原 ${path} 失败: ${e.message?.slice(0, 80)}`)
+    }
+  }
+  return restored
+}
+
+const scopeSpec = parseScope(opts.scope, goal)
+
 
 // 角色派生：默认从 <agent> 派生 <agent>-planner / <agent>-evaluator。
 // 如果派生出的 profile 不存在（常见：用户只配了基础 profile 如 'minimax'），
@@ -280,7 +375,7 @@ function makeResumeFix(idx) {
       GENERATOR,
       `你是 Generator。质量门 "${gate.name}" 失败了，请按下面的失败输出逐条修复：
 
-${failureOutput}
+${(failureOutput ?? '').slice(0, 2000)}${(failureOutput?.length ?? 0) > 2000 ? '\n\n[… 失败输出已截断，完整内容见 sprint-' + idx + '-bugs.md]' : ''}
 
 sprint：见 sprint-${idx}-contract.md
 contract（验收点以此为准）：
@@ -877,6 +972,13 @@ ${read(`sprint-${idx}-contract.md`) ?? JSON.stringify(contract)}
 完整 spec：
 ${read('spec.md') ?? ''}`,
         )
+        // build-time scope 守卫（待修 4b）：Generator 常偏离 goal 的 scope（改了不该改的
+        // 文件）。在 gate 前把超出 scope 的已跟踪文件还原，避免 resume-fix 被无关改动拖死。
+        // 新增文件（??）一律保留——它们是预期产物。
+        const restored = enforceScope(scopeSpec)
+        if (restored.length) {
+          console.log(`  [scope] 还原 ${restored.length} 个超出 scope 的文件: ${restored.slice(0, 5).join(', ')}${restored.length > 5 ? '...' : ''}`)
+        }
         return { phase: 'build' }
       }
 
@@ -891,6 +993,11 @@ sprint：${sprint.name}
 contract（验收点以此为准）：
 ${read(`sprint-${idx}-contract.md`) ?? JSON.stringify(contract)}`,
       )
+      // repair 轮同样做 scope 守卫：Generator 修 bug 时可能再次蔓延 scope。
+      const restored = enforceScope(scopeSpec)
+      if (restored.length) {
+        console.log(`  [scope] repair 轮还原 ${restored.length} 个超出 scope 的文件: ${restored.slice(0, 5).join(', ')}${restored.length > 5 ? '...' : ''}`)
+      }
       return { phase: 'repair', turn }
     },
     {
