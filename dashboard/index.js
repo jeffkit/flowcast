@@ -12,25 +12,22 @@ export { collectRuns } from './collect.js'
 export { renderHtml } from './render.js'
 
 /**
- * 生成看板 HTML 文件。
+ * 组装单个项目的完整看板 model（runs + agents + workflows 合并）。
  *
- * 采集四类数据合并进 model：
- *   - runs       collectRuns(repo)              所有 run（含 worktree 子 run）
- *   - agents     loadAgents + scanAgents 合并   配置的 agent profile + 本机 CLI 装机/凭证状态
- *   - workflows  listFlows(repo)                项目级 + 用户级 flow 文件清单
- *   - byWorkflow collectRuns 已自带             按 flowName 聚合的 run 统计
+ * server.js 的 `/api/projects/:id/model` 与 generateDashboard 都复用本函数，
+ * 保证「静态 HTML 看板」与「在线 dashboard 服务」看到的是同一份数据口径。
+ * agent/workflow 采集是 best-effort：失败时不阻断 runs 展示（兼容最小可用），
+ * 仅在 model._collectWarning 留一条诊断信息。
  *
  * @param {object} o
  *   - repo     仓根目录（默认 cwd）
- *   - out      输出 HTML 路径（默认 <flowcastDir>/dashboard.html，即 .flowcast/ 或兼容的 .flowx/）
  *   - staleMs  僵尸阈值
  *   - now      注入当前时间（测试用）
- * @returns {Promise<{out:string, model:object}>}
+ * @returns {Promise<object>} 可直接 JSON.stringify 给前端的 model 对象
  */
-export async function generateDashboard({ repo = process.cwd(), out, staleMs, now } = {}) {
+export async function buildModel({ repo = process.cwd(), staleMs, now } = {}) {
   const model = collectRuns(repo, { staleMs, now })
-
-  // 并行采集 agents + workflows（均为只读、互不依赖），失败不阻断看板生成。
+  // 并行采集 agents + workflows（均为只读、互不依赖），失败不阻断 runs 展示。
   try {
     const [configured, scanned, workflows] = await Promise.all([
       loadAgents({ repo }),
@@ -40,12 +37,28 @@ export async function generateDashboard({ repo = process.cwd(), out, staleMs, no
     model.agents = mergeAgents(configured, scanned)
     model.workflows = workflows
   } catch (e) {
-    // agent/workflow 采集失败时，看板仍可展示 runs（兼容最小可用）。
     model.agents = []
     model.workflows = { project: [], user: [], all: [] }
     model._collectWarning = `agents/workflows 采集失败：${e?.message ?? e}`
   }
+  return model
+}
 
+/**
+ * 生成看板 HTML 文件。
+ *
+ * 薄封装：buildModel 组装数据 → renderHtml 渲染 → 落盘。
+ * 数据组装逻辑已抽到 buildModel，本函数仅负责「生成静态 HTML 文件」这一职责。
+ *
+ * @param {object} o
+ *   - repo     仓根目录（默认 cwd）
+ *   - out      输出 HTML 路径（默认 <flowcastDir>/dashboard.html，即 .flowcast/ 或兼容的 .flowx/）
+ *   - staleMs  僵尸阈值
+ *   - now      注入当前时间（测试用）
+ * @returns {Promise<{out:string, model:object}>}
+ */
+export async function generateDashboard({ repo = process.cwd(), out, staleMs, now } = {}) {
+  const model = await buildModel({ repo, staleMs, now })
   const outPath = out ?? `${flowcastDir(repo)}/dashboard.html`
   mkdirSync(dirname(outPath), { recursive: true })
   writeFileSync(outPath, renderHtml(model))

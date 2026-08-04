@@ -25,6 +25,21 @@ const require = createRequire(import.meta.url)
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const [,, command, ...rest] = process.argv
 
+/** dry-run 环境检测（与 dry-run.js 的 isDryRun 同口径，但这里避免加载整个模块）。 */
+function isDryRunEnv() {
+  const v = process.env.FLOWCAST_DRY_RUN
+  return !!(v && v !== '0' && v !== 'false') || !!(process.env.FLOWX_DRY_RUN)
+}
+
+/** 自动登记项目到 dashboard 列表（幂等，best-effort，失败不阻断流程）。 */
+async function autoRegister(repoPath) {
+  try {
+    const { registerProjectIfNew } = await import(join(__dirname, '../dashboard/projects.js'))
+    const entry = registerProjectIfNew(repoPath)
+    if (entry) console.log(`📊 已登记到 dashboard: ${entry.name}（首次运行自动添加）`)
+  } catch { /* 自动登记失败不影响流程执行 */ }
+}
+
 // 用户级 flows 目录：优先 ~/.flowcast/flows，向后兼容 ~/.flowx/flows
 const _home = homedir()
 const USER_FLOWS_DIR = existsSync(join(_home, '.flowcast'))
@@ -91,6 +106,7 @@ Commands:
   flows remove <name>  Remove a user-level flow
   orchestrate <goal>   L3: generate a flow from a goal, validate it, then run it
   dashboard            Generate a static observability dashboard (HTML) for all runs
+  dashboard-server     Start a live aggregate dashboard server (multi-project, web UI)
   list                 List all workflow runs in current project (scans .flowcast/runs)
   rate-limits          Show/clear rate-limit records (~/.flowcast/rate-limits.json)
 
@@ -105,7 +121,8 @@ Examples:
   flowcast orchestrate "大目标" --split --concurrency 3 # 拆子任务并发
   flowcast run ./my-flow.js --repo .                     # 跑自定义 flow 文件
   flowcast run ./my-flow.js --supervise --agent cursor-default  # 跑挂了自动修 flow 到跑通
-  flowcast dashboard --repo . --open                     # 生成可观测看板
+  flowcast dashboard --repo . --open                     # 生成可观测看板（静态 HTML）
+  flowcast dashboard-server --open                        # 启动聚合 dashboard 服务（多项目）
   flowcast list                                           # 列出当前项目的所有 run
   flowcast rate-limits               # 列出所有活跃限流记录
   flowcast rate-limits clear         # 清空全部限流记录
@@ -266,6 +283,11 @@ if (command === 'init') {
   const { runDashboard } = await import(join(__dirname, '../dashboard/cli.js'))
   process.exit(await runDashboard(rest))
 
+} else if (command === 'dashboard-server') {
+  // 全局聚合 dashboard 服务：登记多项目 + 在线查看每个项目的 run 历史（node:http）
+  const { runDashboardServer } = await import(join(__dirname, '../dashboard/server-cli.js'))
+  process.exit(await runDashboardServer(rest))
+
 } else if (command === 'run') {
   const nameOrFile = rest[0]
   if (!nameOrFile) {
@@ -283,6 +305,9 @@ if (command === 'init') {
     console.error(`安装：flowcast flows install <path-to-flow.js>`)
     process.exit(1)
   }
+
+  // 自动登记当前项目到 dashboard 列表（dry-run 除外），用户不用手动加项目。
+  if (!isDryRunEnv()) await autoRegister(process.cwd())
 
   // --supervise：监督模式——跑 flow，挂了让 agent 修 flow，用同一 runId 续跑直到跑通
   if (rest.includes('--supervise')) {

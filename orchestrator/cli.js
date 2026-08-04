@@ -51,6 +51,15 @@ export async function runOrchestrate(argv, { generate, onData = (d) => process.s
   const timeout = opts.timeout ? parseInt(opts.timeout, 10) : undefined
   const dryRun = opts['dry-run']
 
+  // 自动登记项目到 dashboard 列表（dry-run 除外），用户不用手动加项目。
+  if (!dryRun) {
+    try {
+      const { registerProjectIfNew } = await import('../dashboard/projects.js')
+      const entry = registerProjectIfNew(repo)
+      if (entry) console.log(`📊 已登记到 dashboard: ${entry.name}（首次运行自动添加）`)
+    } catch { /* 自动登记失败不影响编排 */ }
+  }
+
   const [agents, providers] = await Promise.all([loadAgents({ repo }), loadProviders({ repo })])
 
   // ── 接单分拆模式：大目标 → 拆子任务 → 各自生成 flow → fanOut 并发执行 ──
