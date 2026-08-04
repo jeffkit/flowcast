@@ -102,6 +102,13 @@ mkdirSync(workdir, { recursive: true })
 // dry-run 不创建 worktree（无真实 git 操作）。
 const worktreeDir = isDryRun() ? repo : join(repo, '.worktrees', `pge-${runId}`)
 
+// preflight 捕获的 main HEAD sha，供 landToMain / crossProviderReview / preserveScene 用。
+// 必须放模块作用域（而非 main 内）：preserveScene 是顶层函数，闭包链走 module，
+// 若 baseline 只在 main 里声明，preserveScene 拿不到 → diff 导出报 "baseline is not
+// defined"（实测 pge-val-1785819383）。也必须在 dispatch（await main()）之前声明，
+// 否则 main 跑到赋值行时还处在 TDZ（实测 pge-v2-20260804-142837）。
+let baseline = null
+
 // 受控的 git 操作 helper（在 worktree 或主仓里跑 git 命令）。
 function git(args, cwd = repo) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -359,6 +366,33 @@ process.on('SIGINT', () => {
   process.exit(130)
 })
 
+// ── 全局错误捕获（待修 2：agent 调用挂死）──────────────────────────────────
+// 复盘现象：claude CLI 子进程退出后 node 主进程也退出（pgrep 找不到进程），
+// 但 state.json 还停在 running——没有任何 error 输出或 verdict。根因是某个
+// 异步路径抛了 uncaughtException / unhandledRejection，node 默认崩掉但没机会
+// 把原因落盘。这里把原因写到 cp.done（state.json）+ stderr，让下次崩溃能看到
+// 为什么死的，并保留 worktree 现场供排查。
+//
+// 注意：这两个 handler 必须在 dispatch 之前注册——覆盖 main()/landPreserve()/
+// prunePreserve() 整个执行期。dry-run 时 worktreeDir === repo，不能删，因此
+// 只在非 dry-run 时提示保留 worktree。
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err)
+  try { cp.done({ fatalError: (err?.stack ?? String(err)).slice(0, 500) }) } catch {}
+  if (!isDryRun() && existsSync(worktreeDir)) {
+    console.error('[FATAL] worktree 保留:', worktreeDir)
+  }
+  process.exit(1)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason)
+  try { cp.done({ fatalRejection: String(reason?.stack ?? reason).slice(0, 500) }) } catch {}
+  if (!isDryRun() && existsSync(worktreeDir)) {
+    console.error('[FATAL] worktree 保留:', worktreeDir)
+  }
+  process.exit(1)
+})
+
 // ── preserve/rescue 命令 dispatch（在 main 之前）──
 // 这些命令消费之前失败 run 保留的现场，不走正常 sprint 流程。
 if (opts['land-preserve']) {
@@ -382,7 +416,6 @@ if (wallClockAbort) clearTimeout(wallClockAbort)
 async function main() {
   // ── Phase 0: preflight（worktree 隔离）──
   // dry-run 跳过所有 git 操作。
-  let baseline = null
   if (!isDryRun()) {
     baseline = await cp.step('preflight.baseline', () => {
       return captureBaseline(repo, { requireClean: true })
@@ -549,9 +582,12 @@ function preserveScene({ reason, failureOutput }) {
   }
 
   // ③ 导出 diff 到 run 目录（worktree 被删也能看改动）
+  // baseline 可能为 null（preflight 未完成就崩了）→ 退化为 diff HEAD（仅 worktree 内未提交改动）。
   const diffDir = flowcastDir(repo) + '/runs/' + runId
   try {
-    const diff = git(['diff', `${baseline}..${wtSha}`], repo)
+    const diff = baseline
+      ? git(['diff', `${baseline}..${wtSha}`], repo)
+      : git(['diff', 'HEAD'], worktreeDir)
     writeFileSync(join(diffDir, 'preserved.diff'), diff || '')
   } catch (e) {
     console.log(`  [preserve] diff 导出失败: ${e.message?.slice(0, 80)}`)
@@ -752,12 +788,22 @@ ${read('spec.md') ? `\n完整 spec 参考：\n${read('spec.md')}\n` : ''}
     contract.criteria.map(c => `- [${c.id}] ${c.behavior}\n  - how: ${c.how}`).join('\n'))
 
   // 2b. Evaluator 评审 contract（不写代码，只判 agreed）
+  // scope 校验（待修 1）：deepseek 等模型不遵守 Generator prompt 里的 scope 约束，
+  // 常把「只加测试」的 goal 蔓延成改 11 个实现文件。在 contract 谈判阶段就拦住——
+  // 把 goal 原文交给 Evaluator，让它判 contract 验收点是否超出 goal 字面 scope。
   let review = await structured(
     EVALUATOR,
     `你是 Evaluator（skeptical QA）。评审这份 sprint contract：
 - 范围对不对？验收点够不够具体？有没有遗漏 spec 要求？
 - 不满意就 agreed=false 并写明修改建议
 - 满意才 agreed=true
+
+- **scope 检查**：contract 的验收点是否超出 goal 的字面 scope？
+  如果 goal 说"只加测试"，contract 不应包含改实现代码的验收点。
+  如果 goal 指定了语言（如"TS 测试"），contract 不应包含其他语言的改动。
+  超出 scope → agreed=false，要求 Generator 收缩 scope。
+原始 goal（scope 以此为准）：
+${goal}
 
 contract：
 ${JSON.stringify(contract, null, 2)}
@@ -788,6 +834,12 @@ ${review.feedback}
 
 新 contract：
 ${JSON.stringify(contract, null, 2)}
+
+- **scope 检查仍适用**：验收点不能超出 goal 字面 scope（goal 说"只加测试"就不
+  该有改实现的验收点；goal 指定语言就不该有其他语言改动）。超出 → agreed=false。
+原始 goal：
+${goal}
+
 agreed=true 仅当你真的满意。`,
       contractReviewSchema,
     )
