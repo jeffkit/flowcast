@@ -39,6 +39,7 @@
 import { parseArgs } from 'util'
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { execFileSync } from 'child_process'
 import {
   Checkpoint, setWorkdir,
   loadAgents, loadProviders, resolveAgent,
@@ -47,6 +48,7 @@ import {
   runStructured,
   loop,
   notify, setHitlBackend,
+  captureBaseline, gitWorktreeAdd, gitWorktreeRemove,
   flowcastDir, isDryRun,
 } from 'flowcast'
 
@@ -88,6 +90,32 @@ const [agents, providers] = await Promise.all([loadAgents({ repo }), loadProvide
 // 共享工作目录：三个 agent 通过这里的文件做 handoff（spec.md / contract.md / verdict.json / bugs.md）
 const workdir = opts.workdir ?? join(flowcastDir(repo), 'pge', runId)
 mkdirSync(workdir, { recursive: true })
+
+// ── worktree 隔离 ──────────────────────────────────────────────────────
+// Generator/Evaluator 在隔离的 git worktree 里改代码，不污染主仓工作区。
+// worktree 生命周期是 per-run（所有 sprint 共享同一个 worktree，渐进累积改动）。
+// dry-run 不创建 worktree（无真实 git 操作）。
+const worktreeDir = isDryRun() ? repo : join(repo, '.worktrees', `pge-${runId}`)
+
+// 受控的 git 操作 helper（在 worktree 或主仓里跑 git 命令）。
+function git(args, cwd = repo) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+}
+
+// 把 pattern 幂等追加到 .git/info/exclude，防产物入 git（recursive 的做法）。
+function ensureGitExclude(repoDir, pattern) {
+  const excludePath = join(repoDir, '.git', 'info', 'exclude')
+  const content = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : ''
+  if (!content.split('\n').includes(pattern)) {
+    writeFileSync(excludePath, content + (content && !content.endsWith('\n') ? '\n' : '') + pattern + '\n')
+  }
+}
+
+// 从 goal 文本派生干净的 commit message subject（≤60 字符）。
+function goalSubject() {
+  const firstLine = goal.split('\n')[0]?.replace(/^#+\s*/, '').trim() || 'pge result'
+  return firstLine.slice(0, 60)
+}
 
 // 角色派生：默认从 <agent> 派生 <agent>-planner / <agent>-evaluator。
 // 如果派生出的 profile 不存在（常见：用户只配了基础 profile 如 'minimax'），
@@ -200,10 +228,11 @@ const verdictSchema = {
 // ── helpers ────────────────────────────────────────────────────────────
 // dry-run 下 resolveAgent 仍要求 profile 存在，故 dry-run 走 runAgent（不依赖 profile），
 // 非 dry-run 走 profile 解析（带 provider/extraArgs/timeout）。
+// Generator/Evaluator 在 worktree 里跑（cwd: worktreeDir），不污染主仓工作区。
 async function runProfile(agentName, taskGoal, extra = {}) {
   if (isDryRun()) return runAgent(taskGoal, { cli: guessCli(agentName), cwd: repo, ...extra })
   const a = resolveAgent(agentName, agents, { providers })
-  return a.run(taskGoal, { __cli: a.executor, cwd: repo, ...a.opts, ...extra })
+  return a.run(taskGoal, { __cli: a.executor, cwd: worktreeDir, ...a.opts, ...extra })
 }
 
 /**
@@ -260,7 +289,7 @@ async function structured(agentName, taskGoal, schema, opts = {}) {
   if (isDryRun()) return dryRunStruct(taskGoal, schema)
   const a = resolveAgent(agentName, agents, { providers })
   return runStructured(
-    (p) => a.run(p, { __cli: a.executor, cwd: repo, ...a.opts }),
+    (p) => a.run(p, { __cli: a.executor, cwd: worktreeDir, ...a.opts }),
     taskGoal,
     { schema, retries: 2, ...opts },
   )
@@ -317,10 +346,45 @@ const wallClockAbort = PGE_WALL_CLOCK_MS > 0
   : null
 if (wallClockAbort) wallClockAbort.unref?.()
 
+// signal handler：SIGINT/SIGTERM 时不删 worktree（保留现场供用户接管）。
+// 不在此处 process.exit——让默认的 exit 路径走，只是确保 cleanup 不执行。
+process.on('SIGINT', () => {
+  console.error('\n[signal] SIGINT 收到，worktree 保留在 ' + worktreeDir + '，不清理。')
+  cp.done({ signalInterrupted: true })
+  process.exit(130)
+})
+
 await main()
+// 成功完成 → 清理 worktree。失败（throw）时不执行到这里，worktree 自然保留。
+if (!isDryRun() && existsSync(worktreeDir)) {
+  try {
+    gitWorktreeRemove(repo, worktreeDir)
+    console.log(`[worktree] 已清理: ${worktreeDir}`)
+  } catch (e) {
+    console.log(`[worktree] 清理失败（可能 git worktree remove 报锁，手动删即可）: ${e.message?.slice(0, 80)}`)
+  }
+}
 if (wallClockAbort) clearTimeout(wallClockAbort)
 
 async function main() {
+  // ── Phase 0: preflight（worktree 隔离）──
+  // dry-run 跳过所有 git 操作。
+  let baseline = null
+  if (!isDryRun()) {
+    baseline = await cp.step('preflight.baseline', () => {
+      return captureBaseline(repo, { requireClean: true })
+    })
+    await cp.step('preflight.worktree', () => {
+      ensureGitExclude(repo, '.worktrees/')
+      if (!existsSync(worktreeDir)) {
+        gitWorktreeAdd(repo, worktreeDir)
+        console.log(`[worktree] 创建隔离工作目录: ${worktreeDir}`)
+      } else {
+        console.log(`[worktree] 复用已有工作目录（续跑）: ${worktreeDir}`)
+      }
+    })
+  }
+
   // ── Phase 1: Planner ──
   const spec = await cp.step('plan', async () => {
     const prompt = `你是 Planner。把下面简短需求扩展成完整产品 spec：
@@ -358,14 +422,67 @@ ${read('spec.md') ? `（注意：spec 已存在，可能是续跑。若存在请
       console.log(`  [abort] sprint ${i + 1} (${sprint.name}) 失败：${e.message?.slice(0, 200) ?? e}`)
       cp.done({ sprints: spec.sprints.length, maxRounds, abortedAt: i + 1, reason: e.message })
       await notify(`pge 中止：sprint ${i + 1} 失败\n\n${e.message?.slice(0, 500) ?? e}`)
-      console.log(`\n✗ pge 中止在 sprint ${i + 1}。worktree 留给你手动接管。`)
+      // 失败不删 worktree——保留现场供用户手动接管。
+      console.log(`\n✗ pge 中止在 sprint ${i + 1}。worktree 保留在 ${worktreeDir}`)
       throw e
     }
   }
 
-  cp.done({ sprints: spec.sprints.length, maxRounds })
-  await notify(`pge 完成：${spec.title}（${spec.sprints.length} sprints）`)
+  // ── Phase 3: commit + land（所有 sprint 通过后）──
+  // 把 worktree 里累积的改动提交到 main。
+  if (!isDryRun()) {
+    await cp.step('commit.land', () => landToMain(baseline))
+  }
+
+  cp.done({ sprints: spec.sprints.length, maxRounds, landed: !isDryRun() })
+  await notify(`pge 完成：${spec.title}（${spec.sprints.length} sprints）${isDryRun() ? '' : '，已落地 main'}`)
   console.log(`\n✓ pge 完成。产物在 ${workdir}`)
+}
+
+/**
+ * 把 worktree 的改动 land 到 main checkout。
+ *
+ * 移植自 recursive self-improve 的 commit.prep + commit.land 逻辑：
+ *   1. worktree 内 git add -A + commit（拿到 wtSha）
+ *   2. 检查 main 是否被推进（mainMoved）
+ *   3. 快路径：main 没动 → cherry-pick --no-commit + 显式 commit
+ *   4. 慢路径：main 动了 → warn 并跳过（pge 不做 rebase+regate，让用户手动处理）
+ *
+ * @param {string} baseline  preflight 时捕获的 main HEAD sha
+ */
+function landToMain(baseline) {
+  // worktree 内提交
+  git(['add', '-A'], worktreeDir)
+  const status = git(['status', '--porcelain'], worktreeDir)
+  if (!status) {
+    console.log('  [land] worktree 无改动，跳过 commit')
+    return { empty: true }
+  }
+  git(['commit', '-m', `wt: ${goalSubject()}`], worktreeDir)
+  const wtSha = git(['rev-parse', 'HEAD'], worktreeDir)
+  const mainHead = git(['rev-parse', 'HEAD'], repo)
+  const mainMoved = mainHead !== baseline
+
+  if (mainMoved) {
+    // 慢路径：main 被外部推进了（并发 flow / 手动 commit）。
+    // pge 不做 rebase+regate（太复杂）——保留 worktree 让用户决定。
+    console.log(`  [warn] main 已从 ${baseline.slice(0, 8)} 推进到 ${mainHead.slice(0, 8)}（可能并发 flow 或手动 commit）`)
+    console.log(`  [warn] worktree 保留在 ${worktreeDir}，改动已 commit 为 wtSha ${wtSha.slice(0, 8)}`)
+    console.log(`  [warn] 手动 cherry-pick: git cherry-pick ${wtSha.slice(0, 8)}`)
+    return { mainMoved: true, wtSha }
+  }
+
+  // 快路径：main 没动 → cherry-pick 到 main
+  try {
+    git(['cherry-pick', '--no-commit', wtSha], repo)
+  } catch (e) {
+    try { git(['cherry-pick', '--abort'], repo) } catch {}
+    throw new Error(`cherry-pick 冲突 landing ${wtSha.slice(0, 8)}: ${e.message}`)
+  }
+  git(['commit', '-m', `feat: ${goalSubject()}`], repo)
+  const landedSha = git(['rev-parse', 'HEAD'], repo)
+  console.log(`  [land] 已落地 main: ${landedSha.slice(0, 8)}`)
+  return { landed: true, sha: landedSha }
 }
 
 // ── 单个 sprint 的 plan-contract-build-eval-repair 闭环 ──
