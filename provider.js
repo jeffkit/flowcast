@@ -198,6 +198,9 @@ export function claudeProviderEnv(provider) {
   const env = {}
   if (provider.apiBase) env.ANTHROPIC_BASE_URL = provider.apiBase
   if (provider.apiKey) env.ANTHROPIC_AUTH_TOKEN = provider.apiKey
+  // agentproc 的 claude-code executor 从 env.CLAUDE_MODEL 读 --model 参数。
+  // 不设的话 claude CLI 用自己的默认模型（可能是 glm-5.2），导致 provider 的 model 被忽略。
+  if (provider.model) env.CLAUDE_MODEL = provider.model
   if (provider.extraEnv && typeof provider.extraEnv === 'object') {
     Object.assign(env, provider.extraEnv)
   }
