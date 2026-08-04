@@ -63,5 +63,5 @@ async function main() {
 
 async function runProfile(agentName, taskGoal, extra = {}) {
   const a = resolveAgent(agentName, agents, { providers })
-  return a.run(taskGoal, { cwd: repo, ...a.opts, ...extra })
+  return a.run(taskGoal, { __cli: a.executor, cwd: repo, ...a.opts, ...extra })
 }

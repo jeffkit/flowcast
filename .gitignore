@@ -1,4 +1,8 @@
-.flowcast/
+# flowcast runtime 产物（日志、run 状态、pge 工作目录）不入 git；
+# 但配置文件（gates.json / agents.json / hygiene.md）应入 git——它们是项目配置。
+.flowcast/logs/
+.flowcast/runs/
+.flowcast/pge/
 .flowx/
 node_modules/
 .worktrees/

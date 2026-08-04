@@ -1,0 +1,34 @@
+{
+  "//": "flowcast agent pool（项目级）。pge flow 默认派生 <agent>-planner / <agent> / <agent>-evaluator 三个 profile，这里声明全三个，让本仓 pge 配置自包含（不依赖用户级 ~/.flowcast/agents.json）。claude 需登录（claude auth login）；codex 自带鉴权（codex exec 非交互模式）。",
+  "agents": {
+    "claude": {
+      "executor": "claude",
+      "extraArgs": ["--dangerously-skip-permissions"],
+      "timeout": 600000
+    },
+    "claude-planner": {
+      "_comment": "Planner 角色：需求 → spec。结构化调用不应超过 5 分钟。",
+      "executor": "claude",
+      "extraArgs": ["--dangerously-skip-permissions"],
+      "timeout": 300000
+    },
+    "claude-evaluator": {
+      "_comment": "Evaluator 角色：skeptical QA。结构化调用不应超过 5 分钟。",
+      "executor": "claude",
+      "extraArgs": ["--dangerously-skip-permissions"],
+      "timeout": 300000
+    },
+    "codex": {
+      "executor": "codex",
+      "timeout": 1800000
+    },
+    "codex-planner": {
+      "executor": "codex",
+      "timeout": 600000
+    },
+    "codex-evaluator": {
+      "executor": "codex",
+      "timeout": 600000
+    }
+  }
+}

@@ -66,7 +66,7 @@ async function runProfile(agentName, taskGoal, extra = {}) {
   const throwOnCritical = a.executor === 'recursive' && !('throwOnCritical' in rest)
     ? true
     : rest.throwOnCritical
-  const runOpts = { cwd: repo, ...a.opts, ...rest }
+  const runOpts = { __cli: a.executor, cwd: repo, ...a.opts, ...rest }
   if (a.executor === 'recursive') runOpts.throwOnCritical = throwOnCritical
   const runner = (p) => a.run(p, runOpts)
   if (schema) return runStructured(runner, taskGoal, { schema, retries: schemaRetries })

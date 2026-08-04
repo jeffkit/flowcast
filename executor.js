@@ -274,6 +274,10 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
   }
 
   const run = isDryRun() ? makeFakeRun(profile.executor) : (ex.run ?? makeDefaultRun())
+  // 把 executor 注入 opts.__cli，让 makeDefaultRun 知道该 spawn 哪个 CLI。
+  // 不在此注入时，makeDefaultRun 会 fallback 到 'claude'（默认值），导致所有
+  // 非 claude executor（codex/agy/recursive 等）被错误地 spawn 成 claude。
+  opts.__cli = profile.executor
   return { executor: profile.executor, run, opts }
 }
 

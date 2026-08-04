@@ -1,0 +1,10 @@
+{
+  "_comment": "flowcast 自身质量门（供 pge flow 在本仓 dry-run / 真实跑时加载）。门从简：只有测试门——flowcast 是纯 Node ESM 库，无构建步骤、无 lint 配置。",
+  "gates": {
+    "test": {
+      "cmd": "node --test test/*.test.js",
+      "onFail": "resume-fix",
+      "timeout": 120000
+    }
+  }
+}

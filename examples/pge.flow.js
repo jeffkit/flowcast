@@ -26,6 +26,15 @@
  *   - 默认 planner = `<agent>-planner`、generator = `<agent>`、evaluator = `<agent>-evaluator`
  *   - 也可用 --planner / --generator / --evaluator 显式覆盖
  *   - evaluator profile 的 systemPrompt 应明确「skeptical、不许放水、有疑虑即 fail」
+ *
+ * 跨语言适配（三件套配置，都在 <repo>/.flowcast/ 下）：
+ *   - gates.json   — 质量门（构建/测试/lint 命令 + onFail 策略）。各技术栈差异在此表达，
+ *                    flow 代码不写死任何构建工具。无 gates.json 时不跑门。
+ *   - agents.json  — planner/generator/evaluator 用哪个 CLI profile（claude/codex/gagy…）。
+ *   - hygiene.md   — 该仓的卫生铁律（模块注册约定、依赖管理、代码规范等），注入到
+ *                    Generator 的 build/repair prompt。无 hygiene.md 时退化为语言无关的
+ *                    通用铁律（GENERIC_HYGIENE，不提具体构建工具）。
+ *   样板见 flowcast/.flowcast/（Rust 铁律示例）。TS/Python 仓各写自己的 hygiene.md。
  */
 import { parseArgs } from 'util'
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs'
@@ -80,9 +89,38 @@ const [agents, providers] = await Promise.all([loadAgents({ repo }), loadProvide
 const workdir = opts.workdir ?? join(flowcastDir(repo), 'pge', runId)
 mkdirSync(workdir, { recursive: true })
 
-const PLANNER   = opts.planner   ?? `${opts.agent}-planner`
+// 角色派生：默认从 <agent> 派生 <agent>-planner / <agent>-evaluator。
+// 如果派生出的 profile 不存在（常见：用户只配了基础 profile 如 'minimax'），
+// 自动回退到基础 profile。pge 的 prompt 已定义各角色职责，不需要不同 profile。
 const GENERATOR = opts.generator ?? opts.agent
-const EVALUATOR = opts.evaluator ?? `${opts.agent}-evaluator`
+const PLANNER   = opts.planner ?? (agents[`${opts.agent}-planner`]   ? `${opts.agent}-planner`   : opts.agent)
+const EVALUATOR = opts.evaluator ?? (agents[`${opts.agent}-evaluator`] ? `${opts.agent}-evaluator` : opts.agent)
+
+// ── 项目卫生铁律（可外置到 <repo>/.flowcast/hygiene.md）─────────────────
+// 各技术栈的卫生铁律差异大（Rust 的 mod.rs 注册 vs TS 的模块导出 vs Python 的
+// import 约定），不应硬编码在 flow 里。从 <repo>/.flowcast/hygiene.md 读取；
+// 不存在则退化为语言无关的通用铁律（GENERIC_HYGIENE）。
+function loadHygiene(repo) {
+  const p = join(flowcastDir(repo), 'hygiene.md')
+  return existsSync(p) ? readFileSync(p, 'utf8') : ''
+}
+const hygiene = loadHygiene(repo)
+
+// 语言无关的最小铁律——没有 hygiene.md 时的兜底（不提具体构建工具）。
+const GENERIC_HYGIENE = [
+  '- **新代码要有对应测试**：每个验收点都应有覆盖它的测试，不要只改实现不写测试。',
+  '- **不遗留调试代码**：删掉 console.log / println! / pdb 断点 / 临时探查脚本；',
+  '  工作树 git status 必须干净，不允许遗留可执行文件或临时二进制。',
+  '- **改动前先读相关现有代码**：匹配既有命名风格、目录结构、错误处理模式，',
+  '  不要引入与代码库不一致的范式。',
+  '- **外部依赖的 API 形状要读源码确认**：用了不确定的库 API（字段名、返回类型、',
+  '  必填参数）时，读 node_modules / site-packages / ~/.cargo/registry/src/ 下的',
+  '  真实源码确认，不要凭记忆写——这是最常见的失败模式。',
+].join('\n')
+
+const HYGIENE_BLOCK = hygiene
+  ? `## 项目卫生铁律（必须遵守）\n${hygiene}`
+  : `## 通用卫生铁律（本仓未声明 .flowcast/hygiene.md，遵循以下通用规范）\n${GENERIC_HYGIENE}`
 
 // ── schemas ────────────────────────────────────────────────────────────
 const specSchema = {
@@ -165,7 +203,7 @@ const verdictSchema = {
 async function runProfile(agentName, taskGoal, extra = {}) {
   if (isDryRun()) return runAgent(taskGoal, { cli: guessCli(agentName), cwd: repo, ...extra })
   const a = resolveAgent(agentName, agents, { providers })
-  return a.run(taskGoal, { cwd: repo, ...a.opts, ...extra })
+  return a.run(taskGoal, { __cli: a.executor, cwd: repo, ...a.opts, ...extra })
 }
 
 /**
@@ -210,9 +248,8 @@ ${read(`sprint-${idx}-contract.md`) ?? ''}
 修复要求：
 - 不要重新设计，只针对失败点修
 - 修完后自评一遍，确认这条门能过
-- 如果失败是 upstream API/crate 用错（缺字段、变体名错、untagged enum 形状错），
-  务必读 cargo registry 里的 crate 源码（路径见 ~/.cargo/registry/src/）确认真实形状，
-  不要凭印象写——这是最常见的失败模式`,
+
+${HYGIENE_BLOCK}`,
     )
     // 返回 true 表示「已应用修复」；runGate 会重跑 gate 命令验证。
     return true
@@ -223,7 +260,7 @@ async function structured(agentName, taskGoal, schema, opts = {}) {
   if (isDryRun()) return dryRunStruct(taskGoal, schema)
   const a = resolveAgent(agentName, agents, { providers })
   return runStructured(
-    (p) => a.run(p, { cwd: repo, ...a.opts }),
+    (p) => a.run(p, { __cli: a.executor, cwd: repo, ...a.opts }),
     taskGoal,
     { schema, retries: 2, ...opts },
   )
@@ -265,16 +302,34 @@ async function dryRunStruct(_taskGoal, schema) {
 }
 
 // ── main ───────────────────────────────────────────────────────────────
+// 进程级 failsafe：wall-clock 超时防止 agent 调用卡死导致整个 flow 永远 running。
+// 单次 agent 调用有 profile.timeout 兜底，但多个 sprint × 多轮 repair 累积时间可能很长。
+// 超时后记一笔并非零退出，让 supervisor 知道 flow 没正常结束。
+const PGE_WALL_CLOCK_MS = parseInt(process.env.PGE_WALL_CLOCK_MS ?? '', 10) || 0
+const wallClockAbort = PGE_WALL_CLOCK_MS > 0
+  ? setTimeout(() => {
+      console.error(`\n[wall-clock] pge 超时（${PGE_WALL_CLOCK_MS / 60000}min），强制退出。`)
+      console.error(`workdir: ${workdir}`)
+      console.error(`用 --run-id ${runId} 续跑（已完成 sprint 会被 checkpoint 跳过）。`)
+      cp.done({ wallClockTimeout: true })
+      process.exit(3)
+    }, PGE_WALL_CLOCK_MS)
+  : null
+if (wallClockAbort) wallClockAbort.unref?.()
+
 await main()
+if (wallClockAbort) clearTimeout(wallClockAbort)
 
 async function main() {
   // ── Phase 1: Planner ──
   const spec = await cp.step('plan', async () => {
     const prompt = `你是 Planner。把下面简短需求扩展成完整产品 spec：
 - 关注产品上下文与高层技术设计，不要写太细的实现（怕错 cascade）
-- 适当 ambitious，scope 可以比用户字面要求更大
-- 适当 weave AI features 进产品
-- 拆成 ${maxSprints} 个以内的 sprint，每个 sprint 一组用户故事
+- **忠于用户需求，不要扩大 scope**：用户没要求的功能不要擅自加。
+  如果需求看起来简单，spec 就简单——1 个 sprint 就够。
+- **不要强行加 AI 功能**：只在需求明确涉及 AI 时才加。
+- 拆成 ${maxSprints} 个以内的 sprint，每个 sprint 一组用户故事。
+  简单需求通常 1-2 个 sprint 足矣，不要为了凑数拆。
 
 需求：${goal}
 
@@ -391,23 +446,15 @@ agreed=true 仅当你真的满意。`,
           GENERATOR,
           `你是 Generator。按 sprint contract 实现。
 - 每个验收点都要落到代码
-- 实现完成后**自评一遍 + 必须先跑 \`PATH="$HOME/.cargo/bin:$PATH" cargo build\` 确认编译过**，
-  再交回（这是修法 C：让 generator 在 quality gate 之前发现编译错，省一次 evaluator 调用）
+- **严格遵守 goal 的 scope**：只改 contract 涉及的文件。如果 goal 说"只加测试"，
+  就不要改实现代码。如果 goal 指定了语言（如"TS 测试"），就不要碰另一种语言。
+  scope 蔓延是 pge 最常见的失败模式——Evaluator 会拒绝超出 scope 的改动。
+- 实现完成后**自评一遍**：确认每个验收点的代码都写到了，确保能过质量门（见 contract 的 how 字段）
 - 改动提交到 git（如果可用）
 
-## 卫生铁律（违反即视为失败）
-- **新模块必须注册**：创建 src/<mod>/ 必须同时加 src/<mod>/mod.rs 且在 src/lib.rs 里
-  \`pub mod <mod>;\`——否则 cargo 根本不编译，等于死代码、测试也跑不到。
-- **禁止用 cargo run / cargo build 创建临时探查二进制**（如 *_check / *_explore）。
-  要探查 crate 类型用 \`cargo expand\` 或写到 \`#[cfg(test)] mod tests\` 里。
-  worktree git status 必须干净，不允许遗留可执行文件。
-- **涉及外部 crate / spec 时必须先读源码确认 API 形状**：
-  - crate 的真实定义在 \`~/.cargo/registry/src/*/crate-name-*/src/\` 下
-  - 不许凭印象写 struct 字段、enum 变体名、untagged enum discriminator
-  - 写 serde 测试时，JSON 字面量字段名/必填字段必须按真实 schema 来
-- **Cargo.toml 新依赖按项目惯例**：参考已有 optional 依赖（如 \`agui-protocol = { ..., optional = true }\`），
-  仅在协议地基（被所有后续模块依赖的纯数据层）时才用非 optional，且要在 spec 里说明。
-- **eval 写代码时若已读 \`sprint-${idx}-bugs.md\`**，先看清上一轮 bug 列表（gate 失败 / evaluator 失败 / findings fail），
+${HYGIENE_BLOCK}
+
+- **若已读 \`sprint-${idx}-bugs.md\`**，先看清上一轮 bug 列表（gate 失败 / evaluator 失败 / findings fail），
   按列表修，不要重做不相关的部分。
 
 sprint：${sprint.name}
