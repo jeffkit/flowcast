@@ -60,12 +60,17 @@ const { values: opts } = parseArgs({ options: {
   planner:        { type: 'string' },
   generator:      { type: 'string' },
   evaluator:      { type: 'string' },
+  'reviewer-agent':   { type: 'string' },             // cross-provider review 的 agent profile
+  'no-review':    { type: 'boolean', default: false }, // 跳过 review
   'max-rounds':   { type: 'string', default: '5' },   // repair loop 轮数上限
   'max-sprints':  { type: 'string', default: '8' },   // sprint 数上限（防止 planner 失控）
   workdir:        { type: 'string' },                 // 默认 <repo>/.flowcast/pge/<run-id>/
   'dry-run':      { type: 'boolean', default: false },
   hitl:           { type: 'string', default: 'terminal' },
   'project-name': { type: 'string', default: 'flowcast' },
+  // ── preserve/rescue 命令 ──
+  'land-preserve':    { type: 'string' },  // 把指定 run-id 的 preserve 现场跑门后 land 到 main
+  'prune-preserve':   { type: 'string' },  // 清理指定 run-id 的 preserve 现场
 } })
 
 if (opts['dry-run']) process.env.FLOWCAST_DRY_RUN = '1'
@@ -354,7 +359,15 @@ process.on('SIGINT', () => {
   process.exit(130)
 })
 
-await main()
+// ── preserve/rescue 命令 dispatch（在 main 之前）──
+// 这些命令消费之前失败 run 保留的现场，不走正常 sprint 流程。
+if (opts['land-preserve']) {
+  await landPreserve(opts['land-preserve'])
+} else if (opts['prune-preserve']) {
+  prunePreserve(opts['prune-preserve'])
+} else {
+  await main()
+}
 // 成功完成 → 清理 worktree。失败（throw）时不执行到这里，worktree 自然保留。
 if (!isDryRun() && existsSync(worktreeDir)) {
   try {
@@ -420,15 +433,33 @@ ${read('spec.md') ? `（注意：spec 已存在，可能是续跑。若存在请
       await cp.step(tag, () => runSprint(sprint, i + 1))
     } catch (e) {
       console.log(`  [abort] sprint ${i + 1} (${sprint.name}) 失败：${e.message?.slice(0, 200) ?? e}`)
-      cp.done({ sprints: spec.sprints.length, maxRounds, abortedAt: i + 1, reason: e.message })
-      await notify(`pge 中止：sprint ${i + 1} 失败\n\n${e.message?.slice(0, 500) ?? e}`)
-      // 失败不删 worktree——保留现场供用户手动接管。
-      console.log(`\n✗ pge 中止在 sprint ${i + 1}。worktree 保留在 ${worktreeDir}`)
+      // preserve 现场（WIP commit + ref + diff + failure log），不硬回滚
+      const preserved = preserveScene({ reason: e.message?.slice(0, 200) ?? String(e), failureOutput: e.stack })
+      cp.done({ sprints: spec.sprints.length, maxRounds, abortedAt: i + 1, reason: e.message, verdict: preserved.verdict })
+      await notify(`pge 中止：sprint ${i + 1} 失败（${preserved.verdict}）\n恢复: --land-preserve ${runId}`)
+      console.log(`\n✗ pge 中止在 sprint ${i + 1}（${preserved.verdict}）。worktree: ${worktreeDir}`)
       throw e
     }
   }
 
-  // ── Phase 3: commit + land（所有 sprint 通过后）──
+  // ── Phase 3a: cross-provider review（所有 sprint 通过后、commit 前）──
+  // 用不同 provider 做二次审查，防 Generator 自评放水。
+  if (!isDryRun()) {
+    const reviewVerdict = await crossProviderReview(baseline)
+    if (reviewVerdict === 'needs-fix') {
+      // review 循环耗尽 → preserve（代码可能是对的，只是 reviewer 不满意）
+      const preserved = preserveScene({ reason: 'cross-provider review 未通过', failureOutput: 'review rounds exhausted' })
+      cp.done({ sprints: spec.sprints.length, maxRounds, verdict: preserved.verdict, reviewFailed: true })
+      await notify(`pge：review 未通过（${preserved.verdict}）\n恢复: --land-preserve ${runId}`)
+      console.log(`\n✗ review 未通过（${preserved.verdict}）。worktree: ${worktreeDir}`)
+      return  // 不 land，不 throw（让 cleanup 保留 worktree）
+    }
+    if (reviewVerdict === 'unavailable') {
+      console.log('  [review] reviewer 不可用，跳过 review 直接 land（门已过 + evaluator 已过）')
+    }
+  }
+
+  // ── Phase 3b: commit + land（review 通过后）──
   // 把 worktree 里累积的改动提交到 main。
   if (!isDryRun()) {
     await cp.step('commit.land', () => landToMain(baseline))
@@ -485,7 +516,220 @@ function landToMain(baseline) {
   return { landed: true, sha: landedSha }
 }
 
-// ── 单个 sprint 的 plan-contract-build-eval-repair 闭环 ──
+// ── preserve/rescue：失败时保留现场，供后续消费 ──────────────────────────
+// 移植自 recursive self-improve 的 preserveScene。
+// 保留 4 样东西：WIP commit、refs/preserve/<runId>、preserved.diff、failure log。
+
+/**
+ * 保留失败现场。不硬回滚——worktree 里的 WIP 代码是有价值的。
+ *
+ * @param {object} args
+ * @param {string} args.reason  失败原因
+ * @param {string} [args.failureOutput]  失败输出（stderr/log 尾部）
+ * @returns {{ verdict: string, ref: string, wtSha: string }}
+ */
+function preserveScene({ reason, failureOutput }) {
+  // ① worktree 内提交 WIP（哪怕测试红也先 commit，拿完整代码状态）
+  try { git(['add', '-A'], worktreeDir) } catch {}
+  let wtSha
+  try {
+    git(['commit', '-m', `preserve: ${reason.slice(0, 60)}`], worktreeDir)
+    wtSha = git(['rev-parse', 'HEAD'], worktreeDir)
+  } catch {
+    // 无改动时 commit 失败，用当前 HEAD
+    wtSha = git(['rev-parse', 'HEAD'], worktreeDir)
+  }
+
+  // ② 打 preserve ref（不占 worktree slot，可被多处引用）
+  const ref = `refs/preserve/${runId}`
+  try {
+    git(['update-ref', ref, wtSha], repo)
+  } catch (e) {
+    console.log(`  [preserve] update-ref 失败（不影响主流程）: ${e.message?.slice(0, 80)}`)
+  }
+
+  // ③ 导出 diff 到 run 目录（worktree 被删也能看改动）
+  const diffDir = flowcastDir(repo) + '/runs/' + runId
+  try {
+    const diff = git(['diff', `${baseline}..${wtSha}`], repo)
+    writeFileSync(join(diffDir, 'preserved.diff'), diff || '')
+  } catch (e) {
+    console.log(`  [preserve] diff 导出失败: ${e.message?.slice(0, 80)}`)
+  }
+
+  // ④ 失败日志
+  try {
+    writeFileSync(join(diffDir, 'failure.log'), String(failureOutput ?? reason))
+  } catch {}
+
+  console.log(`  [preserve] run ${runId} 已保留:`)
+  console.log(`    ref: ${ref} (${wtSha.slice(0, 8)})`)
+  console.log(`    diff: ${join(diffDir, 'preserved.diff')}`)
+  console.log(`    worktree: ${worktreeDir}`)
+  console.log(`  恢复: --land-preserve ${runId}`)
+  console.log(`  清理: --prune-preserve ${runId}`)
+
+  return { verdict: 'failed-preserved', ref, wtSha }
+}
+
+/**
+ * land-preserve：把之前失败 run 的 preserve 现场跑门后 land 到 main。
+ * 不用 cherry-pick（可能丢同链更早 commit），用 merge-base + diff + apply。
+ */
+async function landPreserve(preserveRunId) {
+  const ref = `refs/preserve/${preserveRunId}`
+  let sha
+  try {
+    sha = git(['rev-parse', ref], repo)
+  } catch {
+    console.error(`错误：ref ${ref} 不存在。检查 run-id 是否正确。`)
+    process.exit(1)
+  }
+
+  const mainHead = git(['rev-parse', 'HEAD'], repo)
+  const ancestor = git(['merge-base', mainHead, sha], repo)
+
+  // 用 merge-base..sha 的完整 diff（包含同链所有 commit 的累积改动）
+  let fullDiff
+  try {
+    fullDiff = git(['diff', `${ancestor}..${sha}`], repo)
+  } catch (e) {
+    console.error(`无法生成 diff: ${e.message}`)
+    process.exit(1)
+  }
+
+  if (!fullDiff.trim()) {
+    console.log('preserve 现场无改动，无需 land。')
+    process.exit(0)
+  }
+
+  // 写到临时文件（git() 的 .trim() 会剪末尾换行导致 corrupt patch，补回）
+  const diffFile = join(flowcastDir(repo), 'runs', preserveRunId, 'land.diff')
+  writeFileSync(diffFile, fullDiff.endsWith('\n') ? fullDiff : fullDiff + '\n')
+
+  // apply 到主仓
+  try {
+    git(['apply', diffFile], repo)
+  } catch (e) {
+    console.error(`apply 冲突，恢复主仓: ${e.message?.slice(0, 100)}`)
+    git(['checkout', '--', '.'], repo)
+    git(['clean', '-fd'], repo)
+    process.exit(1)
+  }
+
+  git(['add', '-A'], repo)
+  git(['commit', '-m', `feat: ${goalSubject()} [land-preserve ${preserveRunId.slice(-6)}]`], repo)
+  const landedSha = git(['rev-parse', 'HEAD'], repo)
+  console.log(`✓ preserve ${preserveRunId} 已 land 到 main: ${landedSha.slice(0, 8)}`)
+}
+
+/**
+ * prune-preserve：清理失败 run 的 preserve 现场。
+ */
+function prunePreserve(preserveRunId) {
+  const ref = `refs/preserve/${preserveRunId}`
+  try {
+    git(['update-ref', '-d', ref], repo)
+    console.log(`✓ 已删除 ref: ${ref}`)
+  } catch {
+    console.log(`ref ${ref} 不存在或已删除`)
+  }
+  // 清理 preserve worktree（如果挪到了 preserve 命名空间）
+  const preserveWt = join(repo, '.worktrees', 'preserve', preserveRunId)
+  if (existsSync(preserveWt)) {
+    try {
+      gitWorktreeRemove(repo, preserveWt, { force: true })
+      console.log(`✓ 已删除 worktree: ${preserveWt}`)
+    } catch (e) {
+      console.log(`worktree 删除失败（手动删即可）: ${e.message?.slice(0, 80)}`)
+    }
+  }
+}
+
+// ── cross-provider review ────────────────────────────────────────────────
+// 所有 sprint 通过后、commit 前的二次独立审查。用不同 provider 防自评放水。
+
+/**
+ * 跑 cross-provider review。
+ * 用 --reviewer-agent 指定的 profile（默认用 evaluator profile）做一次 diff 审查。
+ * NEEDS_FIX 时跑 N 轮修复循环。
+ *
+ * @param {string} baselineSha  preflight 的 main HEAD（用于生成 diff）
+ * @returns {'pass'|'needs-fix'|'unavailable'}
+ */
+async function crossProviderReview(baselineSha) {
+  if (opts['no-review']) return 'pass'
+  if (isDryRun()) return 'pass'
+
+  const reviewerProfile = opts['reviewer-agent'] ?? EVALUATOR
+  // 生成完整 diff 给 reviewer（不截断——截断会导致假阴性 NEEDS_FIX）
+  let diff
+  try {
+    // 先 intent-to-add 未跟踪文件让它们进 diff
+    git(['add', '--intent-to-add', '-A'], worktreeDir)
+    diff = git(['diff'], worktreeDir)
+  } catch {
+    diff = '(无法生成 diff)'
+  }
+  if (!diff.trim()) return 'pass'  // 无改动不需要 review
+
+  for (let round = 0; round <= maxRounds; round++) {
+    const stepName = round === 0 ? 'review' : `review.fix-${round}`
+    const verdict = await cp.step(stepName, async () => {
+      const result = await runProfile(
+        reviewerProfile,
+        `你是独立 Reviewer（与 Generator 不同 provider，防自评放水）。
+审查以下完整 diff，重点检查：correctness、regressions、contract violations、安全问题。
+最后一行必须恰好是 VERDICT:PASS 或 VERDICT:NEEDS_FIX。
+
+## 完整 diff
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Goal（原始需求）
+${goal}
+`,
+      )
+      const text = String(result)
+      if (/VERDICT:\s*PASS/.test(text)) return 'pass'
+      if (/VERDICT:\s*NEEDS_FIX/.test(text)) return 'needs-fix'
+      return 'no-verdict'
+    })
+
+    if (verdict === 'pass') {
+      console.log(`  [review] PASS (round ${round})`)
+      return 'pass'
+    }
+    if (verdict === 'no-verdict') {
+      console.log(`  [review] reviewer 未给出明确 verdict（round ${round}），视为 unavailable`)
+      return 'unavailable'
+    }
+
+    // NEEDS_FIX：跑 Generator 修一轮，然后重新生成 diff
+    console.log(`  [review] NEEDS_FIX (round ${round})，让 Generator 修...`)
+    const reviewText = await runProfile(
+      reviewerProfile,
+      `你是独立 Reviewer。上面的 diff 有问题，请列出具体需要修的点（file:line + 问题描述）。
+只列要修的，不要重写代码。`,
+    )
+    await runProfile(
+      GENERATOR,
+      `你是 Generator。Reviewer 对你的实现给了反馈，请逐条修复：
+${reviewText}
+
+sprint contract 参考：
+${read('sprint-1-contract.md') ?? '(无 contract)'}
+
+${HYGIENE_BLOCK}`,
+    )
+    // 重新生成 diff
+    try { diff = git(['diff'], worktreeDir) } catch { diff = '(无法生成 diff)' }
+  }
+
+  console.log(`  [review] ${maxRounds} 轮未收敛，返回 needs-fix`)
+  return 'needs-fix'
+}
 async function runSprint(sprint, idx) {
   console.log(`\n── sprint ${idx}: ${sprint.name} ──`)
 
