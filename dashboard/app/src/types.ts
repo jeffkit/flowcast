@@ -323,12 +323,19 @@ export interface FlowAnalysisBranch {
   elseSteps: number[]
 }
 
+export interface FlowAnalysisCall {
+  caller: string
+  callee: string
+  line: number
+}
+
 export interface FlowAnalysis {
   flowFile: string
   flowName: string
   steps: FlowAnalysisStep[]
   groups: FlowAnalysisGroup[]
   branches: FlowAnalysisBranch[]
+  calls: FlowAnalysisCall[]
   parseError: null | { message: string; line: number; column: number }
   generatedAt: string
 }

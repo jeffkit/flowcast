@@ -872,7 +872,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   border: 1px solid var(--border-light);
   border-radius: 6px;
   padding: 6px 10px;
-  width: 200px;
+  min-width: 160px;
+  max-width: 280px;
   box-shadow: var(--shadow);
 }
 .step-node--dynamic {
@@ -881,9 +882,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .step-node-key {
   font-size: 12px;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .step-node-dyn {
   margin-left: 4px;
@@ -1000,3 +1000,128 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .flow-group-box.collapsed {
   min-width: 140px;
 }
+
+/* 子流程节点 */
+.subflow-node {
+  background: var(--bg-elev);
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  width: 200px;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.subflow-node:hover { background: rgba(91,156,255,0.1); }
+.subflow-node-icon { font-size: 14px; }
+.subflow-node-name {
+  font-size: 13px;
+  color: var(--accent);
+  margin-top: 2px;
+}
+.subflow-node-meta {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+/* 容器与布局 */
+.flow-dag-container { display: flex; flex-direction: column; height: 100%; }
+
+/* 子流程容器（内联展开的 helper scope）— 区别于 loop/parallel，用实线 + 主色调 */
+.flow-group-subflow {
+  border: 1.5px solid var(--accent);
+  background: rgba(91, 156, 255, 0.04);
+  border-radius: 12px;
+}
+.flow-group-subflow .flow-group-label {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--bg-elev2);
+}
+.flow-group-subflow.collapsed {
+  min-width: 180px;
+}
+
+/* 子流程入口节点（折叠态显示在主线上的盒子）*/
+.subflow-entry-node {
+  background: var(--bg-elev);
+  border: 1.5px dashed var(--accent);
+  border-radius: 8px;
+  padding: 6px 12px;
+  min-width: 140px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.subflow-entry-node:hover {
+  background: rgba(91, 156, 255, 0.12);
+  border-style: solid;
+}
+.subflow-entry-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.subflow-entry-icon { font-size: 13px; }
+.subflow-entry-name {
+  font-size: 12px;
+  color: var(--accent);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subflow-entry-count {
+  font-size: 10px;
+  color: var(--text-faint);
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-elev2);
+}
+
+/* ── React Flow 导航组件配色（MiniMap / Background / Controls）────────── */
+.react-flow__minimap {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.react-flow__minimap svg { background: var(--bg-elev) !important; }
+.react-flow__background { background: var(--bg); }
+.react-flow__minimap-mask { fill: rgba(15, 17, 21, 0.75); }
+
+/* ── 画布工具栏（展开/收起 + 图例）────────── */
+.flow-dag-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+}
+.flow-dag-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--text-dim);
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.legend-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.legend-dot-subflow { background: var(--accent); }
+.legend-dot-loop { background: var(--st-running); }
+.legend-dot-dyn { background: transparent; border: 1px dashed var(--st-running); }
+

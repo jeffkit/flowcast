@@ -421,3 +421,33 @@ test('analyzeFlow(self-improve 真实文件)：for group 覆盖循环 step', () 
     g.childStepIndexes.some(i => /review|gate/.test(result.steps[i].key)))
   assert.ok(hasReviewOrGate, 'for group 应覆盖 review/gate step')
 })
+
+// ── calls（函数调用图）──────────────────────────────────────────
+
+test('analyzeFlow：输出 calls（函数调用图）', () => {
+  const src = [
+    "const cp = { step: (k, f) => null }",
+    "async function helper() { await cp.step('inner', () => null) }",
+    "async function main() {",
+    "  await cp.step('start', () => null)",
+    "  await helper()",
+    "}",
+  ].join('\n')
+  const result = analyzeFlow(src)
+  assert.equal(result.parseError, null)
+  const mainCalls = result.calls.filter(c => c.caller === 'main')
+  assert.ok(mainCalls.some(c => c.callee === 'helper'), 'main 应调用 helper')
+})
+
+test('analyzeFlow：calls 排除内置函数', () => {
+  const src = [
+    "const cp = { step: (k, f) => null }",
+    "async function main() {",
+    "  console.log('x')",
+    "  await cp.step('start', () => null)",
+    "}",
+  ].join('\n')
+  const result = analyzeFlow(src)
+  const mainCalls = result.calls.filter(c => c.caller === 'main')
+  assert.ok(!mainCalls.some(c => c.callee === 'log'), 'console.log 不应算 helper')
+})

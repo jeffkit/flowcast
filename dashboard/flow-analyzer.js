@@ -56,12 +56,10 @@ export function analyzeFlow(source, filePath = '<flow>') {
   const steps = []
   const groups = []
   const branches = []
+  const calls = []
 
   // ── 手动祖先遍历 ──
-  // 不依赖 acorn-walk 的 ancestor（它会无差别下钻到 ArrowFunctionExpression 内部，
-  // 让我们错把 lambda 里的 step 归到外层）。改为手动 DFS，自己维护 ancestor 链，
-  // 并在进入 FunctionDeclaration/FunctionExpression/ArrowFunctionExpression 时切换 scope。
-  walkWithAncestors(ast, [], source, steps, groups, branches, null, [])
+  walkWithAncestors(ast, [], source, steps, groups, branches, calls, null, [])
 
   // ── Pass 2：把 group 的 childStepIndexes 填上 ──
   // group 在源码里跨越一段行范围；其 arg 内部的 thunk 内的 step 已按 <anonymous> scope
@@ -84,7 +82,7 @@ export function analyzeFlow(source, filePath = '<flow>') {
     return true
   })
 
-  return { steps, groups: filteredGroups, branches, parseError: null }
+  return { steps, groups: filteredGroups, branches, calls, parseError: null }
 }
 
 /** 判断 AST 节点是否是 for/while 循环语句，返回 group 类型（'for' | 'while' | null）。 */
@@ -114,10 +112,11 @@ function detectLoopStatement(node) {
  * @param {object[]} steps     输出：step 列表
  * @param {object[]} groups    输出：group 列表
  * @param {object[]} branches  输出：if 分支列表
+ * @param {object[]} calls     输出：函数调用图（caller → callee）
  * @param {string|null} ifContext  当前 if 分支方向（'then' | 'else' | null）
  * @param {object[]} ifStack   嵌套 if 分支栈（每个元素 { branch, side }）
  */
-function walkWithAncestors(node, ancestors, source, steps, groups, branches, ifContext = null, ifStack = []) {
+function walkWithAncestors(node, ancestors, source, steps, groups, branches, calls, ifContext = null, ifStack = []) {
   if (!node || typeof node.type !== 'string') return
 
   // 处理 CallExpression（当前节点可能是 step 调用或 group 调用）
@@ -160,6 +159,15 @@ function walkWithAncestors(node, ancestors, source, steps, groups, branches, ifC
           actions: scanGroupActions(node),
         })
       }
+      // 检测 helper 函数调用（用于层次化：子流程节点）
+      const callInfo = detectHelperCall(node)
+      if (callInfo) {
+        calls.push({
+          caller: nearestFunctionScope(ancestors),
+          callee: callInfo.name,
+          line: node.loc?.start?.line ?? 0,
+        })
+      }
     }
   }
 
@@ -184,22 +192,22 @@ function walkWithAncestors(node, ancestors, source, steps, groups, branches, ifC
     branches.push(branch)
     // consequent → then 分支
     const thenStack = [...ifStack, { branch, side: 'then' }]
-    walkChildren(node, newAncestors, source, steps, groups, branches, ['consequent'], 'then', thenStack)
+    walkChildren(node, newAncestors, source, steps, groups, branches, calls, ['consequent'], 'then', thenStack)
     // alternate → else 分支（可能为 null）
     if (node.alternate) {
       const elseStack = [...ifStack, { branch, side: 'else' }]
-      walkChildren(node, newAncestors, source, steps, groups, branches, ['alternate'], 'else', elseStack)
+      walkChildren(node, newAncestors, source, steps, groups, branches, calls, ['alternate'], 'else', elseStack)
     }
     // test 表达式无分支上下文
-    walkChildren(node, newAncestors, source, steps, groups, branches, ['test'], ifContext, ifStack)
+    walkChildren(node, newAncestors, source, steps, groups, branches, calls, ['test'], ifContext, ifStack)
     return
   }
   const keys = getChildKeys(node)
-  walkChildren(node, newAncestors, source, steps, groups, branches, keys, ifContext, ifStack)
+  walkChildren(node, newAncestors, source, steps, groups, branches, calls, keys, ifContext, ifStack)
 }
 
 /** 通用子节点下钻。 */
-function walkChildren(node, ancestors, source, steps, groups, branches, keys, ifContext = null, ifStack = []) {
+function walkChildren(node, ancestors, source, steps, groups, branches, calls, keys, ifContext = null, ifStack = []) {
   for (const key of keys) {
     const child = node[key]
     // VariableDeclarator 分发 init 时把自己加进 ancestors（让 arrow 内的 step
@@ -208,9 +216,9 @@ function walkChildren(node, ancestors, source, steps, groups, branches, keys, if
       ? [...ancestors, node]
       : ancestors
     if (Array.isArray(child)) {
-      for (const c of child) walkWithAncestors(c, childAncestors, source, steps, groups, branches, ifContext, ifStack)
+      for (const c of child) walkWithAncestors(c, childAncestors, source, steps, groups, branches, calls, ifContext, ifStack)
     } else if (child && typeof child.type === 'string') {
-      walkWithAncestors(child, childAncestors, source, steps, groups, branches, ifContext, ifStack)
+      walkWithAncestors(child, childAncestors, source, steps, groups, branches, calls, ifContext, ifStack)
     }
   }
 }
@@ -316,6 +324,48 @@ function detectGroupCall(node) {
   if (node.type !== 'CallExpression') return null
   if (node.callee.type !== 'Identifier') return null
   return GROUP_FUNCS.has(node.callee.name) ? node.callee.name : null
+}
+
+// 内置/工具函数黑名单——这些不算 helper 调用（不是子流程）
+const HELPER_NOISE = new Set([
+  // flowcast 原语
+  'step', 'loop', 'parallel', 'fanOut', 'runAgent', 'runAgentChain',
+  'runGate', 'runGates', 'runStructured', 'notify', 'setHitlBackend',
+  'captureBaseline', 'gitCreateBranch', 'gitCommitAll', 'gitWorktreeAdd',
+  'gitWorktreeRemove', 'setWorkdir', 'resolveAgent',
+  'loadAgents', 'loadProviders', 'loadGates', 'mergeGates',
+  'flowcastDir', 'isDryRun', 'Checkpoint',
+  // Node 内置 / 工具
+  'require', 'import', 'parseArgs', 'console', 'log', 'error', 'warn',
+  'process', 'Math', 'JSON', 'String', 'Number', 'Object', 'Array',
+  'Promise', 'Boolean', 'Date', 'parseInt', 'parseFloat', 'isNaN',
+  'read', 'write', 'readFileSync', 'writeFileSync', 'existsSync',
+  'mkdirSync', 'readdirSync', 'copyFileSync', 'unlinkSync', 'renameSync',
+  'execFileSync', 'spawnSync', 'spawn', 'join', 'resolve', 'dirname',
+  'basename', 'extname', 'normalize', 'relative', 'isAbsolute',
+  'realpathSync', 'statSync', 'tmpdir', 'homedir', 'pathToFileURL',
+  'fileURLToPath', 'hmac', 'randomBytes', 'createHash',
+  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+  'git', 'killProcessTree', 'pgrepAll', 'ensureGitExclude',
+  'killStaleRecursiveProcs', 'preserveScene', 'emitEvent',
+  'assertGatePrereqs', 'pingProvider', 'buildEnv', 'reviewWithRetry',
+  'readRunGoal', 'readFailureLog', 'countTranscriptMessages',
+  'goalSubject', 'normalizeGate', 'runGateWithWatchdog', 'recursive',
+])
+
+/**
+ * 检测 helper 函数调用（用于层次化渲染的"子流程节点"）。
+ * 只收项目自定义的具名函数调用（排除内置/工具/flowcast 原语）。
+ */
+function detectHelperCall(node) {
+  if (node.type !== 'CallExpression') return null
+  if (node.callee.type !== 'Identifier') return null
+  const name = node.callee.name
+  // 排除：以小写字母开头的常见工具函数 + 黑名单
+  if (HELPER_NOISE.has(name)) return null
+  // 只收看起来像"业务函数"的调用：驼峰命名、长度 > 3
+  if (!/^[a-z][a-zA-Z0-9]{3,}$/.test(name)) return null
+  return { name }
 }
 
 /**
