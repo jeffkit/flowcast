@@ -411,9 +411,35 @@ test('analyzeFlow：嵌套 for 两个 group', () => {
   assert.ok(outer.childStepIndexes.length > 0 && inner.childStepIndexes.length > 0)
 })
 
-test('analyzeFlow(self-improve 真实文件)：for group 覆盖循环 step', () => {
-  const src = readFileSync('/Users/kongjie/projects/infra4agent/recursive/.dev/flows/self-improve.flow.js', 'utf8')
+test('analyzeFlow(类 self-improve 大型 flow)：for group 覆盖循环 step', () => {
+  // 原版读 recursive/.dev/flows/self-improve.flow.js（开发者机器绝对路径），
+  // CI/他人环境必挂。改为内联合成同等结构：≥5 个 for 循环，
+  // 其中至少一个循环体内含 review/gate 相关 step。
+  const src = [
+    "async function main() {",
+    "  for (const goal of goals) {",
+    "    await cp.step('plan', () => null)",
+    "    for (let attempt = 0; attempt < 3; attempt++) {",
+    "      await cp.step('generate', () => null)",
+    "      await cp.step('review-gate', () => null)",
+    "    }",
+    "  }",
+    "  for (const file of files) {",
+    "    await cp.step('lint', () => null)",
+    "  }",
+    "  for (const t of tests) {",
+    "    await cp.step('test', () => null)",
+    "  }",
+    "  for (const doc of docs) {",
+    "    await cp.step('docs', () => null)",
+    "  }",
+    "  for (const pkg of packages) {",
+    "    await cp.step('build', () => null)",
+    "  }",
+    "}",
+  ].join('\n')
   const result = analyzeFlow(src)
+  assert.equal(result.parseError, null)
   const forGroups = result.groups.filter(g => g.type === 'for')
   assert.ok(forGroups.length >= 5, `应有至少 5 个 for group，实际 ${forGroups.length}`)
   // 至少一个 for group 含 review 或 gate 相关 step

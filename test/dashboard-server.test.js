@@ -5,9 +5,10 @@
 // 故测试用 t.test 的 before/after 把 HOME 临时切到临时目录。
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, realpathSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { startServer } from '../dashboard/server.js'
 
@@ -209,13 +210,25 @@ test('DELETE /api/projects/:id：移除后该项目不再出现', async () => {
 })
 
 test('GET /：已构建 dist 时返回 index.html（200 HTML）', async () => {
+  // dist（dashboard/app/dist）是构建产物且被 gitignore——CI 测试前不构建。
+  // 无真实 dist 时，临时写一个最小 index.html 让本用例可跑（用后清理），
+  // 有真实 dist 时直接用之。
+  const distDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'dashboard', 'app', 'dist')
+  const indexFile = join(distDir, 'index.html')
+  const existed = existsSync(indexFile)
+  if (!existed) {
+    mkdirSync(distDir, { recursive: true })
+    writeFileSync(indexFile, '<!doctype html><html><body><div id="root"></div></body></html>')
+  }
   const { server, baseUrl } = await boot()
   try {
     const res = await fetch(baseUrl + '/')
-    // dist 已构建（随包发布）→ 返回 index.html
     assert.equal(res.status, 200)
     assert.match(res.headers.get('content-type') || '', /text\/html/)
     const html = await res.text()
     assert.match(html, /<div id="root">/, '应含 React 挂载点')
-  } finally { server.close() }
+  } finally {
+    server.close()
+    if (!existed) rmSync(distDir, { recursive: true, force: true })
+  }
 })
