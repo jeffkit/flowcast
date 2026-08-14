@@ -21,6 +21,10 @@ test('cliToExecutorName：flowcast 名 → agentproc executor 名', () => {
   assert.equal(cliToExecutorName('opencode'), 'opencode')
 })
 
+test('cliToExecutorName：dsh → dsh（agentproc >= 0.11 原生，0.10.x 兼容注入）', () => {
+  assert.equal(cliToExecutorName('dsh'), 'dsh')
+})
+
 test('cliToExecutorName：recursive → null（agentproc SDK 不收录，走 flowcast 路径）', () => {
   assert.equal(cliToExecutorName('recursive'), null)
 })
@@ -29,10 +33,10 @@ test('cliToExecutorName：未知 CLI 抛 ConfigError', () => {
   assert.throws(() => cliToExecutorName('totally-unknown'), /未知执行器/)
 })
 
-test('CLI_TO_EXECUTOR：包含 14 个 flowcast 历史上支持的 CLI', () => {
-  // flowcast 历史上支持的 7 个 + agentproc 新接入的 7 个（去除 recursive）
+test('CLI_TO_EXECUTOR：包含 15 个 flowcast 支持的 CLI', () => {
+  // flowcast 历史上支持的 7 个 + agentproc 新接入的 7 个（去除 recursive）+ dsh
   for (const cli of ['claude', 'cursor', 'agent', 'gemini', 'codex', 'agy', 'aider', 'recursive',
-                     'pi', 'opencode', 'kimi-code', 'deepseek', 'qwen-code', 'codebuddy']) {
+                     'pi', 'opencode', 'kimi-code', 'deepseek', 'qwen-code', 'codebuddy', 'dsh']) {
     assert.ok(cli in CLI_TO_EXECUTOR, `${cli} 应在映射表`)
   }
 })
@@ -46,6 +50,41 @@ test('buildAgentProcProfile：基础字段', () => {
   assert.equal(p.streaming, true)
   assert.equal(p.permission, false)
   assert.deepEqual(p.env, {})
+})
+
+test('buildAgentProcProfile：dsh 默认注入 DSH_PERMISSION_MODE（无人值守）', () => {
+  const p = buildAgentProcProfile({ cli: 'dsh' })
+  assert.equal(p.executor, 'dsh')
+  assert.equal(p.env.DSH_PERMISSION_MODE, 'danger-full-access')
+  assert.equal(p.timeout_secs, 1800) // 1_800_000 ms，与 recursive 同级
+})
+
+test('buildAgentProcProfile：dsh 显式 DEEPSEEK_API_KEY 优先于进程 env 透传', () => {
+  const saved = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'sk-from-shell'
+  try {
+    const explicit = buildAgentProcProfile({ cli: 'dsh', env: { DEEPSEEK_API_KEY: 'sk-explicit' } })
+    assert.equal(explicit.env.DEEPSEEK_API_KEY, 'sk-explicit')
+    const passthrough = buildAgentProcProfile({ cli: 'dsh' })
+    assert.equal(passthrough.env.DEEPSEEK_API_KEY, 'sk-from-shell')
+  } finally {
+    if (saved === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = saved
+  }
+})
+
+test('buildAgentProcProfile：dsh 显式 env 不被默认值覆盖', () => {
+  const p = buildAgentProcProfile({ cli: 'dsh', env: { DSH_PERMISSION_MODE: 'read-only' } })
+  assert.equal(p.env.DSH_PERMISSION_MODE, 'read-only')
+})
+
+test('ensureDshExecutor：agentproc EXECUTORS 注册表里有 dsh（原生或注入）', async () => {
+  const agentproc = (await import('agentproc')).default
+  assert.ok(agentproc.EXECUTORS.dsh, 'EXECUTORS.dsh 应存在（SDK >= 0.11 原生 / 0.10.x 注入）')
+  assert.equal(agentproc.EXECUTORS.dsh.cliName, 'dsh')
+  assert.equal(agentproc.EXECUTORS.dsh.plain, true)
+  assert.deepEqual(agentproc.EXECUTORS.dsh.buildArgs('hi', '', {}), ['dsh', '--profile', 'headless', 'hi'])
+  assert.ok(KNOWN_EXECUTORS.includes('dsh'), 'KNOWN_EXECUTORS 应包含 dsh')
 })
 
 test('buildAgentProcProfile：env + envAllowlist + extraEnv', () => {

@@ -102,7 +102,7 @@ providerEnvTranslator(cli)              // 取对应 CLI 的翻译器
 
 ### 新增 CLI 覆盖
 
-flowcast 现在**开箱支持 14 个 CLI**(无需写任何 adapter):
+flowcast 现在**开箱支持 15 个 CLI**(无需写任何 adapter):
 
 | flowcast CLI 名 | agentproc executor | 来源 |
 |----------------|-------------------|------|
@@ -118,6 +118,7 @@ flowcast 现在**开箱支持 14 个 CLI**(无需写任何 adapter):
 | `deepseek` | `deepseek` | hub 社区(**新增**) |
 | `qwen-code` | `qwen-code` | hub 社区(**新增**) |
 | `codebuddy` | `codebuddy` | hub 官方(**新增**) |
+| `dsh` | `dsh` | hub 社区(**新增**,DeepSeek Harness headless) |
 | `recursive` | (无,flowcast 自有) | hub 社区,agentproc SDK 不收录 |
 
 ### `usage` 字段从二进制变成结构化数据

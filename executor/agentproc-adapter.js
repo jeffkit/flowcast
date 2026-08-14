@@ -21,6 +21,7 @@ const { run: agentprocRun } = _require('agentproc/src/runner.js')
 import { makeAgentResult, makeEvent } from '../helpers.js'
 import { EVENT } from '../events.js'
 import { FlowcastError, TimeoutError, SpawnError, ConfigError } from '../errors.js'
+import { ensureDshExecutor } from './dsh.js'
 
 // ── cli → executor 名称映射 ────────────────────────────────────────────
 //
@@ -34,6 +35,10 @@ import { FlowcastError, TimeoutError, SpawnError, ConfigError } from '../errors.
 // 锁定型 cursor/gemini/codex/agy 在 agentproc 里有同名 executor；
 // BYO-LLM 的 claude/aider 同理（recursive 单独处理）。
 // 新接入的 pi/opencode/kimi-code/deepseek/qwen-code 直接用同名。
+// dsh（DeepSeek Harness）在 agentproc SDK >= 0.11 原生收录；0.10.x 由
+// executor/dsh.js 的 ensureDshExecutor() 兼容注入（见文件头说明）。
+
+ensureDshExecutor()
 
 export const CLI_TO_EXECUTOR = Object.freeze({
   claude:    'claude-code',
@@ -50,6 +55,7 @@ export const CLI_TO_EXECUTOR = Object.freeze({
   deepseek:  'deepseek',
   'qwen-code': 'qwen-code',
   codebuddy: 'codebuddy',
+  dsh:       'dsh',             // DeepSeek Harness headless（agentproc >= 0.11 或兼容注入）
 })
 
 /**
@@ -88,6 +94,7 @@ const TIMEOUT_KEYS = {
 const DEFAULT_TIMEOUT_MS = {
   claude: 300_000, gemini: 300_000, codex: 300_000, agy: 300_000,
   cursor: 300_000, aider: 600_000, recursive: 1_800_000,
+  dsh: 1_800_000, // headless 跑完整 agent turn（工具 + bash），与 recursive 同级
 }
 
 /**
@@ -126,6 +133,20 @@ export function buildAgentProcProfile(ctx) {
   }
   if (Array.isArray(ctx.envAllowlist) && ctx.envAllowlist.length) {
     profile.env_allowlist = ctx.envAllowlist
+  }
+  if (cli === 'dsh') {
+    // dsh 默认 approval 策略是 "ask"，headless 没有 UI 应答会挂起；无人值守
+    // 与 agentproc hub 的 dsh profile 同惯例：未显式设置时默认 danger-full-access
+    // （auto-approve）。要收紧走沙箱的 step 可在 env 里设 read-only / workspace-write。
+    if (!profile.env.DSH_PERMISSION_MODE) {
+      profile.env.DSH_PERMISSION_MODE = 'danger-full-access'
+    }
+    // agentproc runner 的子进程 env 不继承环境变量（infra set + profile.env），
+    // dsh 期望从启动环境读 DEEPSEEK_API_KEY —— 与 hub dsh profile 同惯例透传。
+    // 未设置时不注入，dsh 回退到自己的凭证存储（web Models 页写入）。
+    if (process.env.DEEPSEEK_API_KEY && !profile.env.DEEPSEEK_API_KEY) {
+      profile.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY
+    }
   }
   return profile
 }
@@ -258,4 +279,7 @@ export async function runViaAgentProc(prompt, ctx, opts = {}) {
 
 // ── 列举当前 SDK 已知的所有 executor 名（用于 runAgent / registerExecutor 错误信息）────
 
-export const KNOWN_EXECUTORS = agentproc.executorNames
+// executorNames 是快照数组；dsh 兼容注入后补进去，错误信息保持准确
+export const KNOWN_EXECUTORS = agentproc.executorNames.includes('dsh')
+  ? agentproc.executorNames
+  : [...agentproc.executorNames, 'dsh']

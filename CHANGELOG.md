@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **dsh executor**：接入 DeepSeek Harness（`dsh --profile headless`）作为第 15 个 CLI——一次性完整 agent 运行时（coding persona + bash/fs/search 工具 + 沙箱 + 持久化 session log），编排 step 直接获得带工具的 agent turn，默认超时 30 分钟（与 recursive 同级）。agentproc SDK >= 0.11 原生收录该 executor；0.10.x 由 `executor/dsh.js` 的 `ensureDshExecutor()` 兼容注入自动补齐（guard 命中即 no-op，SDK 发版后自然退役）。无人值守默认注入 `DSH_PERMISSION_MODE=danger-full-access`（dsh 自身默认 "ask" 在 headless 无 UI 应答，与 agentproc hub 的 dsh profile 同惯例）；`DEEPSEEK_API_KEY` 从启动环境自动透传（agentproc runner 子进程 env 不继承环境变量，不透传则回退 dsh 自己的凭证存储）。
 ## [0.7.0] - 2026-07-30
 
 ### 新增
