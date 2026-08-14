@@ -357,6 +357,43 @@ function makeDefaultRun() {
 }
 
 /**
+ * 从 recursive 的 stdout 中提取 --output-format json 的结果对象。
+ *
+ * stdout 实测形态：可能带前后缀 trace 行（"checkpoint: ..."、tracing INFO 行、
+ * 结尾 "session:/cost:" 行），JSON 对象夹在中间。策略：
+ *   1. 整体 JSON.parse（纯 json 输出时命中）
+ *   2. 从首个 '{"' 起做括号配对扫描，提取平衡的 JSON 块再 parse
+ *   3. 都失败返回 null（caller 回退 raw stdout）
+ * @param {string} stdout
+ * @returns {object|null} 含 result 字段的结果对象，或 null
+ */
+function extractRecursiveJson(stdout) {
+  if (!stdout || typeof stdout !== 'string') return null
+  const accept = (obj) =>
+    obj && typeof obj === 'object' && !Array.isArray(obj) && 'result' in obj ? obj : null
+  try { return accept(JSON.parse(stdout)) } catch { /* 继续扫描 */ }
+  // 括号配对扫描（跳过字符串字面量内的花括号）
+  const start = stdout.indexOf('{"')
+  if (start < 0) return null
+  let depth = 0, inStr = false, esc = false
+  for (let i = start; i < stdout.length; i++) {
+    const c = stdout[i]
+    if (esc) { esc = false; continue }
+    if (c === '\\') { esc = true; continue }
+    if (c === '"') { inStr = !inStr; continue }
+    if (inStr) continue
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) {
+        try { return accept(JSON.parse(stdout.slice(start, i + 1))) } catch { return null }
+      }
+    }
+  }
+  return null
+}
+
+/**
  * flowcast 自己的 recursive 执行路径（agentproc SDK 不收录 recursive）。
  * 直接 spawn recursive 二进制（--output-format json）→ 解析单一结果对象 → 应用 throwOnCritical。
  *
@@ -401,15 +438,8 @@ async function runRecursiveDirect(prompt, ctx, opts) {
 
   // 解析 json 结果对象；失败则回退 raw stdout（旧行为）
   let finalText = r.stdout
-  let parsed = null
-  try {
-    parsed = JSON.parse(r.stdout)
-    if (parsed && typeof parsed === 'object' && 'result' in parsed) {
-      finalText = String(parsed.result ?? '')
-    } else {
-      parsed = null  // 不是结果对象，按未解析处理
-    }
-  } catch { /* text 模式或异常输出 → 用 raw stdout */ }
+  const parsed = extractRecursiveJson(r.stdout)
+  if (parsed) finalText = String(parsed.result ?? '')
 
   // meta 源：json 模式下 [done after N steps] 标记不在 stdout，
   // 用 stop_reason/num_turns 合成等价标记供 deriveRecursiveMeta/throwOnCritical 消费
