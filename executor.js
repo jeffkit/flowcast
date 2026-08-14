@@ -358,7 +358,11 @@ function makeDefaultRun() {
 
 /**
  * flowcast 自己的 recursive 执行路径（agentproc SDK 不收录 recursive）。
- * 直接 spawn recursive 二进制 → 解析 [done after N steps] reason → 应用 throwOnCritical。
+ * 直接 spawn recursive 二进制（--output-format json）→ 解析单一结果对象 → 应用 throwOnCritical。
+ *
+ * 2026-08 修复：此前用默认 text 模式，stdout 是全量人读 trace（session:/[step N]/工具调用），
+ * 污染下游 prompt。改用 recursive 的 `--output-format json`（Claude 兼容单一结果对象），
+ * stdout 只含最终 JSON，`.result` 即最终回复。JSON 解析失败时回退旧行为（raw stdout）。
  */
 async function runRecursiveDirect(prompt, ctx, opts) {
   const { resolveRecursiveBin, deriveRecursiveMeta, maybeThrowRecursiveCritical } = await import('./executor/recursive-extras.js')
@@ -367,7 +371,7 @@ async function runRecursiveDirect(prompt, ctx, opts) {
 
   const bin = opts.bin ?? resolveRecursiveBin(ctx.cwd)
   const workspace = opts.workspace ?? '.'
-  const args = ['--workspace', workspace]
+  const args = ['--workspace', workspace, '--output-format', 'json']
   if (opts.systemPromptFile) args.push('--system-prompt-file', opts.systemPromptFile)
   if (opts.transcriptOut) args.push('--transcript-out', opts.transcriptOut)
   if (opts.pricingFile) args.push('--pricing-file', opts.pricingFile)
@@ -395,14 +399,35 @@ async function runRecursiveDirect(prompt, ctx, opts) {
     })
   }
 
-  // 应用 throwOnCritical（panicked / budgetExceeded / 非零退出 → FlowcastError）
-  maybeThrowRecursiveCritical(r, opts)
+  // 解析 json 结果对象；失败则回退 raw stdout（旧行为）
+  let finalText = r.stdout
+  let parsed = null
+  try {
+    parsed = JSON.parse(r.stdout)
+    if (parsed && typeof parsed === 'object' && 'result' in parsed) {
+      finalText = String(parsed.result ?? '')
+    } else {
+      parsed = null  // 不是结果对象，按未解析处理
+    }
+  } catch { /* text 模式或异常输出 → 用 raw stdout */ }
 
-  const meta = deriveRecursiveMeta(r, opts)
+  // meta 源：json 模式下 [done after N steps] 标记不在 stdout，
+  // 用 stop_reason/num_turns 合成等价标记供 deriveRecursiveMeta/throwOnCritical 消费
+  const metaSource = parsed
+    ? `[done after ${parsed.num_turns ?? '?'} steps] reason: ${parsed.stop_reason ?? parsed.subtype ?? 'unknown'}`
+    : r.stdout
+  const rForMeta = { ...r, stdout: metaSource }
+
+  // 应用 throwOnCritical（panicked / budgetExceeded / 非零退出 → FlowcastError）
+  maybeThrowRecursiveCritical(rForMeta, opts)
+
+  const meta = deriveRecursiveMeta(rForMeta, opts)
   meta.cli = 'recursive'
   meta.exitCode = r.exitCode
   meta.timedOut = false
-  return makeAgentResult(r.stdout, meta)
+  meta.stopReason = parsed?.stop_reason ?? null
+  meta.isError = parsed?.is_error ?? false
+  return makeAgentResult(finalText, meta)
 }
 
 // ── runAgent 路由 ───────────────────────────────────────────────────────
