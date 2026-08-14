@@ -369,8 +369,11 @@ function makeDefaultRun() {
  */
 function extractRecursiveJson(stdout) {
   if (!stdout || typeof stdout !== 'string') return null
+  // 成功形态必有 result；错误形态（is_error）无 result 但 type==="result" 也接受，
+  // 由 caller 决定抛错——避免错误输出回退 raw stdout 污染下游。
   const accept = (obj) =>
-    obj && typeof obj === 'object' && !Array.isArray(obj) && 'result' in obj ? obj : null
+    obj && typeof obj === 'object' && !Array.isArray(obj)
+      && ('result' in obj || obj.type === 'result') ? obj : null
   try { return accept(JSON.parse(stdout)) } catch { /* 继续扫描 */ }
   // 括号配对扫描（跳过字符串字面量内的花括号）
   const start = stdout.indexOf('{"')
@@ -440,6 +443,27 @@ async function runRecursiveDirect(prompt, ctx, opts) {
   let finalText = r.stdout
   const parsed = extractRecursiveJson(r.stdout)
   if (parsed) finalText = String(parsed.result ?? '')
+
+  // 错误形态（is_error=true，如 provider_stop:length）：明确抛错，
+  // 不让空/半截文本流入下游 step（会污染后续 prompt 且难以排查）。
+  if (parsed?.is_error) {
+    const reason = parsed.stop_reason
+      ?? (Array.isArray(parsed.errors) ? parsed.errors.join(',') : null)
+      ?? parsed.subtype
+      ?? 'unknown error'
+    throw new FlowcastError(
+      `[recursive] run error: ${reason}`,
+      'RECURSIVE_FAIL',
+      {
+        _meta: {
+          cli: 'recursive',
+          exitCode: r.exitCode,
+          stopReason: parsed.stop_reason ?? null,
+          errors: parsed.errors ?? [],
+        },
+      },
+    )
+  }
 
   // meta 源：json 模式下 [done after N steps] 标记不在 stdout，
   // 用 stop_reason/num_turns 合成等价标记供 deriveRecursiveMeta/throwOnCritical 消费
