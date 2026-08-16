@@ -6,6 +6,7 @@
 
 ### 新增
 
+- **`runScript(script, {meta, args, cli, runId, dir, maxTotalAgents})`——动态受限脚本编排面**（NOTES 第 1 条，差异化主打）：borrow dsh workflow 的脚本契约，运行时与持久化全是 flowcast。五钩子受限面（`agent/parallel/pipeline/phase/log` + `args` 注入）；**每个 `agent()` 调用一个 checkpoint——断点续跑是本面对 dsh 同类面的直接优势**；`agent()` 经 `runAgent` 落执行器注册表（任意 CLI）。纪律：meta 校验先于执行（未知字段拒绝）、parse-check 同步失败（SCRIPT_PARSE）、`maxTotalAgents` 预算对脚本不可见（AGENT_CAP）、返回值必须纯 JSON 或 null（RESULT_UNSERIALIZABLE）、agent-start/end 按 seq 配对写入 run.log.jsonl（EVENT.SCRIPT 注册进中央事件表）。信任声明与 dsh 一致：new Function 非安全沙箱，脚本等同 bash 信任级。错误码对齐 dsh WorkflowError 词汇。
 - **执行器能力协商**（borrow dsh subagent capabilities 设计）：`registerExecutor` 增加 `capabilities: {streaming, permission, sessionResume}` 声明；内置执行器按 CLI 实况预填；`getExecutor` 返回归一化能力。`resolveAgent`（agents profile 路径）与 `runAgent`（直调路径）对 **hard 能力 permission** 做 spawn 前校验——不支持即抛 ConfigError 并列出支持者（fail before spawn）。`permission: true` 成为正式的 agent 调用选项（此前 agentproc adapter 硬编码 false），透传为 wire 0.4 的工具授权通道。
 - **stopReason 封闭枚举**（borrow dsh workflow stop-reason 纪律）：`STOP_REASONS = [completed | failed | timeout | paused]` + `isSuccessStop()`（唯一成功判断入口，**非 completed 一律不算成功**）。step 成功/失败记录（失败步骤现在也进 `state.steps`，原来只在 jsonl）、`record()`、run 级 `done()`/`pause()` 全部带归一化 stopReason；失败映射：`TimeoutError→timeout`、`PauseSignal→paused`、其余→`failed`。
 - 设计依据与后续借鉴清单：`docs/ADR-2026-08-16-dsh-workflow-layering.md`（分层决策）、`docs/NOTES-dsh-workflow-borrowings.md`。

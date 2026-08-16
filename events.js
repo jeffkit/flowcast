@@ -19,6 +19,7 @@ export const EVENT = Object.freeze({
   GATE:       'gate',
   GROUP:      'group',
   LOOP:       'loop',
+  SCRIPT:     'script',
 })
 
 /**
@@ -58,6 +59,11 @@ export const EVENT_TYPES = {
       done: 'optional boolean',
       error: 'optional string',
     },
+  [EVENT.SCRIPT]: {
+    schema: { kind: "'start'|'end'|'phase'|'log'|'agent-start'|'agent-end'", name: 'optional string', title: 'optional string', message: 'optional string', seq: 'optional number', key: 'optional string', cli: 'optional string', stopReason: 'optional string', agentsStarted: 'optional number' },
+    writer: 'run-script.js runScript（动态受限脚本面：run 起止/phase/log 叙事 + agent-start/end 按 seq 配对）',
+    reader: 'dashboard/collect.js summarizeEvents（agent 调用配对与 stopReason 统计）',
+  },
     writer: 'loop.js emit()（每个阶段发一条）',
     reader: 'dashboard/collect.js summarizeEvents（统计 turn 数 / 预算触发 / 失败）',
   },

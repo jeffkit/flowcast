@@ -7,6 +7,7 @@
 // 通过 agentproc.run 内部调用。用户调 flowcast 时不再需要直接 import adapter 函数。
 export { EVENT, EVENT_TYPES, listEventTypes } from './events.js'
 export { Checkpoint, STOP_REASONS, isSuccessStop } from './checkpoint.js'
+export { runScript } from './run-script.js'
 export {
   runAgent, runAgentChain, setWorkdir, setAgentEventSink,
   spawnCapture, spawnCli, resolveRecursiveBin, recursiveProviderEnv, claudeProviderEnv, aiderProviderEnv, applyProviderToProfile, isProviderRetryable,
