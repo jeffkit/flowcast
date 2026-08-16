@@ -14,6 +14,8 @@
 
 **flowcast 现状**：`orchestrate` 走 L3 codegen——agent 生成完整 flow 文件再执行。能力强但重：有文件落盘、有审查/校验环节、适合"认真规划的大活"。
 
+**v2 词汇冻结决策（2026-08-16）**：runScript 定位 **turn 内即时编排**，五钩子词汇冻结——不加 gate/ask/memory/spawn 钩子。判据是**场景而非能力清单**：turn 内"人在环"就是对话本身（无需 ask 阻塞）、调用方 agent 自带 bash（无需 gate 收税）。gate/HITL/memory 属于 durable 面（flow 文件，全量 API 已存在）；把它们塞进脚本面只会做出 flow 面的劣化复制品。**升级路径**：脚本长出 gate/ask 需求 = 该提升为 flow 文件的信号。唯一可能逼出第六钩子的候选是 IM 跨 turn 的"问人+pause+续跑"，等真实场景出现再评估。
+
 **借鉴**：新增一个**轻量动态脚本 API**（工作名 `runScript(script, {meta, args})`）：
 
 - 同样的五钩子受限面（钩子落 flowcast 原语：`agent` → `runAgent` + 每调用一个 `cp.step`、`parallel`/`pipeline` → concurrency.js、`phase`/`log` → `cp.event`）
