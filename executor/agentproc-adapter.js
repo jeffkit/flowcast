@@ -121,7 +121,9 @@ export function buildAgentProcProfile(ctx) {
     executor,
     timeout_secs: Math.ceil((ctx.timeout ?? DEFAULT_TIMEOUT_MS[cli] ?? 300_000) / 1000),
     streaming: ctx.streaming !== false,
-    permission: false,
+    // 能力协商后的请求项：permission 由 resolveAgent 校验过执行器支持才会到这里
+    // （agentproc wire 0.4 的可选工具授权通道：bridge 侧翻译 permission_request/response）。
+    permission: ctx.permission === true,
     env: {},
   }
   if (ctx.cwd) profile.cwd = ctx.cwd

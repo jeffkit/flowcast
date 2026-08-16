@@ -6,7 +6,7 @@
 // v0.6：adapters.js 已删除。CLI adapter（claude/cursor/gemini/codex/...）由 agentproc SDK 提供，
 // 通过 agentproc.run 内部调用。用户调 flowcast 时不再需要直接 import adapter 函数。
 export { EVENT, EVENT_TYPES, listEventTypes } from './events.js'
-export { Checkpoint } from './checkpoint.js'
+export { Checkpoint, STOP_REASONS, isSuccessStop } from './checkpoint.js'
 export {
   runAgent, runAgentChain, setWorkdir, setAgentEventSink,
   spawnCapture, spawnCli, resolveRecursiveBin, recursiveProviderEnv, claudeProviderEnv, aiderProviderEnv, applyProviderToProfile, isProviderRetryable,

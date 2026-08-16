@@ -8,6 +8,24 @@ import { TimeoutError, FlowcastError, PauseSignal } from './errors.js'
 // PauseSignal 定义已移至 errors.js，此处 re-export 保持向后兼容（已有 import { PauseSignal } from './checkpoint.js' 的代码不受影响）。
 export { PauseSignal }
 
+// ── stopReason 封闭枚举（borrow dsh workflow 的 stop-reason 纪律） ──────
+//
+// 词汇封闭，消费方（dashboard / resume / 质量门）必须用本枚举判断，禁止自造字符串：
+//   step 级：completed | failed | timeout | paused
+//   run  级：completed | failed | paused（failed 由入口点在未捕获异常时落 state）
+// 纪律：**非 completed 一律不得被上层当成功**（isSuccessStop 是唯一判断入口）。
+export const STOP_REASONS = Object.freeze(['completed', 'failed', 'timeout', 'paused'])
+
+/** 唯一的「成功」判断入口：非 completed 一律 false（不干净不算成功）。 */
+export function isSuccessStop(reason) { return reason === 'completed' }
+
+/** 从异常映射 step 级 stopReason（封闭词汇，未知归 failed）。 */
+function stopReasonOf(error) {
+  if (error?.name === 'PauseSignal') return 'paused'
+  if (error?.timedOut) return 'timeout'
+  return 'failed'
+}
+
 // 超出此长度则写旁路文件，state.json 只存摘要；可通过 FLOWCAST_RESULT_INLINE_LIMIT 覆盖
 const _envInlineLimit = parseInt(process.env.FLOWCAST_RESULT_INLINE_LIMIT ?? '', 10)
 const RESULT_INLINE_LIMIT = Number.isFinite(_envInlineLimit) && _envInlineLimit > 0 ? _envInlineLimit : 500
@@ -181,9 +199,14 @@ export class Checkpoint {
       }
       Object.keys(error).forEach(k => error[k] === undefined && delete error[k])
       const durationMs = Date.now() - startedAt
+      const stopReason = stopReasonOf(e)
       this._inFlight.delete(key)
-      this._log({ key, status: 'error', error, durationMs, meta })
-      this._emit({ event: 'error', key, error, durationMs, meta })
+      // 失败步骤也进 state.steps（原来只进 jsonl）：resume 摘要 / 看板能看到
+      // 哪一步以什么原因停下，且消费方用 isSuccessStop(stopReason) 判断，
+      // 非 completed 不得当成功。
+      this.state.steps.push({ key, status: 'error', stopReason, durationMs, completedAt: new Date().toISOString(), ...meta })
+      this._log({ key, status: 'error', stopReason, error, durationMs, meta })
+      this._emit({ event: 'error', key, stopReason, error, durationMs, meta })
       // 控制台打出完整 error，方便不翻 jsonl 就能诊断（e.message 里已包含 stderr）
       console.error(`  [error] ${key}: ${e.message}`)
       throw e
@@ -199,7 +222,7 @@ export class Checkpoint {
     // 存进 completed 时序列化为纯字符串（_meta 丢失），这里显式提进步骤元数据，供看板汇总 token/模型。
     const autoMeta = pickAgentMeta(result)
     // 记录到 steps 列表（摘要用）和 jsonl 日志（完整审计用）；显式 meta 优先级最高。
-    const stepRecord = { key, status: 'done', durationMs, completedAt: new Date().toISOString(), ...autoMeta, ...meta }
+    const stepRecord = { key, status: 'done', stopReason: 'completed', durationMs, completedAt: new Date().toISOString(), ...autoMeta, ...meta }
     this.state.steps.push(stepRecord)
     this._log({ key, status: 'done', durationMs, result, meta: { ...autoMeta, ...meta } })
     this._emit({ event: 'done', key, durationMs, result, meta: { ...autoMeta, ...meta } })
@@ -217,6 +240,7 @@ export class Checkpoint {
   async pause(reason, context = {}) {
     console.log(`\n[paused] ${reason}`)
     this.state.status = 'paused'
+    this.state.stopReason = 'paused'
     this.state.pauseReason = reason
     this.state.pauseContext = context
     this._log({ key: '__pause__', status: 'paused', reason })
@@ -229,6 +253,7 @@ export class Checkpoint {
   // 同 pause：async + await _logQueue，强制同步落盘后再返回。
   async done(summary = {}) {
     this.state.status = 'completed'
+    this.state.stopReason = 'completed'
     this.state.completedAt = new Date().toISOString()
     this.state.summary = summary
     this._flush()
@@ -243,7 +268,7 @@ export class Checkpoint {
   // 单线程下并发回调也不会交错，适合 parallel/fanOut 里各子任务回写完成状态。
   record(key, result, meta = {}) {
     this.state.completed[key] = this._storeResult(key, result)
-    this.state.steps.push({ key, status: 'done', completedAt: new Date().toISOString(), ...meta })
+    this.state.steps.push({ key, status: 'done', stopReason: 'completed', completedAt: new Date().toISOString(), ...meta })
     this._flush()
     return result
   }

@@ -64,8 +64,47 @@ function buildBuiltinExecutors() {
       entries[cli] = { executorName: null, acceptsProvider: BYO_LLM_CLIS.has(cli) }
     }
   }
+  for (const [cli, caps] of Object.entries(EXECUTOR_CAPABILITIES)) {
+    if (entries[cli]) entries[cli].capabilities = { ...caps }
+  }
   return entries
 }
+
+/**
+ * 内置执行器能力表（borrow dsh subagent provider 的 capabilities 协商设计）。
+ *
+ * 能力语义（对 agent profile / runAgent opts 的可请求项）：
+ *   streaming      CLI 支持流式 partial 输出（advisory：不支持时 adapter 自动降级）
+ *   permission     CLI 支持中途工具授权通道（hard：请求而执行器不支持 → resolveAgent
+ *                  在 spawn 之前抛 ConfigError，fail before spawn——对齐 agentproc hub
+ *                  PERMISSIONS.md 的调研结论，把那张手工表变成注册表数据）
+ *   sessionResume  CLI 支持会话续接（agentproc session_id 回传；dsh 为 bridge 特性
+ *                  探测、旧版自动降级为无状态，声明 true 安全）
+ *
+ * 未列出的执行器一律保守视为全不支持；自定义执行器经 registerExecutor 的
+ * capabilities 显式声明。
+ */
+const EXECUTOR_CAPABILITIES = {
+  // 键 = flowcast CLI 名（EXECUTORS 注册表的键），非 agentproc executor 名。
+  'claude':    { streaming: true, permission: true, sessionResume: true },
+  'codex':     { streaming: true, permission: true, sessionResume: true },
+  'gemini':    { streaming: true, permission: false, sessionResume: false },
+  'cursor':    { streaming: true, permission: false, sessionResume: false },
+  'agent':     { streaming: true, permission: false, sessionResume: false },
+  'codebuddy': { streaming: true, permission: false, sessionResume: false },
+  'kimi-code': { streaming: true, permission: false, sessionResume: false },
+  'opencode':  { streaming: true, permission: false, sessionResume: false },
+  'qwen-code': { streaming: true, permission: false, sessionResume: false },
+  'agy':       { streaming: false, permission: false, sessionResume: true },
+  'aider':     { streaming: false, permission: false, sessionResume: false },
+  'deepseek':  { streaming: false, permission: false, sessionResume: false },
+  'dsh':       { streaming: false, permission: false, sessionResume: true },
+  'recursive': { streaming: true, permission: false, sessionResume: false },
+  'pi':        { streaming: false, permission: false, sessionResume: false },
+}
+
+/** 能力缺省值：全部不支持（保守）。 */
+export const NO_CAPABILITIES = Object.freeze({ streaming: false, permission: false, sessionResume: false })
 
 /**
  * 执行器注册表：flowcast CLI 名 → {executorName, acceptsProvider, run?}。
@@ -90,6 +129,7 @@ export function getExecutor(name) {
     acceptsProvider: !!e.acceptsProvider,
     applyProvider: e.applyProvider,  // 仅自定义 entry 可能提供；内置走 provider.js 的 BYO 翻译器
     run: e.run,
+    capabilities: e.capabilities ? { ...NO_CAPABILITIES, ...e.capabilities } : { ...NO_CAPABILITIES },
   }
 }
 
@@ -105,8 +145,10 @@ export function getExecutor(name) {
  * @param {Function} [opts.applyProvider]  provider 翻译器 (bundle) => {env?, model?}；
  *                                         提供则表示该执行器接受外部 provider（BYO-LLM）。
  * @param {boolean}  [opts.acceptsProvider]  同义于 applyProvider 存在；二者取一
+ * @param {object}   [opts.capabilities]     能力声明 {streaming?, permission?, sessionResume?}；
+ *                                         未声明的能力视为不支持（保守缺省）。
  */
-export function registerExecutor(name, run, { applyProvider, acceptsProvider } = {}) {
+export function registerExecutor(name, run, { applyProvider, acceptsProvider, capabilities } = {}) {
   assertSafeIdent(name, 'executor')
   if (typeof run !== 'function') throw new TypeError(`registerExecutor: run 必须是函数`)
   const entry = { run }
@@ -115,6 +157,18 @@ export function registerExecutor(name, run, { applyProvider, acceptsProvider } =
     entry.acceptsProvider = true
   } else if (acceptsProvider) {
     entry.acceptsProvider = true
+  }
+  if (capabilities) {
+    const caps = {}
+    for (const key of ['streaming', 'permission', 'sessionResume']) {
+      if (capabilities[key] !== undefined) {
+        if (typeof capabilities[key] !== 'boolean') {
+          throw new TypeError(`registerExecutor: capabilities.${key} 必须是 boolean`)
+        }
+        caps[key] = capabilities[key]
+      }
+    }
+    entry.capabilities = caps
   }
   EXECUTORS[name] = entry
 }
@@ -133,6 +187,9 @@ const SAFE_OPTS_KEYS = new Set([
   'extraArgs',
   'transcriptOut', 'pricingFile',
   'files',
+  // 能力请求项：permission 走 resolveAgent 的能力协商硬校验（fail before spawn）；
+  // streaming 为 advisory（不支持的执行器由 adapter 自动降级，不报错）。
+  'permission', 'streaming',
 ])
 
 // extraArgs 元素级白名单：只允许 BYO-LLM adapter 已知安全的 flag。
@@ -225,6 +282,16 @@ export function resolveAgent(name, agents = {}, { providers = {}, env = process.
     if (!SAFE_OPTS_KEYS.has(k)) continue
     opts[k] = v
   }
+  // 能力协商（fail before spawn）：请求了执行器未声明的 hard 能力，在 spawn 之前
+  // 报错并给出指引——不留到运行中才以晦涩方式失败。
+  if (opts.permission === true && !ex.capabilities.permission) {
+    throw new ConfigError(
+      `agent '${name}'（执行器 '${profile.executor}'）请求 permission: true，但该执行器不支持中途工具授权通道。` +
+      `支持 permission 的执行器：${Object.entries(EXECUTORS).filter(([, e]) => e.capabilities?.permission).map(([n]) => n).join(' / ') || '（无）'}。` +
+      `请去掉 permission 或更换执行器。`,
+    )
+  }
+
   // extraArgs 元素级白名单过滤
   if (opts.extraArgs) {
     opts.extraArgs = sanitizeExtraArgs(profile.executor, opts.extraArgs)
@@ -320,6 +387,7 @@ function makeDefaultRun() {
       env: opts.env,
       envAllowlist: opts.envAllowlist,
       streaming: opts.streaming,
+      permission: opts.permission,
     }
     const apOpts = {
       sessionId: opts.sessionId,
@@ -552,6 +620,17 @@ export async function runAgent(prompt, { cli = 'claude', cwd, schema, schemaRetr
   if (!EXECUTORS[cli]) {
     const known = Object.keys(EXECUTORS).join('/')
     throw new ConfigError(`未知 CLI: ${cli}，支持：${known}（或通过 registerExecutor 注册的自定义执行器）`)
+  }
+
+  // 能力协商（fail before spawn）：直调路径与 resolveAgent 对称——
+  // permission 是 hard 能力，执行器未声明支持就在 spawn 之前报错。
+  if (safeOpts.permission === true && !(EXECUTORS[cli].capabilities?.permission)) {
+    const supporters = Object.entries(EXECUTORS)
+      .filter(([, e]) => e.capabilities?.permission).map(([n]) => n).join(' / ') || '（无）'
+    throw new ConfigError(
+      `runAgent: cli '${cli}' 请求 permission: true，但该执行器不支持中途工具授权通道。` +
+      `支持 permission 的执行器：${supporters}。请去掉 permission 或更换执行器。`,
+    )
   }
 
   // 构造 runner：优先用 EXECUTORS[cli].run（自定义 entry），否则用默认（agentproc）

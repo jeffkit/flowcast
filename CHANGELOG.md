@@ -6,6 +6,12 @@
 
 ### 新增
 
+- **执行器能力协商**（borrow dsh subagent capabilities 设计）：`registerExecutor` 增加 `capabilities: {streaming, permission, sessionResume}` 声明；内置执行器按 CLI 实况预填；`getExecutor` 返回归一化能力。`resolveAgent`（agents profile 路径）与 `runAgent`（直调路径）对 **hard 能力 permission** 做 spawn 前校验——不支持即抛 ConfigError 并列出支持者（fail before spawn）。`permission: true` 成为正式的 agent 调用选项（此前 agentproc adapter 硬编码 false），透传为 wire 0.4 的工具授权通道。
+- **stopReason 封闭枚举**（borrow dsh workflow stop-reason 纪律）：`STOP_REASONS = [completed | failed | timeout | paused]` + `isSuccessStop()`（唯一成功判断入口，**非 completed 一律不算成功**）。step 成功/失败记录（失败步骤现在也进 `state.steps`，原来只在 jsonl）、`record()`、run 级 `done()`/`pause()` 全部带归一化 stopReason；失败映射：`TimeoutError→timeout`、`PauseSignal→paused`、其余→`failed`。
+- 设计依据与后续借鉴清单：`docs/ADR-2026-08-16-dsh-workflow-layering.md`（分层决策）、`docs/NOTES-dsh-workflow-borrowings.md`。
+
+### 新增
+
 - **dsh executor**：接入 DeepSeek Harness（`dsh --profile headless`）作为第 15 个 CLI——一次性完整 agent 运行时（coding persona + bash/fs/search 工具 + 沙箱 + 持久化 session log），编排 step 直接获得带工具的 agent turn，默认超时 30 分钟（与 recursive 同级）。agentproc SDK >= 0.11 原生收录该 executor；0.10.x 由 `executor/dsh.js` 的 `ensureDshExecutor()` 兼容注入自动补齐（guard 命中即 no-op，SDK 发版后自然退役）。无人值守默认注入 `DSH_PERMISSION_MODE=danger-full-access`（dsh 自身默认 "ask" 在 headless 无 UI 应答，与 agentproc hub 的 dsh profile 同惯例）；`DEEPSEEK_API_KEY` 从启动环境自动透传（agentproc runner 子进程 env 不继承环境变量，不透传则回退 dsh 自己的凭证存储）。
 ## [0.7.0] - 2026-07-30
 
