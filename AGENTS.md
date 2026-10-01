@@ -6,7 +6,7 @@
 
 `flowcast` 是一个轻量 workflow 编排框架：断点续跑、HITL、多 CLI/agent 调度、
 自改安全沙箱、质量门，以及在其之上的 L3 codegen 编排层（动态生成并执行 flow）。
-**纯 ESM、Node ≥ 20。核心尽量零额外依赖（仅依赖 agentproc SDK；yaml 等为可选 lazy import）。**
+**纯 ESM、Node ≥ 20。核心编排依赖 agentproc SDK；dashboard/L3 codegen 另携带 react/react-dom/react-router-dom、@xyflow/react、@dagrejs/dagre、elkjs、acorn/acorn-walk 等运行时依赖（以 package.json dependencies 实际清单为准）。**
 
 > **新 session 先读 [docs/BACKGROUND.md](docs/BACKGROUND.md)**——flowcast 的来龙去脉与愿景
 > （统一自我迭代引擎、三层架构、边界决策、路线图）。本文只讲架构与 API。
@@ -18,11 +18,12 @@
 ```
 L3 编排层 (orchestrator/)   接单 → 动态生成 flow 代码 → 校验 → 执行（续跑锁定）
 L2 引擎   (核心原语)        定义并跑好「单个 flow」：Checkpoint / 自改沙箱 / 质量门 / HITL / dry-run
-L1 执行器 (adapters.js+executor.js) 怎么驱动一个 CLI/agent + provider 能力分层 + 路由
+L1 执行器 (agentproc in-process executor + executor/ 适配器 + executor.js) 怎么驱动一个 CLI/agent + provider 能力分层 + 路由
 ```
 
-- **L1 执行器**：`recursive`/`claude`/`cursor`/`gemini`/`codex`/`aider` 各有 adapter，实现在 `adapters.js`。
-  执行器是否「接受外部 provider」由它有没有 `applyProvider` 翻译器派生——
+- **L1 执行器**：实际 CLI 调用走 agentproc SDK 的 in-process executor（buildArgs/parseEvent/env 翻译由 agentproc 提供），
+  `executor/` 目录放适配器（`agentproc-adapter.js` 翻译层 / `dsh.js` / `recursive-extras.js`），`executor.js` 持 `EXECUTORS` 注册表 + 能力表做路由。
+  执行器是否「接受外部 provider」由注册表 `acceptsProvider`（按 BYO-LLM CLI 列表派生）决定——
   BYO-LLM（recursive/aider/claude）可注入 provider；锁定型（cursor 等）自管鉴权，给 provider 会 fail-fast。
 - **L2 引擎**：原语都是可独立组合的一等公民，flow 只是它们的薄编排。
 - **L3 codegen harness**：**codegen 为唯一主路径**（生成 flow 代码，与人手写同构），**不做 DAG**。
@@ -40,12 +41,13 @@ L1 执行器 (adapters.js+executor.js) 怎么驱动一个 CLI/agent + provider �
 | `spawn.js` | 底层进程原语：`spawnCapture`（捕获式）/ `spawnCli`（spawnCapture 薄包装，失败抛 `TimeoutError`/`SpawnError`）/ `isProviderRetryable` / `sweepStaleTmp`（stale 临时文件清理）。单一事实来源，消除 spawnCli/spawnCapture 双实现漂移。 |
 | `concurrency.js` | `parallel`（barrier，默认 `strict=true` 任一失败则汇总抛错）/ `pipeline`（无 barrier 流水线）。与执行器解耦，可独立测试。 |
 | `hitl.js` | HITL 子系统：`setHitlBackend` / `waitForInput` / `notify`，支持 terminal/wecom/自定义后端。 |
-| `adapters.js` | CLI adapter 实现（claude/cursor/gemini/codex/aider/recursive/agy）+ provider 翻译器（`claudeApplyProvider`/`recursiveProviderEnv`）+ 可观测事件 sink（`setAgentEventSink`/`emitAgentEvent`）。消除 agent.js ↔ executor.js 循环依赖的关键拆分。 |
-| `agent.js` | 向后兼容聚合层：从 `adapters.js` / `executor.js` / `concurrency.js` / `hitl.js` re-export，保持公共 API 稳定。不含实现逻辑。 |
+| `executor/` | 执行器适配器目录：`agentproc-adapter.js`（flowcast ↔ agentproc 翻译层：CLI 名 → executor 名、opts → profile、RunResult → makeAgentResult）+ `dsh.js`（dsh executor 描述符注入 agentproc）+ `recursive-extras.js`（recursive `_meta` 增强：finishReason/panicked/transcript）。v0.6 起 per-CLI adapter 实现由 agentproc SDK in-process executor 承担，adapters.js 已删除。 |
+| `agent.js` | 向后兼容聚合层：从 `executor.js` / `spawn.js` / `concurrency.js` / `hitl.js` / `provider.js` / `executor/` re-export，保持公共 API 稳定。不含实现逻辑。 |
 | `schema.js` | `validateSchema` / `stubFromSchema` / `extractJson` / `runStructured`：轻量 JSON Schema 校验 + 强制 agent 结构化输出（增强 prompt+抽 JSON+校验+回喂重试），零依赖；失败抛 `SchemaError` |
 | `verify.js` | `verifyAdversarial`：对抗式验证原语（多怀疑者/多视角 + 阈值表决），可选质量保证，与 `runGate` 互补、非强制环 |
 | `provider.js` | provider profile：`interpolateEnv`（`${VAR}`）+ `loadProviders` + `resolveProvider` + 通用 `loadMergedConfig` |
-| `executor.js` | 执行器装配 + 路由层：`EXECUTORS` 注册表（adapter 来自 adapters.js）+ `getExecutor` + `loadAgents` + `resolveAgent`（绑定+校验）+ `runAgent`（路由到正确 adapter）+ `runAgentChain`（跨 CLI 链式回退）+ `setWorkdir`。provider 翻译器挂在 adapter 上（`claudeApplyProvider`/`recursiveApply`/`aiderApply`），本文件不重复定义。 |
+| `rate-limiter.js` | 自学习限流感知：LLM 解析限流错误沉淀特征库（`~/.flowcast/rl-patterns.json`），命中直接跳过；当前限流状态落 `~/.flowcast/rate-limits.json`（CLI `rate-limits` 命令读取/清除） |
+| `executor.js` | 执行器装配 + 路由层：`EXECUTORS` 注册表（内置 entry 由 CLI_TO_EXECUTOR + agentproc SDK 派生，实际 CLI 调用走 in-process executor）+ 执行器能力表（streaming/permission/sessionResume）+ `getExecutor` + `loadAgents` + `resolveAgent`（绑定+校验）+ `runAgent`（路由到正确 executor）+ `runAgentChain`（跨 CLI 链式回退）+ `setWorkdir`。provider 翻译器在 `provider.js`（`claudeProviderEnv`/`recursiveProviderEnv`/`aiderProviderEnv`/`applyProviderToProfile`），本文件不重复定义。 |
 | `self-mod-guard.js` | `withSelfModGuard` / `captureBaseline`：自改安全沙箱（失败硬回滚） |
 | `quality-gate.js` | `runGate` / `runGates`：质量门（rollback / resume-fix / autofix）；`loadGates` / `mergeGates`：业务项目从 `<repo>/.flowcast/gates.json` 声明式自定义门（与 provider/agent 配置对称），与内置默认门合并 |
 | `failure-context.js` | `writeFailureContext` / `readAndConsumeFailureContext`：失败上下文（写入即消费，单轮热路径） |
@@ -53,9 +55,12 @@ L1 执行器 (adapters.js+executor.js) 怎么驱动一个 CLI/agent + provider �
 | `loop.js` | `loop`：goal-driven 循环原语（每轮 fresh context 迭代 + budget 封顶 + 复用 Checkpoint 续跑 + quality-gate 每轮硬验证 + 可选 memory 沉淀）。同步函数、跑完即返，不是 daemon |
 | `git.js` | `gitStatus` / `gitDiff` / `gitCommitAll` / `gitWorktreeAdd` / `gitWorktreeRemove`：给生成的 flow 用的受控 git 原语（含 worktree 隔离） |
 | `subflow.js` | `runFlow`：把另一条 flow 当隔离子进程跑；`fanOut`：并发编排多条子 flow（限并发 + worktree 隔离 + per-task 日志 + 汇总） |
+| `run-script.js` | `runScript`：动态受限脚本编排面（五钩子 `agent`/`parallel`/`pipeline`/`phase`/`log` + `args` 注入），每个 `agent()` 调用绑一个 checkpoint（断点续跑）；new Function 非安全沙箱，脚本信任级等同 bash |
 | `dry-run.js` | `isDryRun`：dry-run 开关（`FLOWCAST_DRY_RUN`；`FLOWX_DRY_RUN` deprecated 向后兼容） |
 | `orchestrator/` | L3：`FLOW_API.md`（契约）+ `templates/` + `examples/` + `validate.js` + `generate.js` + `decompose.js`（接单分拆）+ `run.js`（`orchestrate`/`orchestrateMulti`）+ `cli.js`（`flowcast orchestrate [--split]`） |
 | `dashboard/` | 可观测看板（只读）：`collect.js`（扫 `.flowcast/runs` + worktree、重建父子树、僵尸推断）+ `render.js`（单文件 HTML）+ `cli.js`（`flowcast dashboard [--open]`）。埋点经 `cp.event` / `setAgentEventSink` / 质量门 `onEvent` 写入 jsonl |
+| `flows-registry.js` | flow 清单扫描：把项目级 `<repo>/.flowcast/flows/` 与用户级 `~/.flowcast/flows/` 的 .js/.mjs 扫成结构化清单，供 dashboard Workflows tab 与 CLI `flows list` 共用 |
+| `events.js` | 事件常量与 schema 中央注册表（`EVENT`）：agent 侧（fallback/rate-limit）与 checkpoint 侧（gate/group）事件的单一事实来源，emit 点 import 常量避免拼写漂移 |
 | `examples/` | 通用示例：`goal-drive.js`（goal-driven 循环 flow 示例）。**项目特定 flow 放各自仓**（如 recursive 自改 flow 在 `recursive` 仓 `.dev/flows/`，ilink-hub 技术债消化 flow 在 `ilink-hub/.flowcast/flows/`，均通过 `file:` 依赖消费本包） |
 | `skills/flowcast/` | flowcast 配套 Claude Code skill：`SKILL.md`（主体，含路由表）+ `references/`（create/run/debug/config 四个参考文档）。安装：`cp -r skills/flowcast ~/.claude/skills/` |
 | `bin/flowcast.js` | CLI 入口 |
@@ -67,11 +72,13 @@ npm test                          # node --test test/（全量单测，含结构
 node --check <file>               # 语法校验
 npm install -g .                  # 本地装 CLI（可选）
 
-flowcast force-dev --feature x --repo .   # 跑 force-dev flow
+flowcast run ./flows/my-flow.js [args]    # 跑自定义 flow 文件（续跑传同一 --run-id）
+flowcast flows list                       # 列出已安装的用户级 flow（~/.flowcast/flows/）
+flowcast rate-limits                      # 列出活跃限流记录（rate-limits clear [cli/model] 清除）
+flowcast dashboard-server --open          # 启动聚合 dashboard 服务（多项目 web UI）
 flowcast orchestrate "<编排需求>" --repo .     # L3：编排需求 → 生成 flow → 校验 → 执行（续跑锁定）
 flowcast orchestrate "<大目标>" --split    # L3 接单分拆：拆子任务 → 各自生成 flow → fanOut 并发执行
 flowcast dashboard --repo . [--open]      # 扫 .flowcast/runs + worktree → 生成只读可观测看板 HTML
-flowcast run ./flows/my-flow.js [args]    # 跑自定义 flow
 flowcast list                             # 列出所有 run
 
 # 自我迭代（recursive 仓自改）—— flow 在 recursive 仓，flowcast 作为库被消费
@@ -100,10 +107,10 @@ provider / agent 配置**绝不硬编码在代码里**，按内容性质三分�
 - 禁止把 API Key / provider 明文写进仓（用 `~/.flowcast/*.json` + `${ENV}`）
 - 禁止在本仓堆业务项目专用 flow（放业务仓，`file:` 依赖本包）
 - 禁止绕过质量门 / 自改沙箱做「方便的」自改
-- 禁止随意引入运行时 npm 依赖（设计约束：最小依赖，当前仅 agentproc SDK）
+- 禁止随意引入运行时 npm 依赖（设计约束：最小依赖；当前运行时依赖见 `package.json` dependencies——核心编排为 agentproc，dashboard/L3 codegen 另带 react 系/@xyflow/react/@dagrejs/dagre/elkjs/acorn 系）
 
 **代码约定：**
-- **最小依赖**：运行时仅依赖 `agentproc` SDK；其余（yaml 等）为可选 lazy import。新增依赖前先确认是否真的必要——这是核心设计约束。
+- **最小依赖**：核心编排依赖 `agentproc` SDK；dashboard/L3 codegen 另依赖 react/react-dom/react-router-dom、@xyflow/react、@dagrejs/dagre、elkjs、acorn/acorn-walk（以 `package.json` dependencies 实际清单为准）。新增依赖前先确认是否真的必要——这是核心设计约束。
 - **纯 ESM**：所有文件 `import`/`export`；新对外 API 必须在 `index.js` 登记。
 - **原语优先**：先做可独立测试的一等公民原语，flow 只做薄编排。新原语必须带单测。
 - **dry-run 可跑**：写 flow / 改原语时保证 `FLOWCAST_DRY_RUN=1` 下能跑通骨架（假执行器 + 假质量门）。`FLOWX_DRY_RUN` 已弃用，向后兼容保留但不推荐。

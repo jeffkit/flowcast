@@ -41,7 +41,7 @@ const terminalBackend = {
 //
 // 两种接法（优先级从高到低）：
 //   1. 注入函数：config.sendAndWait / config.send —— 最易测试
-//   2. mcp2cli：shell 调用 wecom-hil MCP 工具
+//   2. mcp2cli：shell 调用 @hitl MCP 工具
 
 // mcp2cli 路径白名单：只允许默认 mcp2cli（走 PATH 解析）或以下目录下的绝对路径。
 // 防止 generated flow / 配置文件注入任意 binary。

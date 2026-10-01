@@ -2,7 +2,7 @@
 
 轻量 workflow 编排框架：**断点续跑 · HITL · 多 CLI/agent 调度 · 自改安全沙箱 · 质量门**，以及其上的 **L3 codegen 编排层**（把多步编排需求 → 动态生成 flow → 隔离执行）。
 
-纯 ESM · Node ≥ 20（仅依赖 agentproc SDK）
+纯 ESM · Node ≥ 20（核心编排依赖 agentproc SDK；dashboard/L3 codegen 另携带 react/react-dom/react-router-dom、@xyflow/react、@dagrejs/dagre、elkjs、acorn/acorn-walk 等运行时依赖，以 package.json 为准）
 
 [![npm](https://img.shields.io/npm/v/flowcast)](https://www.npmjs.com/package/flowcast)
 [![license](https://img.shields.io/npm/l/flowcast)](LICENSE)
@@ -120,7 +120,7 @@ L1 执行器 (agent.js + executor.js) 怎么驱动一个 CLI/agent + provider �
 npm install -g flowcast
 ```
 
-全局安装后，`flowcast`（或 `flowc` / `fc` / `flowcast`）命令在任何目录可用，业务项目无需自己的 `node_modules`。
+全局安装后，`flowcast`（或 `flowc` / `fc` / `flowx`）命令在任何目录可用，业务项目无需自己的 `node_modules`。
 
 ### 项目内安装
 
