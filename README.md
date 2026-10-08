@@ -1,5 +1,14 @@
 # flowcast
 
+> ## ⚠️ 本项目已废弃（Deprecated）——请改用 [Plaita](https://github.com/jeffkit/plaita)
+>
+> **flowcast 已停止演进**，编排能力已迁移到 **Plaita**。新项目请直接采用 Plaita；仍在使用 flowcast 的项目建议尽快迁移。
+>
+> - **Plaita 仓库**：<https://github.com/jeffkit/plaita>
+> - 迁移决议与背景：[ADR-2026-08-27 编排收敛到 plaita](https://github.com/jeffkit/infra4agent/blob/main/docs/ADR-2026-08-27-orchestration-converge-on-plaita.md)
+> - 为什么迁移：Plaita 以 `@flow` 声明式源码为权威定义，图即源码（不再靠 AST 反推流程结构），执行层统一经 [agentproc](https://github.com/jeffkit/agentproc) 起 Agent CLI。
+> - 本仓与 npm 包**保留**仅供存量回退参考，不再接受新功能。
+
 轻量 workflow 编排框架：**断点续跑 · HITL · 多 CLI/agent 调度 · 自改安全沙箱 · 质量门**，以及其上的 **L3 codegen 编排层**（把多步编排需求 → 动态生成 flow → 隔离执行）。
 
 纯 ESM · Node ≥ 20（仅依赖 agentproc SDK）
